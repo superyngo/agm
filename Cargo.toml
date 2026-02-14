@@ -1,0 +1,18 @@
+[package]
+name = "agm"
+version = "0.1.0"
+edition = "2021"
+description = "AI Agent Manager - centralized config management for AI CLI tools"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+dirs = "6"
+colored = "3"
+anyhow = "1"
+chrono = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
+assert_cmd = "2"
