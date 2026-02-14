@@ -7,10 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-02-14
+
 ### Added
 - Support for lowercase `-v` flag to display version information
 - Interactive tool selection menu for `agm edit auth` and `agm edit mcp` commands when tool not specified
 - Full help text display when required command parameters are missing (instead of brief error)
+- GitHub Actions release workflow for automated releases
 
 ### Fixed
 - Fixed panic when running `agm` with no arguments - now shows help text instead
@@ -25,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Edit Command Syntax Change:**
 - Before (v0.1.0): `agm edit <tool> <file_type>`
-- After (v0.2.0): `agm edit <file_type> [tool]`
+- After (v0.1.1): `agm edit <file_type> [tool]`
 
 Examples:
 - `agm edit claude config` → `agm edit config claude`
