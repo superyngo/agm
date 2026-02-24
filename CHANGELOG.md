@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.1.2] - 2026-02-25
+
 ### Fixed
 - Fix opencode default auth path to `~/.local/share/opencode/auth.json`
 - Fix `agm link`: prompt with wrong symlink target now prompts user to re-link (same as skills behavior)
