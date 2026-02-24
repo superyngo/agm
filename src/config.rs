@@ -114,7 +114,7 @@ impl Config {
                 name: "OpenCode".into(),
                 config_dir: "~/.config/opencode".into(),
                 settings: vec!["opencode.json".into()],
-                auth: vec!["antigravity-accounts.json".into()],
+                auth: vec!["~/.local/share/opencode/auth.json".into()],
                 prompt_filename: "AGENTS.md".into(),
                 skills_dir: "skills".into(),
                 mcp: vec!["opencode.json".into()],

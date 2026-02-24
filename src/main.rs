@@ -143,7 +143,18 @@ fn open_tool_files(
             .iter()
             .map(|f| base_dir.join(f))
             .collect(),
-        "auth" => tool_config.auth.iter().map(|f| base_dir.join(f)).collect(),
+        "auth" => tool_config
+            .auth
+            .iter()
+            .map(|f| {
+                let expanded = paths::expand_tilde(f);
+                if expanded.is_absolute() {
+                    expanded
+                } else {
+                    base_dir.join(f)
+                }
+            })
+            .collect(),
         "mcp" => tool_config.mcp.iter().map(|f| base_dir.join(f)).collect(),
         _ => unreachable!("Invalid file_type: {}", file_type),
     };
@@ -320,8 +331,36 @@ fn main() -> anyhow::Result<()> {
                 if link_prompts && !tool.prompt_filename.is_empty() {
                     let prompt_link = tool.resolved_config_dir().join(&tool.prompt_filename);
 
+                    // Check if prompt is a symlink pointing to wrong target
+                    if prompt_link.is_symlink() {
+                        let actual_target = fs::read_link(&prompt_link)?;
+                        let expected_target = central_prompt
+                            .canonicalize()
+                            .unwrap_or_else(|_| central_prompt.clone());
+                        let resolved_actual = prompt_link
+                            .parent()
+                            .map(|p| p.join(&actual_target))
+                            .unwrap_or_else(|| actual_target.clone());
+                        let resolved_actual =
+                            resolved_actual.canonicalize().unwrap_or(resolved_actual);
+
+                        if resolved_actual != expected_target {
+                            if yes
+                                || prompt_yes_no(&format!(
+                                    "Prompt already linked to {}. Re-link to AGM?",
+                                    paths::contract_tilde(&resolved_actual)
+                                ))
+                            {
+                                fs::remove_file(&prompt_link)?;
+                                println!("  {} Removed old symlink", " ok ".green());
+                            } else {
+                                println!("  {} Skipping prompt link", "skip".yellow());
+                                continue;
+                            }
+                        }
+                    }
                     // Check if prompt file exists and is not a symlink
-                    if prompt_link.exists() && !prompt_link.is_symlink() {
+                    else if prompt_link.exists() {
                         // Check if file is not empty
                         let content = fs::read_to_string(&prompt_link)?;
                         if !content.trim().is_empty() {
