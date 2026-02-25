@@ -28,7 +28,11 @@ pub fn run() -> anyhow::Result<()> {
     let config = Config::load()?;
 
     // Create central directories
-    let dirs_to_create = [&config.central.skills_source, &config.central.source_dir];
+    let dirs_to_create = [
+        &config.central.skills_source,
+        &config.central.source_dir,
+        &config.central.files_base,
+    ];
     for dir in dirs_to_create {
         let path = expand_tilde(dir);
         if path.is_dir() {

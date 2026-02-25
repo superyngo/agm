@@ -142,6 +142,33 @@ pub fn remove_skill(name: &str, skills_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Scan central skills directory and remove any symlinks whose targets no longer exist.
+/// Returns the number of broken links removed.
+pub fn prune_broken_skills(skills_dir: &Path) -> anyhow::Result<usize> {
+    if !skills_dir.is_dir() {
+        return Ok(0);
+    }
+
+    let mut removed = 0;
+    for entry in fs::read_dir(skills_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_symlink() {
+            // Follow the link; if target doesn't exist the link is broken
+            if !path.exists() {
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("<unknown>");
+                fs::remove_file(&path)?;
+                println!("  {} {} (broken skill link removed)", "warn".yellow(), name);
+                removed += 1;
+            }
+        }
+    }
+    Ok(removed)
+}
+
 /// Check if source string is a URL
 pub fn is_url(source: &str) -> bool {
     source.starts_with("http://") || source.starts_with("https://") || source.starts_with("git@")
@@ -360,5 +387,26 @@ mod tests {
 
         remove_skill("my-skill", &skills_dir).unwrap();
         assert!(!skill_link.exists());
+    }
+
+    #[test]
+    fn test_prune_broken_skills() {
+        let tmp = TempDir::new().unwrap();
+        let skills_dir = tmp.path().join("skills");
+        fs::create_dir(&skills_dir).unwrap();
+
+        // Create a valid skill and a broken symlink
+        let skill_source = tmp.path().join("real-skill");
+        fs::create_dir(&skill_source).unwrap();
+        fs::write(skill_source.join("SKILL.md"), "# Skill").unwrap();
+        unix_fs::symlink(&skill_source, &skills_dir.join("real-skill")).unwrap();
+
+        let ghost = tmp.path().join("ghost-skill");
+        unix_fs::symlink(&ghost, &skills_dir.join("ghost-skill")).unwrap();
+
+        let removed = prune_broken_skills(&skills_dir).unwrap();
+        assert_eq!(removed, 1);
+        assert!(skills_dir.join("real-skill").exists());
+        assert!(!skills_dir.join("ghost-skill").exists());
     }
 }

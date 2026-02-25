@@ -20,6 +20,17 @@ pub struct CentralConfig {
     pub source_dir: String,
     #[serde(default)]
     pub skill_repos: Vec<String>,
+    #[serde(default = "CentralConfig::default_files_base")]
+    pub files_base: String,
+    /// Absolute paths (supports ~ and $VAR) to centrally managed files
+    #[serde(default)]
+    pub files: Vec<String>,
+}
+
+impl CentralConfig {
+    fn default_files_base() -> String {
+        "~/.local/share/agm/files".into()
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -36,6 +47,8 @@ pub struct ToolConfig {
     pub skills_dir: String,
     #[serde(default)]
     pub mcp: Vec<String>,
+    #[serde(default)]
+    pub files: Vec<String>,
 }
 
 impl Config {
@@ -78,6 +91,7 @@ impl Config {
                 prompt_filename: "CLAUDE.md".into(),
                 skills_dir: "skills".into(),
                 mcp: vec!["settings.json".into()],
+                files: vec![],
             },
         );
         tools.insert(
@@ -94,6 +108,7 @@ impl Config {
                 prompt_filename: "GEMINI.md".into(),
                 skills_dir: "skills".into(),
                 mcp: vec!["settings.json".into()],
+                files: vec![],
             },
         );
         tools.insert(
@@ -106,6 +121,7 @@ impl Config {
                 prompt_filename: "AGENTS.md".into(),
                 skills_dir: "skills".into(),
                 mcp: vec!["mcp-config.json".into()],
+                files: vec![],
             },
         );
         tools.insert(
@@ -118,6 +134,7 @@ impl Config {
                 prompt_filename: "AGENTS.md".into(),
                 skills_dir: "skills".into(),
                 mcp: vec!["opencode.json".into()],
+                files: vec![],
             },
         );
 
@@ -128,6 +145,8 @@ impl Config {
                 skills_source: "~/.local/share/agm/skills".into(),
                 source_dir: "~/.local/share/agm/source".into(),
                 skill_repos: vec![],
+                files_base: "~/.local/share/agm/files".into(),
+                files: vec![],
             },
             tools,
         }
@@ -182,6 +201,8 @@ mod tests {
         assert_eq!(config.central.skills_source, "~/.local/share/agm/skills");
         assert_eq!(config.central.source_dir, "~/.local/share/agm/source");
         assert!(config.central.skill_repos.is_empty());
+        assert_eq!(config.central.files_base, "~/.local/share/agm/files");
+        assert!(config.central.files.is_empty());
     }
 
     #[test]
@@ -194,6 +215,7 @@ mod tests {
             prompt_filename: "TEST.md".into(),
             skills_dir: "skills".into(),
             mcp: vec![],
+            files: vec![],
         };
         let home = dirs::home_dir().unwrap();
         assert_eq!(tool.resolved_config_dir(), home.join(".test-tool"));

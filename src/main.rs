@@ -1,5 +1,6 @@
 mod config;
 mod editor;
+mod files;
 mod init;
 mod linker;
 mod paths;
@@ -35,16 +36,22 @@ enum Commands {
     Check,
     /// Create/repair symlinks
     Link {
-        /// Only link "skills" or "prompts" (default: both)
-        target: Option<String>,
+        /// Tool name (e.g. claude, gemini); omit when using --all
+        tool: Option<String>,
+        /// Link all installed tools
+        #[arg(long)]
+        all: bool,
         /// Skip all confirmation prompts
         #[arg(short = 'y', long = "yes")]
         yes: bool,
     },
     /// Remove symlinks for a tool
     Unlink {
-        /// Tool name (e.g. claude, gemini)
-        tool: String,
+        /// Tool name (e.g. claude, gemini); omit when using --all
+        tool: Option<String>,
+        /// Unlink all installed tools
+        #[arg(long)]
+        all: bool,
     },
     /// Manage skills
     Skills {
@@ -116,6 +123,122 @@ fn prompt_yes_no(prompt: &str) -> bool {
     let input = input.trim().to_lowercase();
 
     input == "y" || input == "yes"
+}
+
+/// Migrate an existing skills directory into AGM's central store.
+///
+/// For each skill found in `skills_link`:
+///   - If its name is already taken in `central_skills`, prefix it with `{tool_key}_`
+///   - Move the skill dir to `$source_dir/agm_tools/{tool_key}/{effective_name}`
+///   - Symlink it into `central_skills/{effective_name}`
+///
+/// Non-skill files/dirs left over are cleaned up with remove_dir_all.
+/// Returns the number of skills migrated.
+fn migrate_skills_dir(
+    skills_link: &Path,
+    tool_skills_target: &Path,
+    central_skills: &Path,
+    tool_key: &str,
+) -> anyhow::Result<usize> {
+    use anyhow::Context;
+    use std::os::unix::fs as unix_fs;
+
+    fs::create_dir_all(tool_skills_target)?;
+    fs::create_dir_all(central_skills)?;
+
+    let discovered = skills::scan_skills(skills_link);
+    let mut migrated = 0;
+
+    for (name, skill_path) in &discovered {
+        // Determine effective name — avoid collision in central, try {tool_key}_{name}
+        let effective_name = if !central_skills.join(name).exists() {
+            name.clone()
+        } else {
+            let prefixed = format!("{}_{}", tool_key, name);
+            println!(
+                "  {} skill '{}' already in central, renaming to '{}'",
+                "warn".yellow(),
+                name,
+                prefixed
+            );
+            prefixed
+        };
+
+        let dest = tool_skills_target.join(&effective_name);
+        let link = central_skills.join(&effective_name);
+
+        // If dest already exists (previous partial run), skip the move
+        if dest.exists() {
+            println!(
+                "  {} {} already in store, re-linking",
+                "skip".yellow(),
+                effective_name
+            );
+        } else {
+            fs::rename(skill_path, &dest)
+                .with_context(|| format!("Failed to move skill '{}' to store", effective_name))?;
+        }
+
+        // If central link already exists and points to dest, skip
+        if link.symlink_metadata().is_ok() {
+            let already_ok = fs::read_link(&link)
+                .ok()
+                .and_then(|t| fs::canonicalize(&t).ok())
+                .zip(fs::canonicalize(&dest).ok())
+                .map(|(a, b)| a == b)
+                .unwrap_or(false);
+            if already_ok {
+                println!("  {} {} already linked", "skip".yellow(), effective_name);
+                migrated += 1;
+                continue;
+            }
+            // Stale/wrong link — remove and recreate
+            fs::remove_file(&link)?;
+        }
+
+        unix_fs::symlink(&dest, &link)
+            .with_context(|| format!("Failed to link skill '{}' into central", effective_name))?;
+
+        println!(
+            "  {} {} → {}",
+            " ok ".green(),
+            effective_name,
+            paths::contract_tilde(&dest)
+        );
+        migrated += 1;
+    }
+
+    // Clean up leftover files/dirs (non-skills, e.g. .DS_Store, README.md)
+    if skills_link.exists() {
+        fs::remove_dir_all(skills_link)?;
+    }
+
+    Ok(migrated)
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        // Use symlink_metadata so we don't follow (and potentially fail on broken) symlinks
+        let meta = fs::symlink_metadata(&src_path)?;
+        if meta.file_type().is_symlink() {
+            // Recreate symlink rather than copying the target content
+            if let Ok(target) = fs::read_link(&src_path) {
+                if dst_path.symlink_metadata().is_ok() {
+                    fs::remove_file(&dst_path)?;
+                }
+                std::os::unix::fs::symlink(&target, &dst_path)?;
+            }
+        } else if meta.is_dir() {
+            copy_dir_all(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
 }
 
 fn open_tool_files(
@@ -222,17 +345,45 @@ fn main() -> anyhow::Result<()> {
         Commands::Status => status::status(),
         Commands::List => status::list(),
         Commands::Check => status::check(),
-        Commands::Link { target, yes } => {
+        Commands::Link { tool, all, yes } => {
             let config = config::Config::load()?;
             let central_skills = paths::expand_tilde(&config.central.skills_source);
             let central_prompt = paths::expand_tilde(&config.central.prompt_source);
             let source_dir = paths::expand_tilde(&config.central.source_dir);
+            let files_base = paths::expand_tilde(&config.central.files_base);
 
-            let link_skills = target.as_ref().is_none_or(|t| t == "skills");
-            let link_prompts = target.as_ref().is_none_or(|t| t == "prompts");
+            // Collect which tools to link
+            let tools_to_link: Vec<(&String, &config::ToolConfig)> = if all {
+                config
+                    .tools
+                    .iter()
+                    .filter(|(_, tc)| tc.is_installed())
+                    .collect()
+            } else {
+                let key = tool
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("Provide a tool name or use --all"))?;
+                let tc = config
+                    .tools
+                    .get(key)
+                    .ok_or_else(|| anyhow::anyhow!("Tool '{}' not found in config", key))?;
+                vec![(config.tools.keys().find(|k| k.as_str() == key).unwrap(), tc)]
+            };
 
-            // Process skill_repos if target is None or "skills"
-            if link_skills && !config.central.skill_repos.is_empty() {
+            // Prune broken skill symlinks from central store
+            if central_skills.is_dir() {
+                let pruned = skills::prune_broken_skills(&central_skills)?;
+                if pruned > 0 {
+                    println!(
+                        "{} Removed {} broken skill link(s)",
+                        "warn".yellow(),
+                        pruned
+                    );
+                }
+            }
+
+            // Process skill_repos when linking skills
+            if !config.central.skill_repos.is_empty() {
                 println!("\n{}", "Processing skill repositories...".bold());
                 for url in &config.central.skill_repos {
                     match skills::add_from_url(url, &source_dir, &central_skills) {
@@ -249,18 +400,13 @@ fn main() -> anyhow::Result<()> {
             }
 
             // Link tools
-            for (key, tool) in &config.tools {
-                if !tool.is_installed() {
-                    continue;
-                }
-
+            for (key, tool) in tools_to_link {
                 println!("\n{} ({}):", key, tool.name);
 
                 // Link skills directory
-                if link_skills && !tool.skills_dir.is_empty() {
+                if !tool.skills_dir.is_empty() {
                     let skills_link = tool.resolved_config_dir().join(&tool.skills_dir);
 
-                    // Check if existing symlink points to wrong target
                     if skills_link.is_symlink() {
                         let actual_target = fs::read_link(&skills_link)?;
                         let expected_target = central_skills
@@ -268,7 +414,7 @@ fn main() -> anyhow::Result<()> {
                             .unwrap_or_else(|_| central_skills.clone());
                         let resolved_actual = skills_link
                             .parent()
-                            .map(|p| p.join(&actual_target))
+                            .map(|p: &std::path::Path| p.join(&actual_target))
                             .unwrap_or_else(|| actual_target.clone());
                         let resolved_actual =
                             resolved_actual.canonicalize().unwrap_or(resolved_actual);
@@ -287,9 +433,7 @@ fn main() -> anyhow::Result<()> {
                                 continue;
                             }
                         }
-                    }
-                    // Check if skills directory exists and has content
-                    else if skills_link.is_dir() {
+                    } else if skills_link.is_dir() {
                         let skills_content = skills::scan_skills(&skills_link);
                         if !skills_content.is_empty() {
                             if yes || prompt_yes_no(&format!(
@@ -297,30 +441,23 @@ fn main() -> anyhow::Result<()> {
                                 skills_content.len(),
                                 paths::contract_tilde(&skills_link)
                             )) {
-                                // Create migration target directory in source/skills
-                                let tool_skills_target = source_dir.join("skills").join(key);
-                                fs::create_dir_all(&tool_skills_target)?;
-
-                                // Move skills directory content to source/skills
-                                for entry in fs::read_dir(&skills_link)? {
-                                    let entry = entry?;
-                                    let from = entry.path();
-                                    let to = tool_skills_target.join(from.file_name().unwrap());
-                                    fs::rename(&from, &to)?;
-                                }
-
-                                // Remove original skills directory
-                                fs::remove_dir(&skills_link)?;
-
-                                // Add skills from migrated location
-                                let added = skills::add_local(&tool_skills_target, &central_skills)?;
+                                let tool_skills_target = source_dir.join("agm_tools").join(key);
+                                let added = migrate_skills_dir(
+                                    &skills_link,
+                                    &tool_skills_target,
+                                    &central_skills,
+                                    key,
+                                )?;
                                 if added > 0 {
-                                    println!("  {} Migrated and added {} skill(s)", " ok ".green(), added);
+                                    println!("  {} Migrated {} skill(s)", " ok ".green(), added);
                                 }
                             } else {
                                 println!("  {} Skipping skills migration", "skip".yellow());
                                 continue;
                             }
+                        } else {
+                            // Empty skills dir — remove it so we can create the symlink
+                            fs::remove_dir_all(&skills_link)?;
                         }
                     }
 
@@ -328,10 +465,9 @@ fn main() -> anyhow::Result<()> {
                 }
 
                 // Link prompt file
-                if link_prompts && !tool.prompt_filename.is_empty() {
+                if !tool.prompt_filename.is_empty() {
                     let prompt_link = tool.resolved_config_dir().join(&tool.prompt_filename);
 
-                    // Check if prompt is a symlink pointing to wrong target
                     if prompt_link.is_symlink() {
                         let actual_target = fs::read_link(&prompt_link)?;
                         let expected_target = central_prompt
@@ -339,7 +475,7 @@ fn main() -> anyhow::Result<()> {
                             .unwrap_or_else(|_| central_prompt.clone());
                         let resolved_actual = prompt_link
                             .parent()
-                            .map(|p| p.join(&actual_target))
+                            .map(|p: &std::path::Path| p.join(&actual_target))
                             .unwrap_or_else(|| actual_target.clone());
                         let resolved_actual =
                             resolved_actual.canonicalize().unwrap_or(resolved_actual);
@@ -358,10 +494,7 @@ fn main() -> anyhow::Result<()> {
                                 continue;
                             }
                         }
-                    }
-                    // Check if prompt file exists and is not a symlink
-                    else if prompt_link.exists() {
-                        // Check if file is not empty
+                    } else if prompt_link.exists() {
                         let content = fs::read_to_string(&prompt_link)?;
                         if !content.trim().is_empty() {
                             if yes
@@ -370,7 +503,6 @@ fn main() -> anyhow::Result<()> {
                                     paths::contract_tilde(&prompt_link)
                                 ))
                             {
-                                // Create backup filename with timestamp
                                 let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
                                 let backup_path =
                                     prompt_link.with_extension(format!("{}.bak", timestamp));
@@ -389,33 +521,124 @@ fn main() -> anyhow::Result<()> {
 
                     linker::create_link(&prompt_link, &central_prompt, "prompt")?;
                 }
+
+                // Link managed files
+                if !tool.files.is_empty() {
+                    fs::create_dir_all(&files_base)?;
+                    for file_path in &tool.files {
+                        let original = if file_path.as_str().starts_with('/')
+                            || file_path.as_str().starts_with('~')
+                            || file_path.as_str().starts_with('$')
+                        {
+                            paths::expand_path(file_path)
+                        } else {
+                            tool.resolved_config_dir().join(file_path)
+                        };
+                        files::link_file(&original, &files_base, yes)?;
+                    }
+                }
+            }
+
+            // Process central-level managed files (only when --all)
+            if all && !config.central.files.is_empty() {
+                fs::create_dir_all(&files_base)?;
+                println!("\n{}", "Central files:".bold());
+                for file_path in &config.central.files {
+                    let original = paths::expand_path(file_path);
+                    files::link_file(&original, &files_base, yes)?;
+                }
             }
 
             Ok(())
         }
-        Commands::Unlink { tool } => {
+        Commands::Unlink { tool, all } => {
             let config = config::Config::load()?;
-            let tool_config = config
-                .tools
-                .get(&tool)
-                .ok_or_else(|| anyhow::anyhow!("Tool '{}' not found in config", tool))?;
+            let central_skills = paths::expand_tilde(&config.central.skills_source);
+            let central_prompt = paths::expand_tilde(&config.central.prompt_source);
+            let files_base = paths::expand_tilde(&config.central.files_base);
 
-            println!("Unlinking {} ({}):", tool, tool_config.name);
+            // Collect which tools to unlink
+            let tools_to_unlink: Vec<(&String, &config::ToolConfig)> = if all {
+                config
+                    .tools
+                    .iter()
+                    .filter(|(_, tc)| tc.is_installed())
+                    .collect()
+            } else {
+                let key = tool
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("Provide a tool name or use --all"))?;
+                let tc = config
+                    .tools
+                    .get(key)
+                    .ok_or_else(|| anyhow::anyhow!("Tool '{}' not found in config", key))?;
+                vec![(config.tools.keys().find(|k| k.as_str() == key).unwrap(), tc)]
+            };
 
-            // Remove skills symlink
-            if !tool_config.skills_dir.is_empty() {
-                let skills_link = tool_config
-                    .resolved_config_dir()
-                    .join(&tool_config.skills_dir);
-                linker::remove_link(&skills_link, "skills")?;
+            for (key, tool_config) in tools_to_unlink {
+                println!("Unlinking {} ({}):", key, tool_config.name);
+
+                // Remove skills symlink then copy central skills back
+                if !tool_config.skills_dir.is_empty() {
+                    let skills_link = tool_config
+                        .resolved_config_dir()
+                        .join(&tool_config.skills_dir);
+                    if linker::remove_link(&skills_link, "skills")? && central_skills.is_dir() {
+                        copy_dir_all(&central_skills, &skills_link)?;
+                        println!("  {} skills copied back", " ok ".green());
+                    }
+                }
+
+                // Remove prompt symlink then copy central prompt back
+                if !tool_config.prompt_filename.is_empty() {
+                    let prompt_link = tool_config
+                        .resolved_config_dir()
+                        .join(&tool_config.prompt_filename);
+                    if linker::remove_link(&prompt_link, "prompt")? && central_prompt.exists() {
+                        fs::copy(&central_prompt, &prompt_link)?;
+                        println!("  {} prompt copied back", " ok ".green());
+                    }
+                }
+
+                // Remove managed file symlinks then copy central files back
+                for file_path in &tool_config.files {
+                    let original = if file_path.as_str().starts_with('/')
+                        || file_path.as_str().starts_with('~')
+                        || file_path.as_str().starts_with('$')
+                    {
+                        paths::expand_path(file_path.as_str())
+                    } else {
+                        tool_config.resolved_config_dir().join(file_path)
+                    };
+                    if files::unlink_file(&original)? {
+                        let central = files::centralized_path(&original, &files_base);
+                        if central.exists() {
+                            if let Some(parent) = original.parent() {
+                                fs::create_dir_all(parent)?;
+                            }
+                            fs::copy(&central, &original)?;
+                            println!("  {} {} copied back", " ok ".green(), original.display());
+                        }
+                    }
+                }
             }
 
-            // Remove prompt symlink
-            if !tool_config.prompt_filename.is_empty() {
-                let prompt_link = tool_config
-                    .resolved_config_dir()
-                    .join(&tool_config.prompt_filename);
-                linker::remove_link(&prompt_link, "prompt")?;
+            // Remove central-level managed file symlinks (only when --all)
+            if all && !config.central.files.is_empty() {
+                println!("\n{}", "Central files:".bold());
+                for file_path in &config.central.files {
+                    let original = paths::expand_path(file_path);
+                    if files::unlink_file(&original)? {
+                        let central = files::centralized_path(&original, &files_base);
+                        if central.exists() {
+                            if let Some(parent) = original.parent() {
+                                fs::create_dir_all(parent)?;
+                            }
+                            fs::copy(&central, &original)?;
+                            println!("  {} {} copied back", " ok ".green(), original.display());
+                        }
+                    }
+                }
             }
 
             Ok(())
