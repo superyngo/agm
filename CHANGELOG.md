@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.2.0] - 2026-02-25
+
+### Added
+- Add centralized file path management
+- Add file status checking (linked, broken, wrong, missing, etc.)
+- Add link/unlink file operations with proper handling
+- Add comprehensive test coverage for file operations
+
+### Changed
+- Refactor paths, skills, and status modules
+
 ## [v0.1.2] - 2026-02-25
 
 ### Fixed

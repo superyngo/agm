@@ -144,7 +144,7 @@ agm edit auth             # Shows menu to pick tool
 agm edit mcp              # Shows menu to pick tool
 ```
 
-**Breaking Change (v0.2.0):** Command syntax changed from `agm edit <tool> <file_type>` to `agm edit <file_type> [tool]`.
+**Breaking Change (v0.1.1):** Command syntax changed from `agm edit <tool> <file_type>` to `agm edit <file_type> [tool]`.
 
 ## Configuration
 
