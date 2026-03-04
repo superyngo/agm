@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::paths::expand_tilde;
+use crate::paths::{expand_path, expand_tilde};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Config {
@@ -86,7 +86,11 @@ impl Config {
             ToolConfig {
                 name: "Claude Code".into(),
                 config_dir: "~/.claude".into(),
-                settings: vec!["settings.json".into(), "settings.local.json".into()],
+                settings: vec![
+                    "~/.claude.json".into(),
+                    "settings.json".into(),
+                    "settings.local.json".into(),
+                ],
                 auth: vec![".credentials.json".into()],
                 prompt_filename: "CLAUDE.md".into(),
                 skills_dir: "skills".into(),
@@ -169,6 +173,18 @@ impl ToolConfig {
         expand_tilde(&self.config_dir)
     }
 
+    /// Resolve a tool-relative path string to an absolute PathBuf.
+    ///
+    /// - Contains `/` → treated as absolute; expands `~` and `$VAR`
+    /// - No `/` → relative to `config_dir`
+    pub fn resolve_path(&self, path: &str) -> PathBuf {
+        if path.contains('/') {
+            expand_path(path)
+        } else {
+            self.resolved_config_dir().join(path)
+        }
+    }
+
     /// Check if the tool's config directory exists on disk
     pub fn is_installed(&self) -> bool {
         self.resolved_config_dir().is_dir()
@@ -219,5 +235,90 @@ mod tests {
         };
         let home = dirs::home_dir().unwrap();
         assert_eq!(tool.resolved_config_dir(), home.join(".test-tool"));
+    }
+
+    #[test]
+    fn test_resolve_path_relative() {
+        let tool = ToolConfig {
+            name: "Test".into(),
+            config_dir: "~/.test-tool".into(),
+            settings: vec![],
+            auth: vec![],
+            prompt_filename: "".into(),
+            skills_dir: "".into(),
+            mcp: vec![],
+            files: vec![],
+        };
+        let home = dirs::home_dir().unwrap();
+        // No "/" → relative to config_dir
+        assert_eq!(
+            tool.resolve_path("settings.json"),
+            home.join(".test-tool/settings.json")
+        );
+    }
+
+    #[test]
+    fn test_resolve_path_absolute_tilde() {
+        let tool = ToolConfig {
+            name: "Test".into(),
+            config_dir: "~/.test-tool".into(),
+            settings: vec![],
+            auth: vec![],
+            prompt_filename: "".into(),
+            skills_dir: "".into(),
+            mcp: vec![],
+            files: vec![],
+        };
+        let home = dirs::home_dir().unwrap();
+        // Contains "/" → absolute, expand ~
+        assert_eq!(
+            tool.resolve_path("~/.claude.json"),
+            home.join(".claude.json")
+        );
+    }
+
+    #[test]
+    fn test_resolve_path_absolute_slash() {
+        let tool = ToolConfig {
+            name: "Test".into(),
+            config_dir: "~/.test-tool".into(),
+            settings: vec![],
+            auth: vec![],
+            prompt_filename: "".into(),
+            skills_dir: "".into(),
+            mcp: vec![],
+            files: vec![],
+        };
+        assert_eq!(
+            tool.resolve_path("/etc/some.conf"),
+            PathBuf::from("/etc/some.conf")
+        );
+    }
+
+    #[test]
+    fn test_resolve_path_env_var() {
+        let tool = ToolConfig {
+            name: "Test".into(),
+            config_dir: "~/.test-tool".into(),
+            settings: vec![],
+            auth: vec![],
+            prompt_filename: "".into(),
+            skills_dir: "".into(),
+            mcp: vec![],
+            files: vec![],
+        };
+        std::env::set_var("AGM_TEST_RESOLVE", "/tmp/agm_resolve");
+        assert_eq!(
+            tool.resolve_path("$AGM_TEST_RESOLVE/auth.json"),
+            PathBuf::from("/tmp/agm_resolve/auth.json")
+        );
+        std::env::remove_var("AGM_TEST_RESOLVE");
+    }
+
+    #[test]
+    fn test_claude_default_first_setting() {
+        let config = Config::default_config();
+        let claude = config.tools.get("claude").unwrap();
+        assert_eq!(claude.settings[0], "~/.claude.json");
     }
 }

@@ -264,21 +264,18 @@ fn open_tool_files(
         "config" => tool_config
             .settings
             .iter()
-            .map(|f| base_dir.join(f))
+            .map(|f| tool_config.resolve_path(f))
             .collect(),
         "auth" => tool_config
             .auth
             .iter()
-            .map(|f| {
-                let expanded = paths::expand_tilde(f);
-                if expanded.is_absolute() {
-                    expanded
-                } else {
-                    base_dir.join(f)
-                }
-            })
+            .map(|f| tool_config.resolve_path(f))
             .collect(),
-        "mcp" => tool_config.mcp.iter().map(|f| base_dir.join(f)).collect(),
+        "mcp" => tool_config
+            .mcp
+            .iter()
+            .map(|f| tool_config.resolve_path(f))
+            .collect(),
         _ => unreachable!("Invalid file_type: {}", file_type),
     };
 
@@ -526,14 +523,7 @@ fn main() -> anyhow::Result<()> {
                 if !tool.files.is_empty() {
                     fs::create_dir_all(&files_base)?;
                     for file_path in &tool.files {
-                        let original = if file_path.as_str().starts_with('/')
-                            || file_path.as_str().starts_with('~')
-                            || file_path.as_str().starts_with('$')
-                        {
-                            paths::expand_path(file_path)
-                        } else {
-                            tool.resolved_config_dir().join(file_path)
-                        };
+                        let original = tool.resolve_path(file_path);
                         files::link_file(&original, &files_base, yes)?;
                     }
                 }
@@ -602,14 +592,7 @@ fn main() -> anyhow::Result<()> {
 
                 // Remove managed file symlinks then copy central files back
                 for file_path in &tool_config.files {
-                    let original = if file_path.as_str().starts_with('/')
-                        || file_path.as_str().starts_with('~')
-                        || file_path.as_str().starts_with('$')
-                    {
-                        paths::expand_path(file_path.as_str())
-                    } else {
-                        tool_config.resolved_config_dir().join(file_path)
-                    };
+                    let original = tool_config.resolve_path(file_path);
                     if files::unlink_file(&original)? {
                         let central = files::centralized_path(&original, &files_base);
                         if central.exists() {

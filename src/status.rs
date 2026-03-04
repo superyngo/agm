@@ -93,14 +93,7 @@ pub fn status() -> anyhow::Result<()> {
 
         // Detail lines: managed files
         for file_path in &tool.files {
-            let original = if file_path.starts_with('/')
-                || file_path.starts_with('~')
-                || file_path.starts_with('$')
-            {
-                expand_path(file_path)
-            } else {
-                tool.resolved_config_dir().join(file_path)
-            };
+            let original = tool.resolve_path(file_path);
             let central = centralized_path(&original, &files_base);
             let display = contract_tilde(&original);
             print!("{}{:<8}", INDENT, "file");
@@ -147,6 +140,8 @@ pub fn status() -> anyhow::Result<()> {
         contract_tilde(&central_skills),
         skills_count
     );
+    let source_dir = expand_tilde(&config.central.source_dir);
+    println!("Central source : {}", contract_tilde(&source_dir));
     println!("Central files  : {}", contract_tilde(&files_base));
 
     // Central-level managed files
@@ -287,14 +282,7 @@ pub fn check() -> anyhow::Result<()> {
 
         // Check managed files
         for file_path in &tool.files {
-            let original = if file_path.starts_with('/')
-                || file_path.starts_with('~')
-                || file_path.starts_with('$')
-            {
-                expand_path(file_path)
-            } else {
-                tool.resolved_config_dir().join(file_path)
-            };
+            let original = tool.resolve_path(file_path);
             match check_file_status(&original, &files_base) {
                 FileStatus::Linked => {}
                 FileStatus::Missing => {
