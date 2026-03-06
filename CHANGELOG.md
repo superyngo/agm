@@ -5,13 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [v0.3.0] - 2026-03-06
+
+### Added
+- Add `agm skills list` subcommand
+- Add interactive action picker for `agm skills` without argument (list/add/remove/update)
 
 ### Changed
-- 2026-03-06: refactor: promote `edit` subcommands to top-level commands (`prompt`, `config`, `auth`, `mcp`), add global `--config <path>` override, replace multi-file open-all with interactive `dialoguer` picker
-- 2026-03-06: fix: `--config` now propagates to `init`; `skills update` re-syncs central symlinks after git pull
-- 2026-03-06: refactor: `link`/`unlink` replace `--all` flag with positional `target` (all/central/tool); rename `agm` target to `central` in `prompt`/`config`; all commands with optional target now show interactive `dialoguer` picker instead of exiting
-- 2026-03-06: feat: add `agm skills list` subcommand; `agm skills` without argument shows interactive action picker (list/add/remove/update)
+- Promote `edit` subcommands to top-level commands (`prompt`, `config`, `auth`, `mcp`)
+- Add global `--config <path>` override option
+- Replace multi-file open-all with interactive `dialoguer` picker
+- `--config` now propagates to `init` command
+- `skills update` re-syncs central symlinks after git pull
+- `link`/`unlink` replace `--all` flag with positional `target` (all/central/tool)
+- Rename `agm` target to `central` in `prompt`/`config` commands
+- All commands with optional target now show interactive `dialoguer` picker instead of exiting
+
+## [Unreleased]
 
 ## [v0.2.1] - 2026-03-04
 
