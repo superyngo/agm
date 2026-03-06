@@ -221,7 +221,7 @@ pub fn add_from_url(url: &str, source_dir: &Path, skills_dir: &Path) -> anyhow::
     add_local(&repo_path, skills_dir)
 }
 
-/// Git pull all skill source repos (deduplicating by git root)
+/// Git pull all skill source repos (deduplicating by git root), then re-sync symlinks
 pub fn update_all(skills_dir: &Path) -> anyhow::Result<()> {
     if !skills_dir.is_dir() {
         anyhow::bail!("Skills directory does not exist: {}", skills_dir.display());
@@ -258,20 +258,38 @@ pub fn update_all(skills_dir: &Path) -> anyhow::Result<()> {
 
     println!("Updating {} git repositories...\n", git_roots.len());
 
-    for git_root in git_roots {
-        println!("Updating {}...", contract_tilde(&git_root));
+    for git_root in &git_roots {
+        println!("Updating {}...", contract_tilde(git_root));
         let status = std::process::Command::new("git")
             .args(["pull"])
-            .current_dir(&git_root)
+            .current_dir(git_root)
             .status()?;
 
         if status.success() {
-            println!("{} Updated {}\n", " ok ".green(), contract_tilde(&git_root));
+            println!("{} Updated {}\n", " ok ".green(), contract_tilde(git_root));
         } else {
             println!(
                 "{} Failed to update {}\n",
                 "fail".red(),
-                contract_tilde(&git_root)
+                contract_tilde(git_root)
+            );
+        }
+    }
+
+    // Re-sync: prune broken links then add any new skills from all known repos
+    println!("{}", "Syncing central skills symlinks...".bold());
+    let pruned = prune_broken_skills(skills_dir)?;
+    if pruned > 0 {
+        println!("  {} Removed {} broken link(s)", "warn".yellow(), pruned);
+    }
+    for git_root in &git_roots {
+        let added = add_local(git_root, skills_dir)?;
+        if added > 0 {
+            println!(
+                "  {} {} new skill(s) from {}",
+                " ok ".green(),
+                added,
+                contract_tilde(git_root)
             );
         }
     }

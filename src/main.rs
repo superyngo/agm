@@ -20,6 +20,10 @@ struct Cli {
     #[arg(short = 'v', long = "version")]
     version: bool,
 
+    /// Override config file path
+    #[arg(long, global = true, value_name = "PATH")]
+    config: Option<PathBuf>,
+
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -28,47 +32,44 @@ struct Cli {
 enum Commands {
     /// Initialize agm config and central directories
     Init,
-    /// Show link status for all tools
-    Status,
     /// List all registered tools
     List,
-    /// Verify all symlinks are healthy
-    Check,
     /// Create/repair symlinks
     Link {
-        /// Tool name (e.g. claude, gemini); omit when using --all
-        tool: Option<String>,
-        /// Link all installed tools
-        #[arg(long)]
-        all: bool,
+        /// Target: a tool name, "all" (all installed tools), or "central" (central files only)
+        target: Option<String>,
         /// Skip all confirmation prompts
         #[arg(short = 'y', long = "yes")]
         yes: bool,
     },
     /// Remove symlinks for a tool
     Unlink {
-        /// Tool name (e.g. claude, gemini); omit when using --all
-        tool: Option<String>,
-        /// Unlink all installed tools
-        #[arg(long)]
-        all: bool,
+        /// Target: a tool name, "all" (all installed tools), or "central" (central files only)
+        target: Option<String>,
     },
+    /// Edit config file (central = agm config.toml, or a tool key)
+    Config { target: Option<String> },
+    /// Edit prompt file (central = central MASTER.md, or a tool key)
+    Prompt { target: Option<String> },
+    /// Edit auth files for a tool
+    Auth { target: Option<String> },
+    /// Edit MCP config files for a tool
+    Mcp { target: Option<String> },
     /// Manage skills
     Skills {
         #[command(subcommand)]
         action: Option<SkillsAction>,
     },
-    /// Open config files in editor
-    Edit {
-        /// File type: "prompt", "config", "auth", "mcp"
-        file_type: String,
-        /// Optional tool name (claude, gemini, copilot, etc.)
-        tool: Option<String>,
-    },
+    /// Show link status for all tools
+    Status,
+    /// Verify all symlinks are healthy
+    Check,
 }
 
 #[derive(Subcommand)]
 enum SkillsAction {
+    /// List all installed skills
+    List,
     /// Install skill(s) from local path or repo URL
     Add { source: String },
     /// Remove a skill
@@ -77,41 +78,77 @@ enum SkillsAction {
     Update,
 }
 
-fn select_installed_tool(config: &config::Config) -> anyhow::Result<String> {
-    let installed_tools: Vec<_> = config
-        .tools
-        .iter()
-        .filter(|(_, tool)| tool.is_installed())
-        .collect();
+fn pick_target(
+    config: &config::Config,
+    cmd: &str,
+    include_central: bool,
+) -> anyhow::Result<String> {
+    use dialoguer::{theme::ColorfulTheme, Select};
 
-    if installed_tools.is_empty() {
-        anyhow::bail!("No tools are installed");
+    let mut keys: Vec<String> = Vec::new();
+    let mut labels: Vec<String> = Vec::new();
+
+    if include_central {
+        keys.push("central".into());
+        let desc = if cmd == "prompt" {
+            "central MASTER.md"
+        } else {
+            "agm config.toml"
+        };
+        labels.push(format!("{:<14} {}", "central", desc));
+    }
+    for (key, tool) in &config.tools {
+        keys.push(key.clone());
+        labels.push(format!("{:<14} {}", key, tool.name));
     }
 
-    println!("Select a tool:");
-    for (i, (key, tool)) in installed_tools.iter().enumerate() {
-        println!("  {}) {} ({})", i + 1, key, tool.name);
+    if keys.is_empty() {
+        anyhow::bail!("No targets available for `agm {}`", cmd);
     }
 
-    print!("\nEnter number (or q to quit): ");
-    io::stdout().flush()?;
+    let idx = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt(format!("agm {} — select target", cmd))
+        .items(&labels)
+        .default(0)
+        .interact()?;
 
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    let input = input.trim();
+    Ok(keys[idx].clone())
+}
 
-    if input == "q" || input == "Q" {
-        std::process::exit(0);
+fn pick_link_target(config: &config::Config, cmd: &str) -> anyhow::Result<String> {
+    use dialoguer::{theme::ColorfulTheme, Select};
+
+    let mut keys: Vec<String> = vec!["all".into(), "central".into()];
+    let mut labels: Vec<String> = vec![
+        format!("{:<14} {}", "all", "all installed tools"),
+        format!("{:<14} {}", "central", "central files only"),
+    ];
+    for (key, tool) in &config.tools {
+        keys.push(key.clone());
+        labels.push(format!("{:<14} {}", key, tool.name));
     }
 
-    let index: usize = input
-        .parse()
-        .map_err(|_| anyhow::anyhow!("Invalid input: please enter a number"))?;
+    let idx = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt(format!("agm {} — select target", cmd))
+        .items(&labels)
+        .default(0)
+        .interact()?;
 
-    installed_tools
-        .get(index.saturating_sub(1))
-        .map(|(key, _)| key.to_string())
-        .ok_or_else(|| anyhow::anyhow!("Invalid selection: number out of range"))
+    Ok(keys[idx].clone())
+}
+
+fn pick_file(files: &[PathBuf]) -> anyhow::Result<&PathBuf> {
+    if files.len() == 1 {
+        return Ok(&files[0]);
+    }
+    use dialoguer::{theme::ColorfulTheme, Select};
+    let items: Vec<String> = files.iter().map(|p| paths::contract_tilde(p)).collect();
+    let idx = Select::with_theme(&ColorfulTheme::default())
+        .with_prompt("Select file to open")
+        .items(&items)
+        .default(0)
+        .interact()?;
+    Ok(&files[idx])
 }
 
 fn prompt_yes_no(prompt: &str) -> bool {
@@ -283,14 +320,9 @@ fn open_tool_files(
         anyhow::bail!("No {} files configured for {}", file_type, tool_name);
     }
 
-    println!("\nOpening file(s):");
-    for path in &files_to_open {
-        println!("  {}", paths::contract_tilde(path));
-    }
-    println!();
-
-    let file_refs: Vec<&Path> = files_to_open.iter().map(|p| p.as_path()).collect();
-    editor::open_files(ed, &file_refs)?;
+    let file = pick_file(&files_to_open)?;
+    println!("\nOpening: {}", paths::contract_tilde(file));
+    editor::open_files(ed, &[file])?;
 
     Ok(())
 }
@@ -338,33 +370,53 @@ fn main() -> anyhow::Result<()> {
     };
 
     match command {
-        Commands::Init => init::run(),
+        Commands::Init => init::run(cli.config.clone()),
         Commands::Status => status::status(),
         Commands::List => status::list(),
         Commands::Check => status::check(),
-        Commands::Link { tool, all, yes } => {
-            let config = config::Config::load()?;
+        Commands::Link { target, yes } => {
+            let config = config::Config::load_from(cli.config.clone())?;
             let central_skills = paths::expand_tilde(&config.central.skills_source);
             let central_prompt = paths::expand_tilde(&config.central.prompt_source);
             let source_dir = paths::expand_tilde(&config.central.source_dir);
             let files_base = paths::expand_tilde(&config.central.files_base);
 
+            let target = match target {
+                Some(t) => t,
+                None => pick_link_target(&config, "link")?,
+            };
+
+            // "central" — only process central files
+            if target == "central" {
+                if config.central.files.is_empty() {
+                    println!("No central files configured.");
+                } else {
+                    fs::create_dir_all(&files_base)?;
+                    println!("{}", "Central files:".bold());
+                    for file_path in &config.central.files {
+                        let original = paths::expand_path(file_path);
+                        files::link_file(&original, &files_base, yes)?;
+                    }
+                }
+                return Ok(());
+            }
+
             // Collect which tools to link
-            let tools_to_link: Vec<(&String, &config::ToolConfig)> = if all {
+            let tools_to_link: Vec<(&String, &config::ToolConfig)> = if target == "all" {
                 config
                     .tools
                     .iter()
                     .filter(|(_, tc)| tc.is_installed())
                     .collect()
             } else {
-                let key = tool
-                    .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("Provide a tool name or use --all"))?;
                 let tc = config
                     .tools
-                    .get(key)
-                    .ok_or_else(|| anyhow::anyhow!("Tool '{}' not found in config", key))?;
-                vec![(config.tools.keys().find(|k| k.as_str() == key).unwrap(), tc)]
+                    .get(&target)
+                    .ok_or_else(|| anyhow::anyhow!("Tool '{}' not found in config", target))?;
+                vec![(
+                    config.tools.keys().find(|k| k.as_str() == target).unwrap(),
+                    tc,
+                )]
             };
 
             // Prune broken skill symlinks from central store
@@ -529,8 +581,8 @@ fn main() -> anyhow::Result<()> {
                 }
             }
 
-            // Process central-level managed files (only when --all)
-            if all && !config.central.files.is_empty() {
+            // Process central-level managed files when linking all tools
+            if target == "all" && !config.central.files.is_empty() {
                 fs::create_dir_all(&files_base)?;
                 println!("\n{}", "Central files:".bold());
                 for file_path in &config.central.files {
@@ -541,28 +593,56 @@ fn main() -> anyhow::Result<()> {
 
             Ok(())
         }
-        Commands::Unlink { tool, all } => {
-            let config = config::Config::load()?;
+        Commands::Unlink { target } => {
+            let config = config::Config::load_from(cli.config.clone())?;
             let central_skills = paths::expand_tilde(&config.central.skills_source);
             let central_prompt = paths::expand_tilde(&config.central.prompt_source);
             let files_base = paths::expand_tilde(&config.central.files_base);
 
+            let target = match target {
+                Some(t) => t,
+                None => pick_link_target(&config, "unlink")?,
+            };
+
+            // "central" — only remove central file symlinks
+            if target == "central" {
+                if config.central.files.is_empty() {
+                    println!("No central files configured.");
+                } else {
+                    println!("{}", "Central files:".bold());
+                    for file_path in &config.central.files {
+                        let original = paths::expand_path(file_path);
+                        if files::unlink_file(&original)? {
+                            let central = files::centralized_path(&original, &files_base);
+                            if central.exists() {
+                                if let Some(parent) = original.parent() {
+                                    fs::create_dir_all(parent)?;
+                                }
+                                fs::copy(&central, &original)?;
+                                println!("  {} {} copied back", " ok ".green(), original.display());
+                            }
+                        }
+                    }
+                }
+                return Ok(());
+            }
+
             // Collect which tools to unlink
-            let tools_to_unlink: Vec<(&String, &config::ToolConfig)> = if all {
+            let tools_to_unlink: Vec<(&String, &config::ToolConfig)> = if target == "all" {
                 config
                     .tools
                     .iter()
                     .filter(|(_, tc)| tc.is_installed())
                     .collect()
             } else {
-                let key = tool
-                    .as_deref()
-                    .ok_or_else(|| anyhow::anyhow!("Provide a tool name or use --all"))?;
                 let tc = config
                     .tools
-                    .get(key)
-                    .ok_or_else(|| anyhow::anyhow!("Tool '{}' not found in config", key))?;
-                vec![(config.tools.keys().find(|k| k.as_str() == key).unwrap(), tc)]
+                    .get(&target)
+                    .ok_or_else(|| anyhow::anyhow!("Tool '{}' not found in config", target))?;
+                vec![(
+                    config.tools.keys().find(|k| k.as_str() == target).unwrap(),
+                    tc,
+                )]
             };
 
             for (key, tool_config) in tools_to_unlink {
@@ -606,8 +686,8 @@ fn main() -> anyhow::Result<()> {
                 }
             }
 
-            // Remove central-level managed file symlinks (only when --all)
-            if all && !config.central.files.is_empty() {
+            // Remove central-level managed file symlinks (only when "all")
+            if target == "all" && !config.central.files.is_empty() {
                 println!("\n{}", "Central files:".bold());
                 for file_path in &config.central.files {
                     let original = paths::expand_path(file_path);
@@ -627,13 +707,48 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Commands::Skills { action } => {
-            let mut config = config::Config::load()?;
+            let mut config = config::Config::load_from(cli.config.clone())?;
             let skills_dir = paths::expand_tilde(&config.central.skills_source);
             let source_dir = paths::expand_tilde(&config.central.source_dir);
 
-            match action {
+            let action = match action {
+                Some(a) => a,
                 None => {
-                    // List skills
+                    use dialoguer::{theme::ColorfulTheme, Select};
+                    let labels = [
+                        "list   — show all installed skills",
+                        "add    — install skill(s) from path or URL",
+                        "remove — remove a skill",
+                        "update — git pull all skill repos",
+                    ];
+                    let idx = Select::with_theme(&ColorfulTheme::default())
+                        .with_prompt("agm skills — select action")
+                        .items(&labels)
+                        .default(0)
+                        .interact()?;
+                    match idx {
+                        0 => SkillsAction::List,
+                        1 => {
+                            use dialoguer::Input;
+                            let source: String = Input::with_theme(&ColorfulTheme::default())
+                                .with_prompt("Path or URL")
+                                .interact_text()?;
+                            SkillsAction::Add { source }
+                        }
+                        2 => {
+                            use dialoguer::Input;
+                            let name: String = Input::with_theme(&ColorfulTheme::default())
+                                .with_prompt("Skill name")
+                                .interact_text()?;
+                            SkillsAction::Remove { name }
+                        }
+                        _ => SkillsAction::Update,
+                    }
+                }
+            };
+
+            match action {
+                SkillsAction::List => {
                     let skills = skills::list_skills(&skills_dir)?;
                     if skills.is_empty() {
                         println!("No skills installed.");
@@ -645,14 +760,12 @@ fn main() -> anyhow::Result<()> {
                     }
                     Ok(())
                 }
-                Some(SkillsAction::Add { source }) => {
+                SkillsAction::Add { source } => {
                     if skills::is_url(&source) {
-                        // URL mode
                         let added = skills::add_from_url(&source, &source_dir, &skills_dir)?;
                         config.add_skill_repo(&source)?;
                         println!("\n{} skill(s) added from URL.", added);
                     } else {
-                        // Local path mode
                         let source_path = paths::expand_tilde(&source);
                         println!(
                             "Adding skills from {}...",
@@ -663,58 +776,71 @@ fn main() -> anyhow::Result<()> {
                     }
                     Ok(())
                 }
-                Some(SkillsAction::Remove { name }) => {
+                SkillsAction::Remove { name } => {
                     skills::remove_skill(&name, &skills_dir)?;
                     Ok(())
                 }
-                Some(SkillsAction::Update) => {
+                SkillsAction::Update => {
                     skills::update_all(&skills_dir)?;
                     Ok(())
                 }
             }
         }
-        Commands::Edit { file_type, tool } => {
-            let config = config::Config::load()?;
+        Commands::Prompt { target } => {
+            let config = config::Config::load_from(cli.config.clone())?;
             let ed = editor::get_editor(&config);
-
-            match (file_type.as_str(), tool) {
-                // No tool specified - open master files or show selection
-                ("prompt", None) => {
-                    let prompt_path = paths::expand_tilde(&config.central.prompt_source);
-                    println!("\nOpening file(s):");
-                    println!("  {}", paths::contract_tilde(&prompt_path));
-                    println!();
-                    editor::open_files(&ed, &[&prompt_path])?;
+            let target = match target {
+                Some(t) => t,
+                None => pick_target(&config, "prompt", true)?,
+            };
+            match target.as_str() {
+                "central" => {
+                    let p = paths::expand_tilde(&config.central.prompt_source);
+                    println!("\nOpening: {}", paths::contract_tilde(&p));
+                    editor::open_files(&ed, &[&p])?;
                 }
-                ("config", None) => {
-                    let config_path = config::Config::config_path();
-                    println!("\nOpening file(s):");
-                    println!("  {}", paths::contract_tilde(&config_path));
-                    println!();
-                    editor::open_files(&ed, &[&config_path])?;
-                }
-                ("auth", None) | ("mcp", None) => {
-                    let selected_tool = select_installed_tool(&config)?;
-                    open_tool_files(&config, &ed, &selected_tool, file_type.as_str())?;
-                }
-
-                // Tool specified - open tool-specific files
-                ("prompt", Some(tool_name))
-                | ("config", Some(tool_name))
-                | ("auth", Some(tool_name))
-                | ("mcp", Some(tool_name)) => {
-                    open_tool_files(&config, &ed, &tool_name, file_type.as_str())?;
-                }
-
-                // Invalid file type
-                (invalid, _) => {
-                    anyhow::bail!(
-                        "Invalid file type: '{}'. Use: prompt, config, auth, or mcp",
-                        invalid
-                    );
-                }
+                tool_name => open_tool_files(&config, &ed, tool_name, "prompt")?,
             }
-
+            Ok(())
+        }
+        Commands::Config { target } => {
+            let config = config::Config::load_from(cli.config.clone())?;
+            let ed = editor::get_editor(&config);
+            let target = match target {
+                Some(t) => t,
+                None => pick_target(&config, "config", true)?,
+            };
+            match target.as_str() {
+                "central" => {
+                    let p = cli
+                        .config
+                        .clone()
+                        .unwrap_or_else(config::Config::config_path);
+                    println!("\nOpening: {}", paths::contract_tilde(&p));
+                    editor::open_files(&ed, &[&p])?;
+                }
+                tool_name => open_tool_files(&config, &ed, tool_name, "config")?,
+            }
+            Ok(())
+        }
+        Commands::Auth { target } => {
+            let config = config::Config::load_from(cli.config.clone())?;
+            let ed = editor::get_editor(&config);
+            let target = match target {
+                Some(t) => t,
+                None => pick_target(&config, "auth", false)?,
+            };
+            open_tool_files(&config, &ed, &target, "auth")?;
+            Ok(())
+        }
+        Commands::Mcp { target } => {
+            let config = config::Config::load_from(cli.config.clone())?;
+            let ed = editor::get_editor(&config);
+            let target = match target {
+                Some(t) => t,
+                None => pick_target(&config, "mcp", false)?,
+            };
+            open_tool_files(&config, &ed, &target, "mcp")?;
             Ok(())
         }
     }

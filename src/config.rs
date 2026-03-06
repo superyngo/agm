@@ -57,7 +57,11 @@ impl Config {
     }
 
     pub fn load() -> anyhow::Result<Self> {
-        let path = Self::config_path();
+        Self::load_from(None)
+    }
+
+    pub fn load_from(path: Option<PathBuf>) -> anyhow::Result<Self> {
+        let path = path.unwrap_or_else(Self::config_path);
         if !path.exists() {
             anyhow::bail!(
                 "Config not found at {}. Run `agm init` first.",
@@ -65,17 +69,19 @@ impl Config {
             );
         }
         let content = std::fs::read_to_string(&path)?;
-        let config: Config = toml::from_str(&content)?;
-        Ok(config)
+        Ok(toml::from_str(&content)?)
     }
 
     pub fn save(&self) -> anyhow::Result<()> {
-        let path = Self::config_path();
+        self.save_to(&Self::config_path())
+    }
+
+    pub fn save_to(&self, path: &std::path::Path) -> anyhow::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let content = toml::to_string_pretty(self)?;
-        std::fs::write(&path, content)?;
+        std::fs::write(path, content)?;
         Ok(())
     }
 

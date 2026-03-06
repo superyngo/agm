@@ -1,11 +1,14 @@
 use colored::Colorize;
 use std::fs;
+use std::path::PathBuf;
 
 use crate::config::Config;
 use crate::paths::expand_tilde;
 
-pub fn run() -> anyhow::Result<()> {
-    let config_path = Config::config_path();
+pub fn run(config_path_override: Option<PathBuf>) -> anyhow::Result<()> {
+    let config_path = config_path_override
+        .clone()
+        .unwrap_or_else(Config::config_path);
 
     // Create config if not exists
     if config_path.exists() {
@@ -16,7 +19,7 @@ pub fn run() -> anyhow::Result<()> {
         );
     } else {
         let config = Config::default_config();
-        config.save()?;
+        config.save_to(&config_path)?;
         println!(
             "{} Created config at {}",
             " ok ".green(),
@@ -25,7 +28,7 @@ pub fn run() -> anyhow::Result<()> {
     }
 
     // Load config to get central paths
-    let config = Config::load()?;
+    let config = Config::load_from(config_path_override.clone())?;
 
     // Create central directories
     let dirs_to_create = [
@@ -65,7 +68,7 @@ pub fn run() -> anyhow::Result<()> {
 
     // Detect installed tools
     println!("\n{}", "Detected tools:".bold());
-    let config = Config::load()?;
+    let config = Config::load_from(config_path_override)?;
     for (key, tool) in &config.tools {
         let status = if tool.is_installed() {
             "installed".green()
