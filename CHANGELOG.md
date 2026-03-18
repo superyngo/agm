@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Remove `agm list` command - functionality now covered by `agm status`
+- Remove `agm check` command - functionality now covered by `agm status`
+
 ## [v0.2.1] - 2026-03-04
 
 ### Changed

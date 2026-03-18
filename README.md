@@ -99,8 +99,6 @@ agm skills update
 ### Status & Info
 
 - `agm status` - Show link status for all tools
-- `agm list` - List all registered tools
-- `agm check` - Verify all symlinks are healthy
 
 ### Link Management
 

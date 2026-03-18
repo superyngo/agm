@@ -32,8 +32,6 @@ struct Cli {
 enum Commands {
     /// Initialize agm config and central directories
     Init,
-    /// List all registered tools
-    List,
     /// Create/repair symlinks
     Link {
         /// Target: a tool name, "all" (all installed tools), or "central" (central files only)
@@ -62,8 +60,6 @@ enum Commands {
     },
     /// Show link status for all tools
     Status,
-    /// Verify all symlinks are healthy
-    Check,
 }
 
 #[derive(Subcommand)]
@@ -372,8 +368,6 @@ fn main() -> anyhow::Result<()> {
     match command {
         Commands::Init => init::run(cli.config.clone()),
         Commands::Status => status::status(),
-        Commands::List => status::list(),
-        Commands::Check => status::check(),
         Commands::Link { target, yes } => {
             let config = config::Config::load_from(cli.config.clone())?;
             let central_skills = paths::expand_tilde(&config.central.skills_source);
@@ -716,10 +710,10 @@ fn main() -> anyhow::Result<()> {
                 None => {
                     use dialoguer::{theme::ColorfulTheme, Select};
                     let labels = [
-                        "list   — show all installed skills",
-                        "add    — install skill(s) from path or URL",
-                        "remove — remove a skill",
-                        "update — git pull all skill repos",
+                        "list        show all installed skills",
+                        "add         install skill(s) from path or URL",
+                        "remove      remove a skill",
+                        "update      git pull all skill repos",
                     ];
                     let idx = Select::with_theme(&ColorfulTheme::default())
                         .with_prompt("agm skills — select action")
