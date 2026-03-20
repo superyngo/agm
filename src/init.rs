@@ -78,6 +78,6 @@ pub fn run(config_path_override: Option<PathBuf>) -> anyhow::Result<()> {
         println!("  {} ({}) — {}", key, tool.name, status);
     }
 
-    println!("\n{}", "Run `agm link` to create symlinks.".dimmed());
+    println!("\n{}", "Run `agm link` to create links.".dimmed());
     Ok(())
 }

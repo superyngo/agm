@@ -5,7 +5,7 @@ A Rust CLI tool for centralized management of AI coding agent CLI tools (Claude 
 ## Features
 
 - **Centralized Configuration**: Manage prompts, skills, and configs for all AI CLI tools in one place
-- **Symlink Management**: Automatically create and maintain symlinks from each tool to central sources
+- **Symlink Management**: Automatically create and maintain links from each tool to central sources (symlinks on Unix, junctions + hardlinks on Windows)
 - **Skills Management**: Install skills from local paths or git repos, with auto-update support
 - **Registry-Driven**: Add new tools by editing TOML config—no code changes needed
 - **Status Monitoring**: Check link health and tool installation status at a glance
@@ -34,6 +34,7 @@ The installation script will:
 **Supported Platforms:**
 - Linux (x86_64, i686, aarch64, armv7) - both GNU and musl
 - macOS (x86_64, Apple Silicon)
+- Windows (x86_64, i686)
 
 ---
 
@@ -49,6 +50,13 @@ Download the latest release for your platform from the [Releases](https://github
 tar -xzf agm-*.tar.gz
 chmod +x agm
 mv agm ~/.local/bin/
+```
+
+**Windows:**
+```powershell
+# Extract the downloaded zip file and move agm.exe to a directory in your PATH
+Expand-Archive agm-windows-*.zip -DestinationPath .
+Move-Item agm.exe "$env:USERPROFILE\.local\bin\"
 ```
 
 ---
@@ -81,7 +89,7 @@ agm init
 # Show status of all tools
 agm status
 
-# Create symlinks for all installed tools
+# Create links for all installed tools
 agm link
 
 # Add skills from a git repo
@@ -102,16 +110,16 @@ agm skills update
 
 ### Link Management
 
-- `agm link` - Create/repair all symlinks (prompts + skills)
-- `agm link skills` - Only handle skills symlinks
-- `agm link prompts` - Only handle prompt symlinks
-- `agm unlink <tool>` - Remove symlinks for a specific tool
+- `agm link` - Create/repair all links (prompts + skills)
+- `agm link skills` - Only handle skills links
+- `agm link prompts` - Only handle prompt links
+- `agm unlink <tool>` - Remove links for a specific tool
 
 ### Skills Management
 
 - `agm skills` - List installed skills with source paths
 - `agm skills add <source>` - Install skill(s) from local path or repo URL
-- `agm skills remove <name>` - Remove a skill symlink
+- `agm skills remove <name>` - Remove a skill link
 - `agm skills update` - Git pull on all skill source repositories
 
 ### Editing Shortcuts

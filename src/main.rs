@@ -33,7 +33,7 @@ struct Cli {
 enum Commands {
     /// Initialize agm config and central directories
     Init,
-    /// Create/repair symlinks
+    /// Create/repair links
     Link {
         /// Target: a tool name, "all" (all installed tools), or "central" (central files only)
         target: Option<String>,
@@ -41,7 +41,7 @@ enum Commands {
         #[arg(short = 'y', long = "yes")]
         yes: bool,
     },
-    /// Remove symlinks for a tool
+    /// Remove links for a tool
     Unlink {
         /// Target: a tool name, "all" (all installed tools), or "central" (central files only)
         target: Option<String>,
@@ -419,7 +419,7 @@ fn main() -> anyhow::Result<()> {
                 )]
             };
 
-            // Prune broken skill symlinks from central store
+            // Prune broken skill links from central store
             if central_skills.is_dir() {
                 let pruned = skills::prune_broken_skills(&central_skills)?;
                 if pruned > 0 {
@@ -486,7 +486,7 @@ fn main() -> anyhow::Result<()> {
                         let skills_content = skills::scan_skills(&skills_link);
                         if !skills_content.is_empty() {
                             if yes || prompt_yes_no(&format!(
-                                "Found {} existing skill(s) in {}. Migrate to AGM and create symlink?",
+                                "Found {} existing skill(s) in {}. Migrate to AGM and create link?",
                                 skills_content.len(),
                                 paths::contract_tilde(&skills_link)
                             )) {
@@ -505,7 +505,7 @@ fn main() -> anyhow::Result<()> {
                                 continue;
                             }
                         } else {
-                            // Empty skills dir — remove it so we can create the symlink
+                            // Empty skills dir — remove it so we can create the link
                             fs::remove_dir_all(&skills_link)?;
                         }
                     }

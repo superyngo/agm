@@ -74,6 +74,15 @@ jobs:
             target: aarch64-apple-darwin
             artifact_name: agm
             asset_name: agm-macos-aarch64
+          # Windows builds
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact_name: agm.exe
+            asset_name: agm-windows-x86_64
+          - os: windows-latest
+            target: i686-pc-windows-msvc
+            artifact_name: agm.exe
+            asset_name: agm-windows-i686
 
     steps:
       - name: Checkout code
@@ -128,8 +137,15 @@ jobs:
         run: cross build --release --target ${{ matrix.target }}
 
       - name: Build with cargo (simple targets)
-        if: matrix.target != 'i686-unknown-linux-musl' && matrix.target != 'armv7-unknown-linux-musleabihf' && matrix.target != 'aarch64-unknown-linux-musl'
+        if: |
+          matrix.target != 'i686-unknown-linux-musl'
+          && matrix.target != 'armv7-unknown-linux-musleabihf'
+          && matrix.target != 'aarch64-unknown-linux-musl'
         run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Run tests (Windows)
+        if: matrix.os == 'windows-latest'
+        run: cargo test --target ${{ matrix.target }}
 
       - name: Strip binary (native x86)
         if: matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'i686-unknown-linux-gnu' || matrix.target == 'x86_64-unknown-linux-musl' || matrix.target == 'i686-unknown-linux-musl'
@@ -152,17 +168,32 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-musl'
         run: echo "Skipping strip for cross-compiled ${{ matrix.target }} (already stripped by cross)"
 
-      - name: Create tarball
+      - name: Create tarball (Unix)
+        if: matrix.os != 'windows-latest'
         run: |
           cd target/${{ matrix.target }}/release
           tar czf ${{ matrix.asset_name }}.tar.gz ${{ matrix.artifact_name }}
           mv ${{ matrix.asset_name }}.tar.gz ../../../
 
-      - name: Upload artifacts
+      - name: Create zip (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "target/${{ matrix.target }}/release/${{ matrix.artifact_name }}" -DestinationPath "${{ matrix.asset_name }}.zip"
+
+      - name: Upload artifacts (Unix)
+        if: matrix.os != 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset_name }}
           path: ${{ matrix.asset_name }}.tar.gz
+
+      - name: Upload artifacts (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset_name }}
+          path: ${{ matrix.asset_name }}.zip
 
   release:
     name: Create Release
@@ -186,13 +217,13 @@ jobs:
           echo "Artifacts directory:"
           ls -la artifacts/
           echo "Looking for artifacts:"
-          find artifacts -type f -name "*.tar.gz"
+          find artifacts -type f -name "*.tar.gz" -o -name "*.zip"
 
       - name: Prepare release files
         run: |
           mkdir -p release_files
-          # Copy all tar.gz files to release_files directory
-          find artifacts -type f -name "*.tar.gz" -exec cp {} release_files/ \;
+          # Copy all tar.gz and zip files to release_files directory
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec cp {} release_files/ \;
           echo "Files in release_files:"
           ls -la release_files/
 
