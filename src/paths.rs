@@ -74,7 +74,10 @@ fn expand_env_vars(s: &str) -> String {
 pub fn contract_tilde(path: &Path) -> String {
     if let Some(home) = dirs::home_dir() {
         if let Ok(rest) = path.strip_prefix(&home) {
-            return format!("~/{}", rest.display());
+            let display = format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display());
+            #[cfg(windows)]
+            let display = display.replace('/', "\\");
+            return display;
         }
     }
     path.display().to_string()
@@ -130,8 +133,12 @@ mod tests {
     #[test]
     fn test_contract_tilde() {
         let home = dirs::home_dir().unwrap();
-        let path = home.join(".config/agm");
-        assert_eq!(contract_tilde(&path), "~/.config/agm");
+        let path = home.join(".config").join("agm");
+        let sep = std::path::MAIN_SEPARATOR;
+        assert_eq!(
+            contract_tilde(&path),
+            format!("~{}.config{}agm", sep, sep)
+        );
     }
 
     #[test]
