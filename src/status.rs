@@ -66,7 +66,11 @@ pub fn status() -> anyhow::Result<()> {
                 ),
                 LinkStatus::Broken => println!("{}", "✗ broken".red()),
                 LinkStatus::Wrong(t) => println!("{} → {}", "✗ wrong".red(), t.dimmed()),
-                LinkStatus::Blocked => println!("{}", "✗ blocked".red()),
+                LinkStatus::Blocked => println!(
+                    "{} → {}",
+                    "✗ blocked".red(),
+                    contract_tilde(&prompt_link).dimmed()
+                ),
             }
         }
 
@@ -87,7 +91,11 @@ pub fn status() -> anyhow::Result<()> {
                 ),
                 LinkStatus::Broken => println!("{}", "✗ broken".red()),
                 LinkStatus::Wrong(t) => println!("{} → {}", "✗ wrong".red(), t.dimmed()),
-                LinkStatus::Blocked => println!("{}", "✗ blocked".red()),
+                LinkStatus::Blocked => println!(
+                    "{} → {}",
+                    "✗ blocked".red(),
+                    contract_tilde(&skills_link).dimmed()
+                ),
             }
         }
 
