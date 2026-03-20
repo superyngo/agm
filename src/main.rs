@@ -569,6 +569,9 @@ fn main() -> anyhow::Result<()> {
                                     println!("  {} Skipping prompt link", "skip".yellow());
                                     continue;
                                 }
+                            } else {
+                                // Empty file — safe to remove without backup
+                                fs::remove_file(&prompt_link)?;
                             }
                         }
                     }
