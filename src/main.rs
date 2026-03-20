@@ -4,6 +4,7 @@ mod files;
 mod init;
 mod linker;
 mod paths;
+mod platform;
 mod skills;
 mod status;
 
@@ -174,7 +175,6 @@ fn migrate_skills_dir(
     tool_key: &str,
 ) -> anyhow::Result<usize> {
     use anyhow::Context;
-    use std::os::unix::fs as unix_fs;
 
     fs::create_dir_all(tool_skills_target)?;
     fs::create_dir_all(central_skills)?;
@@ -214,8 +214,7 @@ fn migrate_skills_dir(
 
         // If central link already exists and points to dest, skip
         if link.symlink_metadata().is_ok() {
-            let already_ok = fs::read_link(&link)
-                .ok()
+            let already_ok = platform::read_dir_link_target(&link)
                 .and_then(|t| fs::canonicalize(&t).ok())
                 .zip(fs::canonicalize(&dest).ok())
                 .map(|(a, b)| a == b)
@@ -226,10 +225,10 @@ fn migrate_skills_dir(
                 continue;
             }
             // Stale/wrong link — remove and recreate
-            fs::remove_file(&link)?;
+            platform::remove_link(&link)?;
         }
 
-        unix_fs::symlink(&dest, &link)
+        platform::link_dir(&dest, &link)
             .with_context(|| format!("Failed to link skill '{}' into central", effective_name))?;
 
         println!(
@@ -255,15 +254,22 @@ fn copy_dir_all(src: &Path, dst: &Path) -> anyhow::Result<()> {
         let entry = entry?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-        // Use symlink_metadata so we don't follow (and potentially fail on broken) symlinks
         let meta = fs::symlink_metadata(&src_path)?;
-        if meta.file_type().is_symlink() {
-            // Recreate symlink rather than copying the target content
+        if platform::is_dir_link(&src_path) {
+            // Recreate directory link
+            if let Some(target) = platform::read_dir_link_target(&src_path) {
+                if dst_path.symlink_metadata().is_ok() {
+                    platform::remove_link(&dst_path)?;
+                }
+                platform::link_dir(&target, &dst_path)?;
+            }
+        } else if meta.file_type().is_symlink() {
+            // File symlink (Unix) — recreate
             if let Ok(target) = fs::read_link(&src_path) {
                 if dst_path.symlink_metadata().is_ok() {
                     fs::remove_file(&dst_path)?;
                 }
-                std::os::unix::fs::symlink(&target, &dst_path)?;
+                platform::link_file(&target, &dst_path)?;
             }
         } else if meta.is_dir() {
             copy_dir_all(&src_path, &dst_path)?;
@@ -450,7 +456,7 @@ fn main() -> anyhow::Result<()> {
                 if !tool.skills_dir.is_empty() {
                     let skills_link = tool.resolved_config_dir().join(&tool.skills_dir);
 
-                    if skills_link.is_symlink() {
+                    if platform::is_dir_link(&skills_link) {
                         let actual_target = fs::read_link(&skills_link)?;
                         let expected_target = central_skills
                             .canonicalize()
@@ -469,8 +475,8 @@ fn main() -> anyhow::Result<()> {
                                     paths::contract_tilde(&resolved_actual)
                                 ))
                             {
-                                fs::remove_file(&skills_link)?;
-                                println!("  {} Removed old symlink", " ok ".green());
+                                platform::remove_link(&skills_link)?;
+                                println!("  {} Removed old link", " ok ".green());
                             } else {
                                 println!("  {} Skipping skills link", "skip".yellow());
                                 continue;
@@ -504,26 +510,30 @@ fn main() -> anyhow::Result<()> {
                         }
                     }
 
-                    linker::create_link(&skills_link, &central_skills, "skills")?;
+                    linker::create_link(&skills_link, &central_skills, "skills", true)?;
                 }
 
                 // Link prompt file
                 if !tool.prompt_filename.is_empty() {
                     let prompt_link = tool.resolved_config_dir().join(&tool.prompt_filename);
 
-                    if prompt_link.is_symlink() {
-                        let actual_target = fs::read_link(&prompt_link)?;
-                        let expected_target = central_prompt
-                            .canonicalize()
-                            .unwrap_or_else(|_| central_prompt.clone());
-                        let resolved_actual = prompt_link
-                            .parent()
-                            .map(|p: &std::path::Path| p.join(&actual_target))
-                            .unwrap_or_else(|| actual_target.clone());
-                        let resolved_actual =
-                            resolved_actual.canonicalize().unwrap_or(resolved_actual);
+                    // Check if prompt is already correctly linked (symlink or hardlink)
+                    let already_linked = prompt_link.exists()
+                        && central_prompt.exists()
+                        && platform::same_file(&prompt_link, &central_prompt)
+                            .unwrap_or(false);
 
-                        if resolved_actual != expected_target {
+                    if !already_linked && prompt_link.exists() {
+                        if fs::read_link(&prompt_link).is_ok() {
+                            // It's a symlink to wrong target
+                            let actual_target = fs::read_link(&prompt_link)?;
+                            let resolved_actual = prompt_link
+                                .parent()
+                                .map(|p: &std::path::Path| p.join(&actual_target))
+                                .unwrap_or_else(|| actual_target.clone());
+                            let resolved_actual =
+                                resolved_actual.canonicalize().unwrap_or(resolved_actual);
+
                             if yes
                                 || prompt_yes_no(&format!(
                                     "Prompt already linked to {}. Re-link to AGM?",
@@ -531,38 +541,40 @@ fn main() -> anyhow::Result<()> {
                                 ))
                             {
                                 fs::remove_file(&prompt_link)?;
-                                println!("  {} Removed old symlink", " ok ".green());
+                                println!("  {} Removed old link", " ok ".green());
                             } else {
                                 println!("  {} Skipping prompt link", "skip".yellow());
                                 continue;
                             }
-                        }
-                    } else if prompt_link.exists() {
-                        let content = fs::read_to_string(&prompt_link)?;
-                        if !content.trim().is_empty() {
-                            if yes
-                                || prompt_yes_no(&format!(
-                                    "Existing prompt file found at {}. Backup and create symlink?",
-                                    paths::contract_tilde(&prompt_link)
-                                ))
-                            {
-                                let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-                                let backup_path =
-                                    prompt_link.with_extension(format!("{}.bak", timestamp));
-                                fs::rename(&prompt_link, &backup_path)?;
-                                println!(
-                                    "  {} Backed up prompt to {}",
-                                    " ok ".green(),
-                                    paths::contract_tilde(&backup_path)
-                                );
-                            } else {
-                                println!("  {} Skipping prompt link", "skip".yellow());
-                                continue;
+                        } else {
+                            // Regular file (not a link)
+                            let content = fs::read_to_string(&prompt_link)?;
+                            if !content.trim().is_empty() {
+                                if yes
+                                    || prompt_yes_no(&format!(
+                                        "Existing prompt file found at {}. Backup and create link?",
+                                        paths::contract_tilde(&prompt_link)
+                                    ))
+                                {
+                                    let timestamp =
+                                        chrono::Utc::now().format("%Y%m%d_%H%M%S");
+                                    let backup_path =
+                                        prompt_link.with_extension(format!("{}.bak", timestamp));
+                                    fs::rename(&prompt_link, &backup_path)?;
+                                    println!(
+                                        "  {} Backed up prompt to {}",
+                                        " ok ".green(),
+                                        paths::contract_tilde(&backup_path)
+                                    );
+                                } else {
+                                    println!("  {} Skipping prompt link", "skip".yellow());
+                                    continue;
+                                }
                             }
                         }
                     }
 
-                    linker::create_link(&prompt_link, &central_prompt, "prompt")?;
+                    linker::create_link(&prompt_link, &central_prompt, "prompt", false)?;
                 }
 
                 // Link managed files
@@ -598,7 +610,7 @@ fn main() -> anyhow::Result<()> {
                 None => pick_link_target(&config, "unlink")?,
             };
 
-            // "central" — only remove central file symlinks
+            // "central" — only remove central file links
             if target == "central" {
                 if config.central.files.is_empty() {
                     println!("No central files configured.");
@@ -606,7 +618,7 @@ fn main() -> anyhow::Result<()> {
                     println!("{}", "Central files:".bold());
                     for file_path in &config.central.files {
                         let original = paths::expand_path(file_path);
-                        if files::unlink_file(&original)? {
+                        if files::unlink_file(&original, &files_base)? {
                             let central = files::centralized_path(&original, &files_base);
                             if central.exists() {
                                 if let Some(parent) = original.parent() {
@@ -642,32 +654,33 @@ fn main() -> anyhow::Result<()> {
             for (key, tool_config) in tools_to_unlink {
                 println!("Unlinking {} ({}):", key, tool_config.name);
 
-                // Remove skills symlink then copy central skills back
+                // Remove skills link then copy central skills back
                 if !tool_config.skills_dir.is_empty() {
                     let skills_link = tool_config
                         .resolved_config_dir()
                         .join(&tool_config.skills_dir);
-                    if linker::remove_link(&skills_link, "skills")? && central_skills.is_dir() {
+                    if linker::remove_link(&skills_link, "skills", true)? && central_skills.is_dir()
+                    {
                         copy_dir_all(&central_skills, &skills_link)?;
                         println!("  {} skills copied back", " ok ".green());
                     }
                 }
 
-                // Remove prompt symlink then copy central prompt back
+                // Remove prompt link then copy central prompt back
                 if !tool_config.prompt_filename.is_empty() {
                     let prompt_link = tool_config
                         .resolved_config_dir()
                         .join(&tool_config.prompt_filename);
-                    if linker::remove_link(&prompt_link, "prompt")? && central_prompt.exists() {
+                    if linker::remove_link(&prompt_link, "prompt", false)? && central_prompt.exists(){
                         fs::copy(&central_prompt, &prompt_link)?;
                         println!("  {} prompt copied back", " ok ".green());
                     }
                 }
 
-                // Remove managed file symlinks then copy central files back
+                // Remove managed file links then copy central files back
                 for file_path in &tool_config.files {
                     let original = tool_config.resolve_path(file_path);
-                    if files::unlink_file(&original)? {
+                    if files::unlink_file(&original, &files_base)? {
                         let central = files::centralized_path(&original, &files_base);
                         if central.exists() {
                             if let Some(parent) = original.parent() {
@@ -680,12 +693,12 @@ fn main() -> anyhow::Result<()> {
                 }
             }
 
-            // Remove central-level managed file symlinks (only when "all")
+            // Remove central-level managed file links (only when "all")
             if target == "all" && !config.central.files.is_empty() {
                 println!("\n{}", "Central files:".bold());
                 for file_path in &config.central.files {
                     let original = paths::expand_path(file_path);
-                    if files::unlink_file(&original)? {
+                    if files::unlink_file(&original, &files_base)? {
                         let central = files::centralized_path(&original, &files_base);
                         if central.exists() {
                             if let Some(parent) = original.parent() {

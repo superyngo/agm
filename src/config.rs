@@ -181,10 +181,15 @@ impl ToolConfig {
 
     /// Resolve a tool-relative path string to an absolute PathBuf.
     ///
-    /// - Contains `/` → treated as absolute; expands `~` and `$VAR`
-    /// - No `/` → relative to `config_dir`
+    /// - Absolute-looking path (contains `/`, `\`, starts with `~`, or has drive letter) →
+    ///   expand `~` and `$VAR`
+    /// - Otherwise → relative to `config_dir`
     pub fn resolve_path(&self, path: &str) -> PathBuf {
-        if path.contains('/') {
+        let is_absolute = path.contains('/')
+            || path.contains('\\')
+            || path.starts_with('~')
+            || (path.len() >= 2 && path.as_bytes()[1] == b':');
+        if is_absolute {
             expand_path(path)
         } else {
             self.resolved_config_dir().join(path)

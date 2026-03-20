@@ -1,8 +1,9 @@
 use anyhow::Context;
 use colored::Colorize;
 use std::fs;
-use std::os::unix::fs as unix_fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+use crate::platform;
 
 /// Status of a managed file's symlink
 #[derive(Debug, PartialEq)]
@@ -32,8 +33,11 @@ pub fn centralized_path(original: &Path, files_base: &Path) -> PathBuf {
         // Resolve relative paths from cwd (shouldn't normally happen)
         std::env::current_dir().unwrap_or_default().join(original)
     };
-    // Strip leading "/" to avoid path joining issues
-    let rel = abs.strip_prefix("/").unwrap_or(&abs);
+    // Build relative path by filtering out RootDir and Prefix (drive letter) components
+    let rel: PathBuf = abs
+        .components()
+        .filter(|c| !matches!(c, Component::RootDir | Component::Prefix(_)))
+        .collect();
     files_base.join(rel)
 }
 
@@ -78,6 +82,12 @@ pub fn check_file_status(original: &Path, files_base: &Path) -> FileStatus {
                         }
                     }
                 }
+            } else if central.exists() {
+                // Regular file — could be a hardlink (Windows) or unmanaged
+                match platform::same_file(original, &central) {
+                    Ok(true) => FileStatus::Linked,
+                    _ => FileStatus::Unmanaged,
+                }
             } else {
                 // Regular file or directory — not yet managed
                 FileStatus::Unmanaged
@@ -86,12 +96,13 @@ pub fn check_file_status(original: &Path, files_base: &Path) -> FileStatus {
     }
 }
 
-/// Remove a managed file's symlink (leaves the central copy intact).
+/// Remove a managed file's link (leaves the central copy intact).
 ///
-/// - Symlink exists → remove it
-/// - Not a symlink → warn, skip
+/// - Symlink or hardlink to central → remove it
+/// - Not a link → warn, skip
 /// - Doesn't exist → skip
-pub fn unlink_file(original: &Path) -> anyhow::Result<bool> {
+pub fn unlink_file(original: &Path, files_base: &Path) -> anyhow::Result<bool> {
+    let central = centralized_path(original, files_base);
     let label = original.display().to_string();
     match original.symlink_metadata() {
         Err(_) => {
@@ -100,11 +111,23 @@ pub fn unlink_file(original: &Path) -> anyhow::Result<bool> {
         }
         Ok(meta) => {
             if meta.file_type().is_symlink() {
+                // Unix symlink
+                fs::remove_file(original)?;
+                println!("  {} {} removed", " ok ".green(), label);
+                Ok(true)
+            } else if central.exists()
+                && platform::same_file(original, &central).unwrap_or(false)
+            {
+                // Hardlink to central (Windows)
                 fs::remove_file(original)?;
                 println!("  {} {} removed", " ok ".green(), label);
                 Ok(true)
             } else {
-                println!("  {} {} is not a symlink, skipping", "warn".red(), label);
+                println!(
+                    "  {} {} is not a managed link, skipping",
+                    "warn".red(),
+                    label
+                );
                 Ok(false)
             }
         }
@@ -144,9 +167,9 @@ pub fn link_file(original: &Path, files_base: &Path, yes: bool) -> anyhow::Resul
                 );
                 return Ok(false);
             }
-            unix_fs::symlink(&central, original).with_context(|| {
+            platform::link_file(&central, original).with_context(|| {
                 format!(
-                    "Failed to create symlink: {} → {}",
+                    "Failed to create link: {} → {}",
                     label,
                     central.display()
                 )
@@ -165,7 +188,7 @@ pub fn link_file(original: &Path, files_base: &Path, yes: bool) -> anyhow::Resul
             );
             if yes {
                 fs::remove_file(original)?;
-                unix_fs::symlink(&central, original)?;
+                platform::link_file(&central, original)?;
                 println!("  {} {} re-linked", " ok ".green(), label);
                 Ok(true)
             } else {
@@ -199,10 +222,10 @@ pub fn link_file(original: &Path, files_base: &Path, yes: bool) -> anyhow::Resul
             fs::rename(original, &central)
                 .with_context(|| format!("Failed to move {} → {}", label, central.display()))?;
 
-            // Create symlink
-            unix_fs::symlink(&central, original).with_context(|| {
+            // Create link
+            platform::link_file(&central, original).with_context(|| {
                 format!(
-                    "Failed to create symlink: {} → {}",
+                    "Failed to create link: {} → {}",
                     label,
                     central.display()
                 )
@@ -213,13 +236,13 @@ pub fn link_file(original: &Path, files_base: &Path, yes: bool) -> anyhow::Resul
         }
 
         FileStatus::ReadyToLink => {
-            // Original missing, central exists — just create symlink
+            // Original missing, central exists — just create link
             if let Some(parent) = original.parent() {
                 fs::create_dir_all(parent)?;
             }
-            unix_fs::symlink(&central, original).with_context(|| {
+            platform::link_file(&central, original).with_context(|| {
                 format!(
-                    "Failed to create symlink: {} → {}",
+                    "Failed to create link: {} → {}",
                     label,
                     central.display()
                 )
@@ -254,13 +277,13 @@ mod tests {
 
     #[test]
     fn test_centralized_path() {
-        let files_base = Path::new("/agm/files");
-        let original = Path::new("/Users/wen/.claude/settings.json");
-        let central = centralized_path(original, files_base);
-        assert_eq!(
-            central,
-            Path::new("/agm/files/Users/wen/.claude/settings.json")
-        );
+        let tmp = TempDir::new().unwrap();
+        let files_base = tmp.path().join("agm").join("files");
+        let original = tmp.path().join("Users").join("wen").join(".claude").join("settings.json");
+        let central = centralized_path(&original, &files_base);
+        // The centralized path should strip root/prefix and join under files_base
+        assert!(central.starts_with(&files_base));
+        assert!(central.ends_with("settings.json"));
     }
 
     #[test]
@@ -306,16 +329,10 @@ mod tests {
 
         let result = link_file(&original, &files_base, false).unwrap();
         assert!(result);
-        // Original should now be a symlink
-        assert!(original
-            .symlink_metadata()
-            .unwrap()
-            .file_type()
-            .is_symlink());
-        // Central should contain the content
+        // Original should now be linked to central
         let central = centralized_path(&original, &files_base);
         assert_eq!(fs::read_to_string(&central).unwrap(), r#"{"key": "value"}"#);
-        // Symlink should be readable through original path
+        // Link should be readable through original path
         assert_eq!(
             fs::read_to_string(&original).unwrap(),
             r#"{"key": "value"}"#
@@ -362,11 +379,7 @@ mod tests {
 
         let result = link_file(&original, &files_base, false).unwrap();
         assert!(result);
-        assert!(original
-            .symlink_metadata()
-            .unwrap()
-            .file_type()
-            .is_symlink());
+        assert!(original.exists());
     }
 
     #[test]
@@ -376,7 +389,7 @@ mod tests {
         let central = centralized_path(&original, &files_base);
         fs::create_dir_all(central.parent().unwrap()).unwrap();
         fs::write(&central, "content").unwrap();
-        unix_fs::symlink(&central, &original).unwrap();
+        platform::link_file(&central, &original).unwrap();
 
         let result = link_file(&original, &files_base, false).unwrap();
         assert!(!result); // skipped
@@ -384,36 +397,53 @@ mod tests {
 
     #[test]
     fn test_link_file_broken_skip_no_central() {
-        // Broken symlink pointing to central, but central doesn't exist → skip
-        let (_tmp, files_base, tool_dir) = setup();
-        let original = tool_dir.join("settings.json");
-        let central = centralized_path(&original, &files_base);
-        fs::create_dir_all(central.parent().unwrap()).unwrap();
+        // Broken link pointing to central, but central doesn't exist → skip
+        // (This scenario only applies on Unix where symlinks can be broken)
+        #[cfg(unix)]
+        {
+            let (_tmp, files_base, tool_dir) = setup();
+            let original = tool_dir.join("settings.json");
+            let central = centralized_path(&original, &files_base);
+            fs::create_dir_all(central.parent().unwrap()).unwrap();
 
-        // Create symlink pointing to central (central doesn't exist → broken)
-        unix_fs::symlink(&central, &original).unwrap();
+            // Create symlink pointing to central (central doesn't exist → broken)
+            platform::link_file(&central, &original).unwrap();
 
-        let result = link_file(&original, &files_base, false).unwrap();
-        // Cannot repair: central has no content, returns false
-        assert!(!result);
+            let result = link_file(&original, &files_base, false).unwrap();
+            // Cannot repair: central has no content, returns false
+            assert!(!result);
+        }
     }
 
     #[test]
     fn test_link_file_broken_repaired_when_central_recreated() {
         // Simulate: was linked, central deleted, then central re-created before link_file runs.
-        // At that point the symlink is valid again (Linked) → skip.
+        // On Unix (symlinks): symlink still points to central path → Linked → skip
+        // On Windows (hardlinks): original still has old content, new central is a different
+        //   file → Unmanaged → re-link
         let (_tmp, files_base, tool_dir) = setup();
         let original = tool_dir.join("settings.json");
         let central = centralized_path(&original, &files_base);
         fs::create_dir_all(central.parent().unwrap()).unwrap();
         fs::write(&central, "content").unwrap();
-        unix_fs::symlink(&central, &original).unwrap();
+        platform::link_file(&central, &original).unwrap();
         // Delete and recreate central (simulates transient deletion)
         fs::remove_file(&central).unwrap();
         fs::write(&central, "repaired").unwrap();
-        // Symlink is now valid again
+
         let result = link_file(&original, &files_base, false).unwrap();
-        assert!(!result); // already linked → skip
-        assert_eq!(fs::read_to_string(&original).unwrap(), "repaired");
+        #[cfg(unix)]
+        {
+            // Symlink still valid → skip
+            assert!(!result);
+            assert_eq!(fs::read_to_string(&original).unwrap(), "repaired");
+        }
+        #[cfg(windows)]
+        {
+            // Hardlink broken (different inode) → re-linked
+            assert!(result);
+            // After re-link, original is readable
+            assert!(original.exists());
+        }
     }
 }

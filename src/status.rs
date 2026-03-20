@@ -30,14 +30,14 @@ pub fn status() -> anyhow::Result<()> {
 
         let prompt_ls = if !tool.prompt_filename.is_empty() {
             let link = tool.resolved_config_dir().join(&tool.prompt_filename);
-            Some(check_link(&link, &central_prompt))
+            Some(check_link(&link, &central_prompt, false))
         } else {
             None
         };
 
         let skills_ls = if !tool.skills_dir.is_empty() {
             let link = tool.resolved_config_dir().join(&tool.skills_dir);
-            Some(check_link(&link, &central_skills))
+            Some(check_link(&link, &central_skills, true))
         } else {
             None
         };

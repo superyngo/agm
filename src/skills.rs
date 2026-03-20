@@ -1,10 +1,10 @@
 use anyhow::Context;
 use colored::Colorize;
 use std::fs;
-use std::os::unix::fs as unix_fs;
 use std::path::{Path, PathBuf};
 
 use crate::paths::contract_tilde;
+use crate::platform;
 
 /// Scan a path for skills. Returns list of (skill_name, skill_dir_path).
 /// If path/SKILL.md exists → single skill.
@@ -64,11 +64,11 @@ pub fn list_skills(skills_dir: &Path) -> anyhow::Result<Vec<(String, PathBuf)>> 
     for entry in fs::read_dir(skills_dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_symlink() || path.is_dir() {
+        if path.is_dir() || platform::is_dir_link(&path) {
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                // Resolve symlink to get source path
-                let source = if path.is_symlink() {
-                    fs::read_link(&path).unwrap_or(path.clone())
+                // Resolve link to get source path
+                let source = if platform::is_dir_link(&path) {
+                    platform::read_dir_link_target(&path).unwrap_or_else(|| path.clone())
                 } else {
                     path.clone()
                 };
@@ -104,7 +104,7 @@ pub fn add_local(source: &Path, skills_dir: &Path) -> anyhow::Result<usize> {
             continue;
         }
 
-        unix_fs::symlink(&skill_path, &link_path)
+        platform::link_dir(&skill_path, &link_path)
             .with_context(|| format!("Failed to link skill: {}", name))?;
         println!(
             "  {} {} → {}",
@@ -126,17 +126,17 @@ pub fn remove_skill(name: &str, skills_dir: &Path) -> anyhow::Result<()> {
         anyhow::bail!("Skill '{}' not found", name);
     }
 
-    if skill_path.is_symlink() {
-        fs::remove_file(&skill_path)?;
+    if platform::is_dir_link(&skill_path) {
+        platform::remove_link(&skill_path)?;
         println!("{} Removed skill: {}", " ok ".green(), name);
     } else if skill_path.is_dir() {
-        // It's a real directory, not a symlink - be cautious
+        // It's a real directory, not a link — be cautious
         anyhow::bail!(
-            "'{}' is a directory, not a symlink. Remove manually if needed.",
+            "'{}' is a directory, not a link. Remove manually if needed.",
             name
         );
     } else {
-        anyhow::bail!("'{}' is not a symlink", name);
+        anyhow::bail!("'{}' is not a link", name);
     }
 
     Ok(())
@@ -153,14 +153,14 @@ pub fn prune_broken_skills(skills_dir: &Path) -> anyhow::Result<usize> {
     for entry in fs::read_dir(skills_dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_symlink() {
+        if platform::is_dir_link(&path) {
             // Follow the link; if target doesn't exist the link is broken
             if !path.exists() {
                 let name = path
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("<unknown>");
-                fs::remove_file(&path)?;
+                platform::remove_link(&path)?;
                 println!("  {} {} (broken skill link removed)", "warn".yellow(), name);
                 removed += 1;
             }
@@ -234,9 +234,9 @@ pub fn update_all(skills_dir: &Path) -> anyhow::Result<()> {
         let entry = entry?;
         let link_path = entry.path();
 
-        if link_path.is_symlink() {
-            // Resolve symlink to real path
-            if let Ok(target) = fs::read_link(&link_path) {
+        if platform::is_dir_link(&link_path) {
+            // Resolve link to real path
+            if let Some(target) = platform::read_dir_link_target(&link_path) {
                 let real_path = if target.is_absolute() {
                     target
                 } else {
@@ -357,7 +357,7 @@ mod tests {
         fs::write(skill_source.join("SKILL.md"), "# Skill").unwrap();
 
         let skill_link = skills_dir.join("skill1");
-        unix_fs::symlink(&skill_source, &skill_link).unwrap();
+        platform::link_dir(&skill_source, &skill_link).unwrap();
 
         let skills = list_skills(&skills_dir).unwrap();
         assert_eq!(skills.len(), 1);
@@ -374,7 +374,7 @@ mod tests {
 
         let added = add_local(&skill_source, &skills_dir).unwrap();
         assert_eq!(added, 1);
-        assert!(skills_dir.join("my-skill").is_symlink());
+        assert!(skills_dir.join("my-skill").exists());
     }
 
     #[test]
@@ -401,7 +401,7 @@ mod tests {
         fs::write(skill_source.join("SKILL.md"), "# Skill").unwrap();
 
         let skill_link = skills_dir.join("my-skill");
-        unix_fs::symlink(&skill_source, &skill_link).unwrap();
+        platform::link_dir(&skill_source, &skill_link).unwrap();
 
         remove_skill("my-skill", &skills_dir).unwrap();
         assert!(!skill_link.exists());
@@ -417,10 +417,13 @@ mod tests {
         let skill_source = tmp.path().join("real-skill");
         fs::create_dir(&skill_source).unwrap();
         fs::write(skill_source.join("SKILL.md"), "# Skill").unwrap();
-        unix_fs::symlink(&skill_source, &skills_dir.join("real-skill")).unwrap();
+        platform::link_dir(&skill_source, &skills_dir.join("real-skill")).unwrap();
 
         let ghost = tmp.path().join("ghost-skill");
-        unix_fs::symlink(&ghost, &skills_dir.join("ghost-skill")).unwrap();
+        // On Windows, junctions require existing target, so create then delete
+        fs::create_dir(&ghost).unwrap();
+        platform::link_dir(&ghost, &skills_dir.join("ghost-skill")).unwrap();
+        fs::remove_dir(&ghost).unwrap();
 
         let removed = prune_broken_skills(&skills_dir).unwrap();
         assert_eq!(removed, 1);
