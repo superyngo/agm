@@ -42,6 +42,8 @@ pub fn remove_link(link_path: &Path) -> io::Result<()>
 /// Check if a path is a link (symlink, junction, or hardlink).
 /// - Unix: metadata.file_type().is_symlink()
 /// - Windows: junction → reparse point check; hardlink → nlink > 1
+/// NOTE: nlink > 1 is a heuristic — it cannot prove AGM ownership.
+/// Callers should pair with same_file() for authoritative verification.
 pub fn is_link(path: &Path) -> bool
 
 /// Read the target of a directory link. Returns None for hardlinks (no direction).
