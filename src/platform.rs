@@ -7,6 +7,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 /// Result of checking the system's ability to create links.
+#[allow(dead_code)]
 pub enum LinkCapability {
     /// Full junction + hardlink support
     Full,
@@ -54,6 +55,7 @@ pub fn default_editor() -> &'static str {
 }
 
 /// Probe the system's ability to create links.
+#[allow(dead_code)]
 pub fn check_link_capability() -> LinkCapability {
     sys::check_link_capability()
 }
@@ -194,6 +196,7 @@ mod sys {
         }
     }
 
+    #[allow(dead_code)]
     pub fn check_link_capability() -> LinkCapability {
         let tmp = std::env::temp_dir().join("agm_capability_check");
         let _ = fs::remove_dir_all(&tmp);

@@ -485,7 +485,8 @@ fn main() -> anyhow::Result<()> {
                     } else if skills_link.is_dir() {
                         let skills_content = skills::scan_skills(&skills_link);
                         if !skills_content.is_empty() {
-                            if yes || prompt_yes_no(&format!(
+                            if yes
+                                || prompt_yes_no(&format!(
                                 "Found {} existing skill(s) in {}. Migrate to AGM and create link?",
                                 skills_content.len(),
                                 paths::contract_tilde(&skills_link)
@@ -520,8 +521,7 @@ fn main() -> anyhow::Result<()> {
                     // Check if prompt is already correctly linked (symlink or hardlink)
                     let already_linked = prompt_link.exists()
                         && central_prompt.exists()
-                        && platform::same_file(&prompt_link, &central_prompt)
-                            .unwrap_or(false);
+                        && platform::same_file(&prompt_link, &central_prompt).unwrap_or(false);
 
                     if !already_linked && prompt_link.exists() {
                         if fs::read_link(&prompt_link).is_ok() {
@@ -556,8 +556,7 @@ fn main() -> anyhow::Result<()> {
                                         paths::contract_tilde(&prompt_link)
                                     ))
                                 {
-                                    let timestamp =
-                                        chrono::Utc::now().format("%Y%m%d_%H%M%S");
+                                    let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
                                     let backup_path =
                                         prompt_link.with_extension(format!("{}.bak", timestamp));
                                     fs::rename(&prompt_link, &backup_path)?;
@@ -671,7 +670,9 @@ fn main() -> anyhow::Result<()> {
                     let prompt_link = tool_config
                         .resolved_config_dir()
                         .join(&tool_config.prompt_filename);
-                    if linker::remove_link(&prompt_link, "prompt", false)? && central_prompt.exists(){
+                    if linker::remove_link(&prompt_link, "prompt", false)?
+                        && central_prompt.exists()
+                    {
                         fs::copy(&central_prompt, &prompt_link)?;
                         println!("  {} prompt copied back", " ok ".green());
                     }

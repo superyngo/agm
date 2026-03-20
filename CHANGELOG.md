@@ -21,11 +21,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rename `agm` target to `central` in `prompt`/`config` commands
 - All commands with optional target now show interactive `dialoguer` picker instead of exiting
 
-## [Unreleased]
+## [v0.4.0] - 2026-03-20
+
+### Added
+- Windows platform support with NTFS junctions for directories and hardlinks for files
+- Platform abstraction layer for cross-platform link operations
+- Windows CI/CD targets in GitHub Actions
+- Link capability detection for Windows systems
+
+### Changed
+- Code formatting improvements via cargo fmt
+- Improve link error message formatting
 
 ### Removed
 - Remove `agm list` command - functionality now covered by `agm status`
 - Remove `agm check` command - functionality now covered by `agm status`
+
+## [Unreleased]
 
 ## [v0.2.1] - 2026-03-04
 

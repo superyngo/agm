@@ -115,9 +115,7 @@ pub fn unlink_file(original: &Path, files_base: &Path) -> anyhow::Result<bool> {
                 fs::remove_file(original)?;
                 println!("  {} {} removed", " ok ".green(), label);
                 Ok(true)
-            } else if central.exists()
-                && platform::same_file(original, &central).unwrap_or(false)
-            {
+            } else if central.exists() && platform::same_file(original, &central).unwrap_or(false) {
                 // Hardlink to central (Windows)
                 fs::remove_file(original)?;
                 println!("  {} {} removed", " ok ".green(), label);
@@ -168,11 +166,7 @@ pub fn link_file(original: &Path, files_base: &Path, yes: bool) -> anyhow::Resul
                 return Ok(false);
             }
             platform::link_file(&central, original).with_context(|| {
-                format!(
-                    "Failed to create link: {} → {}",
-                    label,
-                    central.display()
-                )
+                format!("Failed to create link: {} → {}", label, central.display())
             })?;
             println!("  {} {} (repaired broken link)", " ok ".green(), label);
             Ok(true)
@@ -224,11 +218,7 @@ pub fn link_file(original: &Path, files_base: &Path, yes: bool) -> anyhow::Resul
 
             // Create link
             platform::link_file(&central, original).with_context(|| {
-                format!(
-                    "Failed to create link: {} → {}",
-                    label,
-                    central.display()
-                )
+                format!("Failed to create link: {} → {}", label, central.display())
             })?;
 
             println!("  {} {} → {}", " ok ".green(), label, central.display());
@@ -241,11 +231,7 @@ pub fn link_file(original: &Path, files_base: &Path, yes: bool) -> anyhow::Resul
                 fs::create_dir_all(parent)?;
             }
             platform::link_file(&central, original).with_context(|| {
-                format!(
-                    "Failed to create link: {} → {}",
-                    label,
-                    central.display()
-                )
+                format!("Failed to create link: {} → {}", label, central.display())
             })?;
             println!("  {} {} → {}", " ok ".green(), label, central.display());
             Ok(true)
@@ -279,7 +265,12 @@ mod tests {
     fn test_centralized_path() {
         let tmp = TempDir::new().unwrap();
         let files_base = tmp.path().join("agm").join("files");
-        let original = tmp.path().join("Users").join("wen").join(".claude").join("settings.json");
+        let original = tmp
+            .path()
+            .join("Users")
+            .join("wen")
+            .join(".claude")
+            .join("settings.json");
         let central = centralized_path(&original, &files_base);
         // The centralized path should strip root/prefix and join under files_base
         assert!(central.starts_with(&files_base));
