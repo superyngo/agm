@@ -130,7 +130,7 @@ pub fn install_skill(name: &str, source_path: &Path, skills_dir: &Path) -> anyho
 /// No-op if the skill is not installed. Source directory is NOT deleted.
 pub fn uninstall_skill(name: &str, skills_dir: &Path) -> anyhow::Result<()> {
     let link_path = skills_dir.join(name);
-    if !link_path.symlink_metadata().is_ok() {
+    if link_path.symlink_metadata().is_err() {
         return Ok(());
     }
     if platform::is_dir_link(&link_path) {
@@ -245,7 +245,7 @@ pub fn update_all(skills_dir: &Path, source_dir: &Path) -> anyhow::Result<()> {
         let mut added = 0;
         for (name, skill_path) in new_skills {
             let link_path = skills_dir.join(&name);
-            if !link_path.symlink_metadata().is_ok() {
+            if link_path.symlink_metadata().is_err() {
                 // Not installed — install it (new skill discovered after pull)
                 if let Err(e) = install_skill(&name, &skill_path, skills_dir) {
                     println!("  {} {}: {}", "warn".yellow(), name, e);
@@ -297,7 +297,7 @@ fn resolve_repo_url(dir_name: &str, path: &Path, skill_repos: &[String]) -> Opti
 /// Check the install status of a skill by examining the central skills directory.
 fn check_install_status(name: &str, source_path: &Path, skills_dir: &Path) -> SkillInstallStatus {
     let link_path = skills_dir.join(name);
-    if !link_path.symlink_metadata().is_ok() {
+    if link_path.symlink_metadata().is_err() {
         return SkillInstallStatus::NotInstalled;
     }
     if platform::is_dir_link(&link_path) {

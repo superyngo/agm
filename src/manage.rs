@@ -567,8 +567,7 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
     let end = (start + height).min(visible.len());
 
     let mut lines: Vec<Line> = Vec::new();
-    for vis_idx in start..end {
-        let row_idx = visible[vis_idx];
+    for (vis_idx, &row_idx) in visible.iter().enumerate().take(end).skip(start) {
         let is_cursor = vis_idx == app.cursor;
         let row = &app.rows[row_idx];
 

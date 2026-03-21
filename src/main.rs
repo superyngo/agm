@@ -915,9 +915,8 @@ fn main() -> anyhow::Result<()> {
                 }
                 SkillsAction::Remove { name: _ } => {
                     println!(
-                        "{}\n{}",
+                        "{}\nUse 'agm skills manage' to interactively install/uninstall skills.",
                         "'agm skills remove' has been replaced by 'agm skills manage'.".yellow(),
-                        "Use 'agm skills manage' to interactively install/uninstall skills."
                     );
                     Ok(())
                 }
