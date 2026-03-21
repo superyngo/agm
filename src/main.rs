@@ -6,6 +6,7 @@ mod linker;
 mod paths;
 mod platform;
 mod skills;
+mod manage;
 mod status;
 
 use clap::{CommandFactory, Parser, Subcommand};
@@ -65,14 +66,27 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum SkillsAction {
-    /// List all installed skills
+    /// List all skills grouped by source
     List,
     /// Install skill(s) from local path or repo URL
-    Add { source: String },
-    /// Remove a skill
-    Remove { name: String },
+    Add {
+        source: String,
+        /// Install all skills without prompting
+        #[arg(short = 'a', long = "all")]
+        all: bool,
+    },
+    /// Interactive skill manager (TUI)
+    Manage {
+        /// Source name to manage, or "all" for all sources
+        name: Option<String>,
+    },
     /// Git pull all skill source repos
     Update,
+    /// (deprecated, use 'manage' instead)
+    #[command(hide = true)]
+    Remove {
+        name: String,
+    },
 }
 
 fn pick_target(
@@ -132,6 +146,30 @@ fn pick_link_target(config: &config::Config, cmd: &str) -> anyhow::Result<String
         .interact()?;
 
     Ok(keys[idx].clone())
+}
+
+/// If there is only 1 skill, return it directly. If multiple and `all` is true, return all.
+/// Otherwise show a MultiSelect dialog and return the selected skills.
+fn select_skills_to_install(
+    skills: &[(String, PathBuf)],
+    all: bool,
+) -> anyhow::Result<Vec<(String, PathBuf)>> {
+    if skills.len() <= 1 || all {
+        return Ok(skills.to_vec());
+    }
+
+    use dialoguer::{theme::ColorfulTheme, MultiSelect};
+
+    let labels: Vec<&str> = skills.iter().map(|(name, _)| name.as_str()).collect();
+    let defaults: Vec<bool> = vec![true; skills.len()];
+
+    let selected = MultiSelect::with_theme(&ColorfulTheme::default())
+        .with_prompt(format!("Select skills to install ({} found)", skills.len()))
+        .items(&labels)
+        .defaults(&defaults)
+        .interact()?;
+
+    Ok(selected.into_iter().map(|i| skills[i].clone()).collect())
 }
 
 fn pick_file(files: &[PathBuf]) -> anyhow::Result<&PathBuf> {
@@ -733,9 +771,9 @@ fn main() -> anyhow::Result<()> {
                 None => {
                     use dialoguer::{theme::ColorfulTheme, Select};
                     let labels = [
-                        "list        show all installed skills",
+                        "list        show all skills grouped by source",
                         "add         install skill(s) from path or URL",
-                        "remove      remove a skill",
+                        "manage      interactive skill manager",
                         "update      git pull all skill repos",
                     ];
                     let idx = Select::with_theme(&ColorfulTheme::default())
@@ -750,15 +788,9 @@ fn main() -> anyhow::Result<()> {
                             let source: String = Input::with_theme(&ColorfulTheme::default())
                                 .with_prompt("Path or URL")
                                 .interact_text()?;
-                            SkillsAction::Add { source }
+                            SkillsAction::Add { source, all: false }
                         }
-                        2 => {
-                            use dialoguer::Input;
-                            let name: String = Input::with_theme(&ColorfulTheme::default())
-                                .with_prompt("Skill name")
-                                .interact_text()?;
-                            SkillsAction::Remove { name }
-                        }
+                        2 => SkillsAction::Manage { name: None },
                         _ => SkillsAction::Update,
                     }
                 }
@@ -766,35 +798,127 @@ fn main() -> anyhow::Result<()> {
 
             match action {
                 SkillsAction::List => {
-                    let skills = skills::list_skills(&skills_dir)?;
-                    if skills.is_empty() {
-                        println!("No skills installed.");
+                    let pruned = skills::prune_broken_skills(&skills_dir)?;
+                    if pruned > 0 {
+                        println!("  {} Removed {} broken link(s)", "warn".yellow(), pruned);
+                    }
+                    let groups = skills::scan_all_sources(
+                        &source_dir,
+                        &skills_dir,
+                        &config.central.skill_repos,
+                    );
+                    if groups.is_empty() {
+                        println!("No skill sources found. Use 'agm skills add' to add a source.");
                     } else {
-                        println!("\n{} skills installed:", skills.len());
-                        for (name, source) in skills {
-                            println!("  {} → {}", name, paths::contract_tilde(&source));
+                        println!();
+                        let mut total = 0;
+                        let mut installed = 0;
+                        for group in &groups {
+                            let icon = match &group.kind {
+                                skills::SourceKind::Repo { .. } => "📦",
+                                skills::SourceKind::Local => "📁",
+                                skills::SourceKind::Migrated { .. } => "📁",
+                            };
+                            let detail = match &group.kind {
+                                skills::SourceKind::Repo { url } => {
+                                    url.as_deref().map(|u| format!("repo: {}", u)).unwrap_or_else(|| "repo".into())
+                                }
+                                skills::SourceKind::Local => "local".into(),
+                                skills::SourceKind::Migrated { tool } => format!("migrated from {}", tool),
+                            };
+                            println!("{} {} ({})", icon, group.name.bold(), detail);
+                            for skill in &group.skills {
+                                total += 1;
+                                let (indicator, status_text) = match skill.install_status {
+                                    skills::SkillInstallStatus::Installed => {
+                                        installed += 1;
+                                        ("✓".green().to_string(), "installed".green().to_string())
+                                    }
+                                    skills::SkillInstallStatus::NotInstalled => {
+                                        ("✗".dimmed().to_string(), "not installed".dimmed().to_string())
+                                    }
+                                    skills::SkillInstallStatus::Conflict => {
+                                        ("⚡".yellow().to_string(), "conflict".yellow().to_string())
+                                    }
+                                };
+                                println!("   {} {:<24} {}", indicator, skill.name, status_text);
+                            }
+                            println!();
                         }
+                        println!(
+                            "── {} ──",
+                            format!(
+                                "{} source(s), {} skill(s) ({} installed, {} not installed)",
+                                groups.len(),
+                                total,
+                                installed,
+                                total - installed
+                            )
+                            .bold()
+                        );
                     }
                     Ok(())
                 }
-                SkillsAction::Add { source } => {
+                SkillsAction::Add { source, all } => {
                     if skills::is_url(&source) {
-                        let added = skills::add_from_url(&source, &source_dir, &skills_dir)?;
+                        let (repo_path, found_skills) =
+                            skills::clone_or_pull(&source, &source_dir)?;
                         config.add_skill_repo(&source)?;
-                        println!("\n{} skill(s) added from URL.", added);
+                        let to_install = select_skills_to_install(&found_skills, all)?;
+                        let mut count = 0;
+                        for (name, skill_path) in to_install {
+                            match skills::install_skill(&name, &skill_path, &skills_dir) {
+                                Ok(()) => {
+                                    println!(
+                                        "  {} {} → {}",
+                                        " ok ".green(),
+                                        name,
+                                        paths::contract_tilde(&skill_path)
+                                    );
+                                    count += 1;
+                                }
+                                Err(e) => println!("  {} {}: {}", "warn".yellow(), name, e),
+                            }
+                        }
+                        println!("\n{} skill(s) installed from {}.", count, paths::contract_tilde(&repo_path));
                     } else {
                         let source_path = paths::expand_tilde(&source);
                         println!(
                             "Adding skills from {}...",
                             paths::contract_tilde(&source_path)
                         );
-                        let added = skills::add_local(&source_path, &skills_dir)?;
-                        println!("\n{} skill(s) added.", added);
+                        let (dest, found_skills) =
+                            skills::add_local_copy(&source_path, &source_dir)?;
+                        let to_install = select_skills_to_install(&found_skills, all)?;
+                        let mut count = 0;
+                        for (name, skill_path) in to_install {
+                            match skills::install_skill(&name, &skill_path, &skills_dir) {
+                                Ok(()) => {
+                                    println!(
+                                        "  {} {} → {}",
+                                        " ok ".green(),
+                                        name,
+                                        paths::contract_tilde(&skill_path)
+                                    );
+                                    count += 1;
+                                }
+                                Err(e) => println!("  {} {}: {}", "warn".yellow(), name, e),
+                            }
+                        }
+                        println!("\n{} skill(s) installed from {}.", count, paths::contract_tilde(&dest));
                     }
                     Ok(())
                 }
-                SkillsAction::Remove { name } => {
-                    skills::remove_skill(&name, &skills_dir)?;
+                SkillsAction::Manage { name } => {
+                    manage::run(&mut config, name.as_deref())?;
+                    Ok(())
+                }
+                SkillsAction::Remove { name: _ } => {
+                    println!(
+                        "{}\n{}",
+                        "'agm skills remove' has been replaced by 'agm skills manage'.".yellow(),
+                        "Use 'agm skills manage' to interactively install/uninstall skills."
+                    );
                     Ok(())
                 }
                 SkillsAction::Update => {
