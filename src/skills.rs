@@ -301,37 +301,31 @@ pub fn add_from_url(url: &str, source_dir: &Path, skills_dir: &Path) -> anyhow::
 }
 
 /// Git pull all skill source repos (deduplicating by git root), then re-sync symlinks
-pub fn update_all(skills_dir: &Path) -> anyhow::Result<()> {
+pub fn update_all(skills_dir: &Path, source_dir: &Path) -> anyhow::Result<()> {
     if !skills_dir.is_dir() {
         anyhow::bail!("Skills directory does not exist: {}", skills_dir.display());
     }
 
+    // Collect git roots from source_dir (not from skills symlinks)
     let mut git_roots = std::collections::HashSet::new();
-
-    // Iterate all symlinks in skills directory
-    for entry in fs::read_dir(skills_dir)? {
-        let entry = entry?;
-        let link_path = entry.path();
-
-        if platform::is_dir_link(&link_path) {
-            // Resolve link to real path
-            if let Some(target) = platform::read_dir_link_target(&link_path) {
-                let real_path = if target.is_absolute() {
-                    target
-                } else {
-                    skills_dir.join(target)
-                };
-
-                // Find git root
-                if let Ok(git_root) = find_git_root(&real_path) {
-                    git_roots.insert(git_root);
+    if source_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(source_dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                // Skip local/ and agm_tools/ — they aren't git repos
+                if name == "local" || name == "agm_tools" {
+                    continue;
+                }
+                if path.is_dir() && path.join(".git").exists() {
+                    git_roots.insert(path);
                 }
             }
         }
     }
 
     if git_roots.is_empty() {
-        println!("No git repositories found in skills directory.");
+        println!("No git repositories found in source directory.");
         return Ok(());
     }
 
@@ -355,14 +349,34 @@ pub fn update_all(skills_dir: &Path) -> anyhow::Result<()> {
         }
     }
 
-    // Re-sync: prune broken links then add any new skills from all known repos
+    // Prune broken links (consistent with list/manage behavior)
     println!("{}", "Syncing central skills symlinks...".bold());
     let pruned = prune_broken_skills(skills_dir)?;
     if pruned > 0 {
         println!("  {} Removed {} broken link(s)", "warn".yellow(), pruned);
     }
+
+    // Re-sync: for each repo, find new skills not yet installed and install them
     for git_root in &git_roots {
-        let added = add_local(git_root, skills_dir)?;
+        let new_skills = scan_skills(git_root);
+        let mut added = 0;
+        for (name, skill_path) in new_skills {
+            let link_path = skills_dir.join(&name);
+            if !link_path.symlink_metadata().is_ok() {
+                // Not installed — install it (new skill discovered after pull)
+                if let Err(e) = install_skill(&name, &skill_path, skills_dir) {
+                    println!("  {} {}: {}", "warn".yellow(), name, e);
+                } else {
+                    println!(
+                        "  {} {} → {}",
+                        " ok ".green(),
+                        name,
+                        contract_tilde(&skill_path)
+                    );
+                    added += 1;
+                }
+            }
+        }
         if added > 0 {
             println!(
                 "  {} {} new skill(s) from {}",

@@ -435,8 +435,14 @@ fn main() -> anyhow::Result<()> {
             if !config.central.skill_repos.is_empty() {
                 println!("\n{}", "Processing skill repositories...".bold());
                 for url in &config.central.skill_repos {
-                    match skills::add_from_url(url, &source_dir, &central_skills) {
-                        Ok(count) => {
+                    match skills::clone_or_pull(url, &source_dir) {
+                        Ok((_repo_path, found_skills)) => {
+                            let mut count = 0;
+                            for (name, skill_path) in found_skills {
+                                if let Ok(()) = skills::install_skill(&name, &skill_path, &central_skills) {
+                                    count += 1;
+                                }
+                            }
                             if count > 0 {
                                 println!("  {} {} skill(s) from {}", " ok ".green(), count, url);
                             }
@@ -792,7 +798,7 @@ fn main() -> anyhow::Result<()> {
                     Ok(())
                 }
                 SkillsAction::Update => {
-                    skills::update_all(&skills_dir)?;
+                    skills::update_all(&skills_dir, &source_dir)?;
                     Ok(())
                 }
             }
