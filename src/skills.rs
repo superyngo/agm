@@ -376,6 +376,150 @@ pub fn update_all(skills_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Try to resolve the git remote URL for a directory.
+fn resolve_repo_url(dir_name: &str, path: &Path, skill_repos: &[String]) -> Option<String> {
+    for url in skill_repos {
+        if repo_name_from_url(url) == dir_name {
+            return Some(url.clone());
+        }
+    }
+    std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(path)
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        })
+}
+
+/// Check the install status of a skill by examining the central skills directory.
+fn check_install_status(name: &str, source_path: &Path, skills_dir: &Path) -> SkillInstallStatus {
+    let link_path = skills_dir.join(name);
+    if !link_path.symlink_metadata().is_ok() {
+        return SkillInstallStatus::NotInstalled;
+    }
+    if platform::is_dir_link(&link_path) {
+        if let Some(target) = platform::read_dir_link_target(&link_path) {
+            let target_canon = fs::canonicalize(&target).unwrap_or(target);
+            let source_canon = fs::canonicalize(source_path).unwrap_or(source_path.to_path_buf());
+            if target_canon == source_canon {
+                return SkillInstallStatus::Installed;
+            }
+        }
+    }
+    SkillInstallStatus::Conflict
+}
+
+/// Scan the source directory and return all sources grouped with their skills and install status.
+/// Gracefully returns empty Vec if source_dir doesn't exist.
+pub fn scan_all_sources(
+    source_dir: &Path,
+    skills_dir: &Path,
+    skill_repos: &[String],
+) -> Vec<SourceGroup> {
+    if !source_dir.is_dir() {
+        return vec![];
+    }
+
+    let mut groups = Vec::new();
+
+    let entries: Vec<_> = match fs::read_dir(source_dir) {
+        Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
+        Err(_) => return vec![],
+    };
+
+    for entry in entries {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let dir_name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+
+        if dir_name == "local" {
+            if let Ok(sub_entries) = fs::read_dir(&path) {
+                for sub_entry in sub_entries.filter_map(|e| e.ok()) {
+                    let sub_path = sub_entry.path();
+                    if !sub_path.is_dir() {
+                        continue;
+                    }
+                    let sub_name = match sub_path.file_name().and_then(|n| n.to_str()) {
+                        Some(n) => n.to_string(),
+                        None => continue,
+                    };
+                    let skills = scan_skills(&sub_path)
+                        .into_iter()
+                        .map(|(name, sp)| SkillInfo {
+                            install_status: check_install_status(&name, &sp, skills_dir),
+                            name,
+                            source_path: sp,
+                        })
+                        .collect();
+                    groups.push(SourceGroup {
+                        name: sub_name,
+                        kind: SourceKind::Local,
+                        path: sub_path,
+                        skills,
+                    });
+                }
+            }
+        } else if dir_name == "agm_tools" {
+            if let Ok(sub_entries) = fs::read_dir(&path) {
+                for sub_entry in sub_entries.filter_map(|e| e.ok()) {
+                    let sub_path = sub_entry.path();
+                    if !sub_path.is_dir() {
+                        continue;
+                    }
+                    let tool_name = match sub_path.file_name().and_then(|n| n.to_str()) {
+                        Some(n) => n.to_string(),
+                        None => continue,
+                    };
+                    let skills = scan_skills(&sub_path)
+                        .into_iter()
+                        .map(|(name, sp)| SkillInfo {
+                            install_status: check_install_status(&name, &sp, skills_dir),
+                            name,
+                            source_path: sp,
+                        })
+                        .collect();
+                    groups.push(SourceGroup {
+                        name: format!("agm_tools/{}", tool_name),
+                        kind: SourceKind::Migrated { tool: tool_name },
+                        path: sub_path,
+                        skills,
+                    });
+                }
+            }
+        } else {
+            let url = resolve_repo_url(&dir_name, &path, skill_repos);
+            let skills = scan_skills(&path)
+                .into_iter()
+                .map(|(name, sp)| SkillInfo {
+                    install_status: check_install_status(&name, &sp, skills_dir),
+                    name,
+                    source_path: sp,
+                })
+                .collect();
+            groups.push(SourceGroup {
+                name: dir_name,
+                kind: SourceKind::Repo { url },
+                path,
+                skills,
+            });
+        }
+    }
+
+    groups.sort_by(|a, b| a.name.cmp(&b.name));
+    groups
+}
+
 /// Find git root for a path
 fn find_git_root(path: &Path) -> anyhow::Result<PathBuf> {
     let output = std::process::Command::new("git")
@@ -566,5 +710,125 @@ mod tests {
         fs::create_dir_all(&skills_dir).unwrap();
         let result = uninstall_skill("nonexistent", &skills_dir);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_scan_all_sources_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_dir = dir.path().join("source");
+        let skills_dir = dir.path().join("skills");
+        let groups = scan_all_sources(&source_dir, &skills_dir, &[]);
+        assert!(groups.is_empty());
+    }
+
+    #[test]
+    fn test_scan_all_sources_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_dir = dir.path().join("source");
+        let skills_dir = dir.path().join("skills");
+        fs::create_dir_all(&skills_dir).unwrap();
+
+        let repo = source_dir.join("my-repo");
+        let skill_a = repo.join("skill-a");
+        let skill_b = repo.join("skill-b");
+        fs::create_dir_all(&skill_a).unwrap();
+        fs::create_dir_all(&skill_b).unwrap();
+        fs::write(skill_a.join("SKILL.md"), "# A").unwrap();
+        fs::write(skill_b.join("SKILL.md"), "# B").unwrap();
+
+        let url = "https://github.com/user/my-repo.git".to_string();
+        let groups = scan_all_sources(&source_dir, &skills_dir, &[url.clone()]);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].name, "my-repo");
+        assert_eq!(groups[0].skills.len(), 2);
+        match &groups[0].kind {
+            SourceKind::Repo { url: u } => assert_eq!(u.as_deref(), Some(url.as_str())),
+            _ => panic!("Expected Repo"),
+        }
+        assert!(groups[0].skills.iter().all(|s| s.install_status == SkillInstallStatus::NotInstalled));
+    }
+
+    #[test]
+    fn test_scan_all_sources_local() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_dir = dir.path().join("source");
+        let skills_dir = dir.path().join("skills");
+        fs::create_dir_all(&skills_dir).unwrap();
+
+        let local = source_dir.join("local").join("my-local");
+        let skill = local.join("my-skill");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(skill.join("SKILL.md"), "# Local").unwrap();
+
+        let groups = scan_all_sources(&source_dir, &skills_dir, &[]);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].name, "my-local");
+        assert!(matches!(groups[0].kind, SourceKind::Local));
+    }
+
+    #[test]
+    fn test_scan_all_sources_migrated() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_dir = dir.path().join("source");
+        let skills_dir = dir.path().join("skills");
+        fs::create_dir_all(&skills_dir).unwrap();
+
+        let migrated = source_dir.join("agm_tools").join("claude");
+        let skill = migrated.join("my-skill");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(skill.join("SKILL.md"), "# Migrated").unwrap();
+
+        let groups = scan_all_sources(&source_dir, &skills_dir, &[]);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].name, "agm_tools/claude");
+        match &groups[0].kind {
+            SourceKind::Migrated { tool } => assert_eq!(tool, "claude"),
+            _ => panic!("Expected Migrated"),
+        }
+    }
+
+    #[test]
+    fn test_scan_all_sources_installed_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_dir = dir.path().join("source");
+        let skills_dir = dir.path().join("skills");
+        fs::create_dir_all(&skills_dir).unwrap();
+
+        let repo = source_dir.join("my-repo");
+        let skill_path = repo.join("cool-skill");
+        fs::create_dir_all(&skill_path).unwrap();
+        fs::write(skill_path.join("SKILL.md"), "# Cool").unwrap();
+
+        install_skill("cool-skill", &skill_path, &skills_dir).unwrap();
+
+        let groups = scan_all_sources(&source_dir, &skills_dir, &[]);
+        assert_eq!(groups[0].skills[0].install_status, SkillInstallStatus::Installed);
+    }
+
+    #[test]
+    fn test_scan_all_sources_conflict_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_dir = dir.path().join("source");
+        let skills_dir = dir.path().join("skills");
+        fs::create_dir_all(&skills_dir).unwrap();
+
+        let repo_a = source_dir.join("repo-a");
+        let skill_a = repo_a.join("common-skill");
+        fs::create_dir_all(&skill_a).unwrap();
+        fs::write(skill_a.join("SKILL.md"), "# A").unwrap();
+
+        let repo_b = source_dir.join("repo-b");
+        let skill_b = repo_b.join("common-skill");
+        fs::create_dir_all(&skill_b).unwrap();
+        fs::write(skill_b.join("SKILL.md"), "# B").unwrap();
+
+        install_skill("common-skill", &skill_a, &skills_dir).unwrap();
+
+        let groups = scan_all_sources(&source_dir, &skills_dir, &[]);
+        let group_a = groups.iter().find(|g| g.name == "repo-a").unwrap();
+        let group_b = groups.iter().find(|g| g.name == "repo-b").unwrap();
+        assert_eq!(group_a.skills[0].install_status, SkillInstallStatus::Installed);
+        assert_eq!(group_b.skills[0].install_status, SkillInstallStatus::Conflict);
     }
 }
