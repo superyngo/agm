@@ -135,10 +135,7 @@ mod tests {
         let home = dirs::home_dir().unwrap();
         let path = home.join(".config").join("agm");
         let sep = std::path::MAIN_SEPARATOR;
-        assert_eq!(
-            contract_tilde(&path),
-            format!("~{}.config{}agm", sep, sep)
-        );
+        assert_eq!(contract_tilde(&path), format!("~{}.config{}agm", sep, sep));
     }
 
     #[test]

@@ -93,12 +93,6 @@ fn scan_skills_recursive(
     }
 }
 
-
-
-
-
-
-
 /// Install a single skill by creating a symlink in the central skills directory.
 /// Errors if a skill with the same name from a different source already exists.
 pub fn install_skill(name: &str, source_path: &Path, skills_dir: &Path) -> anyhow::Result<()> {
@@ -109,7 +103,8 @@ pub fn install_skill(name: &str, source_path: &Path, skills_dir: &Path) -> anyho
         if platform::is_dir_link(&link_path) {
             if let Some(target) = platform::read_dir_link_target(&link_path) {
                 let target_canon = fs::canonicalize(&target).unwrap_or(target);
-                let source_canon = fs::canonicalize(source_path).unwrap_or(source_path.to_path_buf());
+                let source_canon =
+                    fs::canonicalize(source_path).unwrap_or(source_path.to_path_buf());
                 if target_canon == source_canon {
                     return Ok(());
                 }
@@ -191,8 +186,6 @@ fn normalize_git_url(url: &str) -> String {
         s.to_lowercase()
     }
 }
-
-
 
 /// Git pull all skill source repos (deduplicating by git root), then re-sync symlinks
 pub fn update_all(skills_dir: &Path, source_dir: &Path) -> anyhow::Result<()> {
@@ -298,7 +291,9 @@ fn resolve_repo_url(dir_name: &str, path: &Path, skill_repos: &[String]) -> Opti
         .ok()
         .and_then(|o| {
             if o.status.success() {
-                String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
+                String::from_utf8(o.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
             } else {
                 None
             }
@@ -489,7 +484,9 @@ pub fn clone_or_pull(
             .ok()
             .and_then(|o| {
                 if o.status.success() {
-                    String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
+                    String::from_utf8(o.stdout)
+                        .ok()
+                        .map(|s| s.trim().to_string())
                 } else {
                     None
                 }
@@ -567,8 +564,6 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
     }
     Ok(())
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -720,7 +715,10 @@ mod tests {
             SourceKind::Repo { url: u } => assert_eq!(u.as_deref(), Some(url.as_str())),
             _ => panic!("Expected Repo"),
         }
-        assert!(groups[0].skills.iter().all(|s| s.install_status == SkillInstallStatus::NotInstalled));
+        assert!(groups[0]
+            .skills
+            .iter()
+            .all(|s| s.install_status == SkillInstallStatus::NotInstalled));
     }
 
     #[test]
@@ -777,7 +775,10 @@ mod tests {
         install_skill("cool-skill", &skill_path, &skills_dir).unwrap();
 
         let groups = scan_all_sources(&source_dir, &skills_dir, &[]);
-        assert_eq!(groups[0].skills[0].install_status, SkillInstallStatus::Installed);
+        assert_eq!(
+            groups[0].skills[0].install_status,
+            SkillInstallStatus::Installed
+        );
     }
 
     #[test]
@@ -802,8 +803,14 @@ mod tests {
         let groups = scan_all_sources(&source_dir, &skills_dir, &[]);
         let group_a = groups.iter().find(|g| g.name == "repo-a").unwrap();
         let group_b = groups.iter().find(|g| g.name == "repo-b").unwrap();
-        assert_eq!(group_a.skills[0].install_status, SkillInstallStatus::Installed);
-        assert_eq!(group_b.skills[0].install_status, SkillInstallStatus::Conflict);
+        assert_eq!(
+            group_a.skills[0].install_status,
+            SkillInstallStatus::Installed
+        );
+        assert_eq!(
+            group_b.skills[0].install_status,
+            SkillInstallStatus::Conflict
+        );
     }
 
     #[test]

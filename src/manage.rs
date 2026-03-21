@@ -20,9 +20,7 @@ use ratatui::{
 use crate::config::Config;
 use crate::editor;
 use crate::paths::{contract_tilde, expand_tilde};
-use crate::skills::{
-    self, SkillInstallStatus, SourceGroup, SourceKind,
-};
+use crate::skills::{self, SkillInstallStatus, SourceGroup, SourceKind};
 
 // ---------------------------------------------------------------------------
 // Data model
@@ -30,8 +28,13 @@ use crate::skills::{
 
 #[derive(Clone)]
 enum ListRow {
-    SourceHeader { group_index: usize },
-    Skill { group_index: usize, skill_index: usize },
+    SourceHeader {
+        group_index: usize,
+    },
+    Skill {
+        group_index: usize,
+        skill_index: usize,
+    },
 }
 
 #[derive(Clone)]
@@ -64,7 +67,13 @@ struct App {
 }
 
 impl App {
-    fn new(config: Config, groups: Vec<SourceGroup>, source_filter: Option<String>, skills_dir: PathBuf, source_dir: PathBuf) -> Self {
+    fn new(
+        config: Config,
+        groups: Vec<SourceGroup>,
+        source_filter: Option<String>,
+        skills_dir: PathBuf,
+        source_dir: PathBuf,
+    ) -> Self {
         let rows = build_rows(&groups);
         Self {
             config,
@@ -164,7 +173,11 @@ impl App {
 
         // First pass: find skills matching query
         for (i, row) in self.rows.iter().enumerate() {
-            if let ListRow::Skill { group_index, skill_index } = row {
+            if let ListRow::Skill {
+                group_index,
+                skill_index,
+            } = row
+            {
                 let skill = &self.groups[*group_index].skills[*skill_index];
                 if skill.name.to_lowercase().contains(&query) {
                     matching_groups.insert(*group_index);
@@ -195,7 +208,10 @@ impl App {
             None => return,
         };
         match row {
-            ListRow::Skill { group_index, skill_index } => {
+            ListRow::Skill {
+                group_index,
+                skill_index,
+            } => {
                 let skill = &self.groups[group_index].skills[skill_index];
                 let name = skill.name.clone();
                 let source_path = skill.source_path.clone();
@@ -236,19 +252,26 @@ impl App {
                 if all_installed {
                     for i in 0..self.groups[group_index].skills.len() {
                         let name = self.groups[group_index].skills[i].name.clone();
-                        if self.groups[group_index].skills[i].install_status == SkillInstallStatus::Installed {
+                        if self.groups[group_index].skills[i].install_status
+                            == SkillInstallStatus::Installed
+                        {
                             match skills::uninstall_skill(&name, &self.skills_dir) {
                                 Ok(()) => {
                                     self.groups[group_index].skills[i].install_status =
                                         SkillInstallStatus::NotInstalled;
                                     ok += 1;
                                 }
-                                Err(_) => { fail += 1; }
+                                Err(_) => {
+                                    fail += 1;
+                                }
                             }
                         }
                     }
                     if fail > 0 {
-                        self.set_status(format!("Uninstalled {ok}/{} from {group_name} ({fail} failed)", ok + fail));
+                        self.set_status(format!(
+                            "Uninstalled {ok}/{} from {group_name} ({fail} failed)",
+                            ok + fail
+                        ));
                     } else {
                         self.set_status(format!("Uninstalled all from {group_name}"));
                     }
@@ -256,19 +279,26 @@ impl App {
                     for i in 0..self.groups[group_index].skills.len() {
                         let name = self.groups[group_index].skills[i].name.clone();
                         let source = self.groups[group_index].skills[i].source_path.clone();
-                        if self.groups[group_index].skills[i].install_status == SkillInstallStatus::NotInstalled {
+                        if self.groups[group_index].skills[i].install_status
+                            == SkillInstallStatus::NotInstalled
+                        {
                             match skills::install_skill(&name, &source, &self.skills_dir) {
                                 Ok(()) => {
                                     self.groups[group_index].skills[i].install_status =
                                         SkillInstallStatus::Installed;
                                     ok += 1;
                                 }
-                                Err(_) => { fail += 1; }
+                                Err(_) => {
+                                    fail += 1;
+                                }
                             }
                         }
                     }
                     if fail > 0 {
-                        self.set_status(format!("Installed {ok}/{} from {group_name} ({fail} failed)", ok + fail));
+                        self.set_status(format!(
+                            "Installed {ok}/{} from {group_name} ({fail} failed)",
+                            ok + fail
+                        ));
                     } else {
                         self.set_status(format!("Installed all from {group_name}"));
                     }
@@ -320,7 +350,11 @@ impl App {
             Some(r) => r.clone(),
             None => return,
         };
-        if let ListRow::Skill { group_index, skill_index } = row {
+        if let ListRow::Skill {
+            group_index,
+            skill_index,
+        } = row
+        {
             let skill = &self.groups[group_index].skills[skill_index];
             let skill_md = skill.source_path.join("SKILL.md");
             if !skill_md.exists() {
@@ -348,7 +382,10 @@ impl App {
             None => return,
         };
         match row {
-            ListRow::Skill { group_index, skill_index } => {
+            ListRow::Skill {
+                group_index,
+                skill_index,
+            } => {
                 let skill = &self.groups[group_index].skills[skill_index];
                 self.set_status(format!("Path: {}", contract_tilde(&skill.source_path)));
             }
@@ -369,7 +406,13 @@ impl App {
         }
     }
 
-    fn handle_key(&mut self, code: KeyCode, modifiers: KeyModifiers, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, area_height: u16) {
+    fn handle_key(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        area_height: u16,
+    ) {
         // Confirmation mode intercepts all keys
         if let Some(state) = self.confirm_state.clone() {
             match state {
@@ -380,7 +423,10 @@ impl App {
                         self.set_status("Delete cancelled");
                     }
                 },
-                ConfirmState::Migrated { group_index, mut typed } => match code {
+                ConfirmState::Migrated {
+                    group_index,
+                    mut typed,
+                } => match code {
                     KeyCode::Char(c) => {
                         typed.push(c);
                         if typed == "delete" {
@@ -389,7 +435,8 @@ impl App {
                             self.confirm_state = None;
                             self.set_status("Delete cancelled");
                         } else {
-                            self.confirm_state = Some(ConfirmState::Migrated { group_index, typed });
+                            self.confirm_state =
+                                Some(ConfirmState::Migrated { group_index, typed });
                         }
                     }
                     KeyCode::Backspace => {
@@ -495,7 +542,10 @@ fn build_rows(groups: &[SourceGroup]) -> Vec<ListRow> {
     for (gi, group) in groups.iter().enumerate() {
         rows.push(ListRow::SourceHeader { group_index: gi });
         for si in 0..group.skills.len() {
-            rows.push(ListRow::Skill { group_index: gi, skill_index: si });
+            rows.push(ListRow::Skill {
+                group_index: gi,
+                skill_index: si,
+            });
         }
     }
     rows
@@ -551,10 +601,7 @@ fn render(app: &App, frame: &mut Frame) {
     // Split: main list area + footer (2 lines)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(3),
-            Constraint::Length(3),
-        ])
+        .constraints([Constraint::Min(3), Constraint::Length(3)])
         .split(area);
 
     render_list(app, frame, chunks[0]);
@@ -612,7 +659,10 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                 };
                 Line::from(Span::styled(text, style))
             }
-            ListRow::Skill { group_index, skill_index } => {
+            ListRow::Skill {
+                group_index,
+                skill_index,
+            } => {
                 let skill = &app.groups[*group_index].skills[*skill_index];
                 let icon = status_icon(&skill.install_status);
                 let color = status_color(&skill.install_status);
@@ -621,11 +671,14 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                 let prefix = if is_cursor { " > " } else { "   " };
 
                 let mut spans = vec![
-                    Span::styled(prefix, if is_cursor {
-                        Style::default().fg(Color::Yellow).bg(Color::DarkGray)
-                    } else {
-                        Style::default()
-                    }),
+                    Span::styled(
+                        prefix,
+                        if is_cursor {
+                            Style::default().fg(Color::Yellow).bg(Color::DarkGray)
+                        } else {
+                            Style::default()
+                        },
+                    ),
                     Span::styled(
                         format!("{icon} "),
                         if is_cursor {
@@ -756,7 +809,8 @@ pub fn run(config: &mut Config, source_filter: Option<&str>) -> Result<()> {
     let _ = skills::prune_broken_skills(&skills_dir);
 
     // Load groups
-    let mut groups = skills::scan_all_sources(&source_dir, &skills_dir, &config.central.skill_repos);
+    let mut groups =
+        skills::scan_all_sources(&source_dir, &skills_dir, &config.central.skill_repos);
 
     if groups.is_empty() {
         println!("No skill sources found. Use `agm skills add` to add skill sources.");

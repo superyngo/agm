@@ -3,10 +3,10 @@ mod editor;
 mod files;
 mod init;
 mod linker;
+mod manage;
 mod paths;
 mod platform;
 mod skills;
-mod manage;
 mod status;
 
 use clap::{CommandFactory, Parser, Subcommand};
@@ -84,9 +84,7 @@ enum SkillsAction {
     Update,
     /// (deprecated, use 'manage' instead)
     #[command(hide = true)]
-    Remove {
-        name: String,
-    },
+    Remove { name: String },
 }
 
 fn pick_target(
@@ -477,7 +475,9 @@ fn main() -> anyhow::Result<()> {
                         Ok((_repo_path, found_skills)) => {
                             let mut count = 0;
                             for (name, skill_path) in found_skills {
-                                if let Ok(()) = skills::install_skill(&name, &skill_path, &central_skills) {
+                                if let Ok(()) =
+                                    skills::install_skill(&name, &skill_path, &central_skills)
+                                {
                                     count += 1;
                                 }
                             }
@@ -820,11 +820,14 @@ fn main() -> anyhow::Result<()> {
                                 skills::SourceKind::Migrated { .. } => "📁",
                             };
                             let detail = match &group.kind {
-                                skills::SourceKind::Repo { url } => {
-                                    url.as_deref().map(|u| format!("repo: {}", u)).unwrap_or_else(|| "repo".into())
-                                }
+                                skills::SourceKind::Repo { url } => url
+                                    .as_deref()
+                                    .map(|u| format!("repo: {}", u))
+                                    .unwrap_or_else(|| "repo".into()),
                                 skills::SourceKind::Local => "local".into(),
-                                skills::SourceKind::Migrated { tool } => format!("migrated from {}", tool),
+                                skills::SourceKind::Migrated { tool } => {
+                                    format!("migrated from {}", tool)
+                                }
                             };
                             println!("{} {} ({})", icon, group.name.bold(), detail);
                             for skill in &group.skills {
@@ -834,9 +837,10 @@ fn main() -> anyhow::Result<()> {
                                         installed += 1;
                                         ("✓".green().to_string(), "installed".green().to_string())
                                     }
-                                    skills::SkillInstallStatus::NotInstalled => {
-                                        ("✗".dimmed().to_string(), "not installed".dimmed().to_string())
-                                    }
+                                    skills::SkillInstallStatus::NotInstalled => (
+                                        "✗".dimmed().to_string(),
+                                        "not installed".dimmed().to_string(),
+                                    ),
                                     skills::SkillInstallStatus::Conflict => {
                                         ("⚡".yellow().to_string(), "conflict".yellow().to_string())
                                     }
@@ -880,7 +884,11 @@ fn main() -> anyhow::Result<()> {
                                 Err(e) => println!("  {} {}: {}", "warn".yellow(), name, e),
                             }
                         }
-                        println!("\n{} skill(s) installed from {}.", count, paths::contract_tilde(&repo_path));
+                        println!(
+                            "\n{} skill(s) installed from {}.",
+                            count,
+                            paths::contract_tilde(&repo_path)
+                        );
                     } else {
                         let source_path = paths::expand_tilde(&source);
                         println!(
@@ -905,7 +913,11 @@ fn main() -> anyhow::Result<()> {
                                 Err(e) => println!("  {} {}: {}", "warn".yellow(), name, e),
                             }
                         }
-                        println!("\n{} skill(s) installed from {}.", count, paths::contract_tilde(&dest));
+                        println!(
+                            "\n{} skill(s) installed from {}.",
+                            count,
+                            paths::contract_tilde(&dest)
+                        );
                     }
                     Ok(())
                 }
