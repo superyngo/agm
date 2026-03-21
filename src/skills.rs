@@ -520,6 +520,128 @@ pub fn scan_all_sources(
     groups
 }
 
+/// Copy a local directory into source_dir/local/{name}/ and return the list of skills found.
+/// Scans BEFORE copying — errors if no skills found. Original directory preserved.
+pub fn add_local_copy(
+    source: &Path,
+    source_dir: &Path,
+) -> anyhow::Result<(PathBuf, Vec<(String, PathBuf)>)> {
+    if !source.exists() {
+        anyhow::bail!("Source path does not exist: {}", source.display());
+    }
+
+    // Scan before copying
+    let pre_skills = scan_skills(source);
+    if pre_skills.is_empty() {
+        anyhow::bail!(
+            "No skills found at {}. A skill must contain a SKILL.md file.",
+            source.display()
+        );
+    }
+
+    let source_name = source
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unnamed")
+        .to_string();
+
+    let dest = source_dir.join("local").join(&source_name);
+    if dest.exists() {
+        anyhow::bail!(
+            "Source '{}' already exists at {}. Remove it first or choose a different name.",
+            source_name,
+            contract_tilde(&dest)
+        );
+    }
+
+    // Copy
+    fs::create_dir_all(dest.parent().unwrap())?;
+    copy_dir_recursive(source, &dest)?;
+
+    // Re-scan the copied location
+    let skills = scan_skills(&dest);
+    Ok((dest, skills))
+}
+
+/// Clone a git repo (or pull if it already exists) into source_dir/{repo_name}/.
+/// Returns the repo path and list of skills found. Does NOT install skills.
+pub fn clone_or_pull(
+    url: &str,
+    source_dir: &Path,
+) -> anyhow::Result<(PathBuf, Vec<(String, PathBuf)>)> {
+    let name = repo_name_from_url(url);
+    let repo_path = source_dir.join(&name);
+
+    if repo_path.is_dir() {
+        // Check if it belongs to a different remote
+        let existing_url = std::process::Command::new("git")
+            .args(["remote", "get-url", "origin"])
+            .current_dir(&repo_path)
+            .output()
+            .ok()
+            .and_then(|o| {
+                if o.status.success() {
+                    String::from_utf8(o.stdout).ok().map(|s| s.trim().to_string())
+                } else {
+                    None
+                }
+            });
+
+        if let Some(ref existing) = existing_url {
+            if existing != url {
+                anyhow::bail!(
+                    "Directory '{}' already exists but belongs to a different repo ({}).\n\
+                     Remove it manually or use a different URL.",
+                    name,
+                    existing
+                );
+            }
+        }
+
+        println!("Updating {} from {}...", name, url);
+        let status = std::process::Command::new("git")
+            .args(["pull"])
+            .current_dir(&repo_path)
+            .status()?;
+        if !status.success() {
+            anyhow::bail!("git pull failed for {}", name);
+        }
+    } else {
+        println!("Cloning {} from {}...", name, url);
+        fs::create_dir_all(source_dir)?;
+        let status = std::process::Command::new("git")
+            .args(["clone", url, &repo_path.display().to_string()])
+            .status()?;
+        if !status.success() {
+            anyhow::bail!("git clone failed for {}", url);
+        }
+    }
+
+    let skills = scan_skills(&repo_path);
+    if skills.is_empty() {
+        fs::remove_dir_all(&repo_path)?;
+        anyhow::bail!("No skills found in {}. Clone removed.", url);
+    }
+
+    Ok((repo_path, skills))
+}
+
+/// Recursively copy a directory tree. Preserves regular files and subdirectories.
+fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_dir_recursive(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
 /// Find git root for a path
 fn find_git_root(path: &Path) -> anyhow::Result<PathBuf> {
     let output = std::process::Command::new("git")
@@ -830,5 +952,57 @@ mod tests {
         let group_b = groups.iter().find(|g| g.name == "repo-b").unwrap();
         assert_eq!(group_a.skills[0].install_status, SkillInstallStatus::Installed);
         assert_eq!(group_b.skills[0].install_status, SkillInstallStatus::Conflict);
+    }
+
+    #[test]
+    fn test_add_local_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = dir.path().join("original");
+        let skill = original.join("my-skill");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(skill.join("SKILL.md"), "# Test").unwrap();
+
+        let source_dir = dir.path().join("source");
+        fs::create_dir_all(&source_dir).unwrap();
+
+        let (dest, skills) = add_local_copy(&original, &source_dir).unwrap();
+
+        // Copied to source_dir/local/{name}
+        assert!(dest.starts_with(source_dir.join("local")));
+        assert!(dest.exists());
+        assert_eq!(skills.len(), 1);
+        assert_eq!(skills[0].0, "my-skill");
+        // Original still exists
+        assert!(original.exists());
+    }
+
+    #[test]
+    fn test_add_local_copy_no_skills() {
+        let dir = tempfile::tempdir().unwrap();
+        let empty = dir.path().join("empty");
+        fs::create_dir_all(&empty).unwrap();
+        let source_dir = dir.path().join("source");
+        fs::create_dir_all(&source_dir).unwrap();
+
+        let result = add_local_copy(&empty, &source_dir);
+        assert!(result.is_err());
+        // Should not have created any directory
+        assert!(!source_dir.join("local").exists());
+    }
+
+    #[test]
+    fn test_add_local_copy_already_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let original = dir.path().join("original");
+        let skill = original.join("my-skill");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(skill.join("SKILL.md"), "# Test").unwrap();
+
+        let source_dir = dir.path().join("source");
+        let existing = source_dir.join("local").join("original");
+        fs::create_dir_all(&existing).unwrap();
+
+        let result = add_local_copy(&original, &source_dir);
+        assert!(result.is_err()); // Already exists
     }
 }
