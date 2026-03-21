@@ -93,93 +93,11 @@ fn scan_skills_recursive(
     }
 }
 
-/// List all skills in the central skills directory
-pub fn list_skills(skills_dir: &Path) -> anyhow::Result<Vec<(String, PathBuf)>> {
-    if !skills_dir.is_dir() {
-        return Ok(vec![]);
-    }
 
-    let mut skills = Vec::new();
-    for entry in fs::read_dir(skills_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() || platform::is_dir_link(&path) {
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                // Resolve link to get source path
-                let source = if platform::is_dir_link(&path) {
-                    platform::read_dir_link_target(&path).unwrap_or_else(|| path.clone())
-                } else {
-                    path.clone()
-                };
-                skills.push((name.to_string(), source));
-            }
-        }
-    }
 
-    skills.sort_by(|a, b| a.0.cmp(&b.0));
-    Ok(skills)
-}
 
-/// Add skill(s) from a local path
-pub fn add_local(source: &Path, skills_dir: &Path) -> anyhow::Result<usize> {
-    if !source.exists() {
-        anyhow::bail!("Source path does not exist: {}", source.display());
-    }
 
-    // Ensure skills directory exists
-    fs::create_dir_all(skills_dir)?;
 
-    let skills = scan_skills(source);
-    if skills.is_empty() {
-        anyhow::bail!("No skills found at {}", source.display());
-    }
-
-    let mut added = 0;
-    for (name, skill_path) in skills {
-        let link_path = skills_dir.join(&name);
-
-        if link_path.exists() {
-            println!("  {} {} already exists, skipping", "skip".yellow(), name);
-            continue;
-        }
-
-        platform::link_dir(&skill_path, &link_path)
-            .with_context(|| format!("Failed to link skill: {}", name))?;
-        println!(
-            "  {} {} → {}",
-            " ok ".green(),
-            name,
-            contract_tilde(&skill_path)
-        );
-        added += 1;
-    }
-
-    Ok(added)
-}
-
-/// Remove a skill by name
-pub fn remove_skill(name: &str, skills_dir: &Path) -> anyhow::Result<()> {
-    let skill_path = skills_dir.join(name);
-
-    if !skill_path.exists() {
-        anyhow::bail!("Skill '{}' not found", name);
-    }
-
-    if platform::is_dir_link(&skill_path) {
-        platform::remove_link(&skill_path)?;
-        println!("{} Removed skill: {}", " ok ".green(), name);
-    } else if skill_path.is_dir() {
-        // It's a real directory, not a link — be cautious
-        anyhow::bail!(
-            "'{}' is a directory, not a link. Remove manually if needed.",
-            name
-        );
-    } else {
-        anyhow::bail!("'{}' is not a link", name);
-    }
-
-    Ok(())
-}
 
 /// Install a single skill by creating a symlink in the central skills directory.
 /// Errors if a skill with the same name from a different source already exists.
@@ -263,42 +181,7 @@ pub fn repo_name_from_url(url: &str) -> String {
         .to_string()
 }
 
-/// Add skills from a git repo URL
-pub fn add_from_url(url: &str, source_dir: &Path, skills_dir: &Path) -> anyhow::Result<usize> {
-    let name = repo_name_from_url(url);
-    let repo_path = source_dir.join(&name);
 
-    if repo_path.is_dir() {
-        // git pull
-        println!("Updating {} from {}...", name, url);
-        let status = std::process::Command::new("git")
-            .args(["pull"])
-            .current_dir(&repo_path)
-            .status()?;
-        if !status.success() {
-            anyhow::bail!("git pull failed for {}", name);
-        }
-    } else {
-        // git clone
-        println!("Cloning {} from {}...", name, url);
-        fs::create_dir_all(source_dir)?;
-        let status = std::process::Command::new("git")
-            .args(["clone", url, &repo_path.display().to_string()])
-            .status()?;
-        if !status.success() {
-            anyhow::bail!("git clone failed for {}", url);
-        }
-    }
-
-    let skills = scan_skills(&repo_path);
-    if skills.is_empty() {
-        // No skills found, clean up
-        std::fs::remove_dir_all(&repo_path)?;
-        anyhow::bail!("No skills found in {}. Clone removed.", url);
-    }
-
-    add_local(&repo_path, skills_dir)
-}
 
 /// Git pull all skill source repos (deduplicating by git root), then re-sync symlinks
 pub fn update_all(skills_dir: &Path, source_dir: &Path) -> anyhow::Result<()> {
@@ -674,20 +557,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Find git root for a path
-fn find_git_root(path: &Path) -> anyhow::Result<PathBuf> {
-    let output = std::process::Command::new("git")
-        .args(["rev-parse", "--show-toplevel"])
-        .current_dir(path.parent().unwrap_or(path))
-        .output()?;
 
-    if output.status.success() {
-        let root = String::from_utf8(output.stdout)?.trim().to_string();
-        Ok(PathBuf::from(root))
-    } else {
-        anyhow::bail!("Not a git repository")
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -721,67 +591,6 @@ mod tests {
 
         let skills = scan_skills(&repo);
         assert_eq!(skills.len(), 2);
-    }
-
-    #[test]
-    fn test_list_skills() {
-        let tmp = TempDir::new().unwrap();
-        let skills_dir = tmp.path().join("skills");
-        fs::create_dir(&skills_dir).unwrap();
-
-        let skill_source = tmp.path().join("source/skill1");
-        fs::create_dir_all(&skill_source).unwrap();
-        fs::write(skill_source.join("SKILL.md"), "# Skill").unwrap();
-
-        let skill_link = skills_dir.join("skill1");
-        platform::link_dir(&skill_source, &skill_link).unwrap();
-
-        let skills = list_skills(&skills_dir).unwrap();
-        assert_eq!(skills.len(), 1);
-        assert_eq!(skills[0].0, "skill1");
-    }
-
-    #[test]
-    fn test_add_local_single() {
-        let tmp = TempDir::new().unwrap();
-        let skills_dir = tmp.path().join("skills");
-        let skill_source = tmp.path().join("my-skill");
-        fs::create_dir(&skill_source).unwrap();
-        fs::write(skill_source.join("SKILL.md"), "# Skill").unwrap();
-
-        let added = add_local(&skill_source, &skills_dir).unwrap();
-        assert_eq!(added, 1);
-        assert!(skills_dir.join("my-skill").exists());
-    }
-
-    #[test]
-    fn test_add_local_idempotent() {
-        let tmp = TempDir::new().unwrap();
-        let skills_dir = tmp.path().join("skills");
-        let skill_source = tmp.path().join("my-skill");
-        fs::create_dir(&skill_source).unwrap();
-        fs::write(skill_source.join("SKILL.md"), "# Skill").unwrap();
-
-        add_local(&skill_source, &skills_dir).unwrap();
-        let added = add_local(&skill_source, &skills_dir).unwrap();
-        assert_eq!(added, 0); // skipped
-    }
-
-    #[test]
-    fn test_remove_skill() {
-        let tmp = TempDir::new().unwrap();
-        let skills_dir = tmp.path().join("skills");
-        fs::create_dir(&skills_dir).unwrap();
-
-        let skill_source = tmp.path().join("my-skill");
-        fs::create_dir(&skill_source).unwrap();
-        fs::write(skill_source.join("SKILL.md"), "# Skill").unwrap();
-
-        let skill_link = skills_dir.join("my-skill");
-        platform::link_dir(&skill_source, &skill_link).unwrap();
-
-        remove_skill("my-skill", &skills_dir).unwrap();
-        assert!(!skill_link.exists());
     }
 
     #[test]
