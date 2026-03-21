@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::paths::{expand_path, expand_tilde};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub editor: String,
@@ -13,7 +13,7 @@ pub struct Config {
     pub tools: BTreeMap<String, ToolConfig>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CentralConfig {
     pub prompt_source: String,
     pub skills_source: String,
@@ -33,7 +33,7 @@ impl CentralConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolConfig {
     pub name: String,
     pub config_dir: String,
@@ -170,6 +170,11 @@ impl Config {
             println!("Added {} to config", url);
         }
         Ok(())
+    }
+
+    /// Remove a skill repo URL if present
+    pub fn remove_skill_repo(&mut self, url: &str) {
+        self.central.skill_repos.retain(|u| u != url);
     }
 }
 
@@ -331,5 +336,28 @@ mod tests {
         let config = Config::default_config();
         let claude = config.tools.get("claude").unwrap();
         assert_eq!(claude.settings[0], "~/.claude.json");
+    }
+
+    #[test]
+    fn test_remove_skill_repo() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        let mut config = Config::default_config();
+        config.central.skill_repos = vec![
+            "https://github.com/user/repo1.git".to_string(),
+            "https://github.com/user/repo2.git".to_string(),
+        ];
+        config.save_to(&config_path).unwrap();
+
+        config.remove_skill_repo("https://github.com/user/repo1.git");
+        assert_eq!(config.central.skill_repos.len(), 1);
+        assert_eq!(
+            config.central.skill_repos[0],
+            "https://github.com/user/repo2.git"
+        );
+
+        // Removing non-existent URL is a no-op
+        config.remove_skill_repo("https://github.com/user/nonexistent.git");
+        assert_eq!(config.central.skill_repos.len(), 1);
     }
 }

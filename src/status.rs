@@ -1,10 +1,10 @@
 use colored::Colorize;
-use std::fs;
 
 use crate::config::Config;
 use crate::files::{centralized_path, check_file_status, FileStatus};
 use crate::linker::{check_link, LinkStatus};
 use crate::paths::{contract_tilde, expand_path, expand_tilde};
+use crate::skills;
 
 /// Display table with tool name, config dir, prompt/skills link status and paths
 pub fn status() -> anyhow::Result<()> {
@@ -135,18 +135,25 @@ pub fn status() -> anyhow::Result<()> {
 
     println!("{}", "═".repeat(62));
 
-    // Count skills
-    let skills_count = if central_skills.is_dir() {
-        fs::read_dir(&central_skills)?.count()
-    } else {
-        0
-    };
+    // Count skills from all sources
+    let groups = skills::scan_all_sources(
+        &expand_tilde(&config.central.source_dir),
+        &central_skills,
+        &config.central.skill_repos,
+    );
+    let _total_skills: usize = groups.iter().map(|g| g.skills.len()).sum();
+    let installed_skills: usize = groups
+        .iter()
+        .flat_map(|g| &g.skills)
+        .filter(|s| s.install_status == skills::SkillInstallStatus::Installed)
+        .count();
 
     println!("Central prompt : {}", contract_tilde(&central_prompt));
     println!(
-        "Central skills : {} ({} skills)",
+        "Central skills : {} ({} installed, {} sources)",
         contract_tilde(&central_skills),
-        skills_count
+        installed_skills,
+        groups.len()
     );
     let source_dir = expand_tilde(&config.central.source_dir);
     println!("Central source : {}", contract_tilde(&source_dir));
