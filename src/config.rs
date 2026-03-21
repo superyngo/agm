@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use crate::paths::{expand_path, expand_tilde};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub editor: String,
@@ -13,7 +13,7 @@ pub struct Config {
     pub tools: BTreeMap<String, ToolConfig>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CentralConfig {
     pub prompt_source: String,
     pub skills_source: String,
@@ -33,7 +33,7 @@ impl CentralConfig {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolConfig {
     pub name: String,
     pub config_dir: String,
