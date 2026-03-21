@@ -6,6 +6,45 @@ use std::path::{Path, PathBuf};
 use crate::paths::contract_tilde;
 use crate::platform;
 
+/// Installation status of a skill in the central skills directory
+#[derive(Debug, Clone, PartialEq)]
+pub enum SkillInstallStatus {
+    /// Central skills dir has a symlink pointing to this skill's source
+    Installed,
+    /// Source exists but no central link
+    NotInstalled,
+    /// Another skill with the same name is installed from a different source
+    Conflict,
+}
+
+/// Full info about a single skill
+#[derive(Debug, Clone)]
+pub struct SkillInfo {
+    pub name: String,
+    pub source_path: PathBuf,
+    pub install_status: SkillInstallStatus,
+}
+
+/// What kind of source this is
+#[derive(Debug, Clone)]
+pub enum SourceKind {
+    /// Git-cloned repository (URL from config or git remote lookup)
+    Repo { url: Option<String> },
+    /// Copied local directory (source_dir/local/{name}/)
+    Local,
+    /// Migrated from tool during agm link (source_dir/agm_tools/{tool}/)
+    Migrated { tool: String },
+}
+
+/// A source and all skills it contains
+#[derive(Debug, Clone)]
+pub struct SourceGroup {
+    pub name: String,
+    pub kind: SourceKind,
+    pub path: PathBuf,
+    pub skills: Vec<SkillInfo>,
+}
+
 /// Scan a path for skills. Returns list of (skill_name, skill_dir_path).
 /// If path/SKILL.md exists → single skill.
 /// Else scan subdirectories recursively (max depth 3) for SKILL.md.
