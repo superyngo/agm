@@ -626,6 +626,24 @@ pub fn clone_or_pull(
     Ok((repo_path, skills))
 }
 
+/// Delete a source: remove all its central symlinks and delete the source directory.
+pub fn delete_source(group: &SourceGroup, skills_dir: &Path) -> anyhow::Result<()> {
+    // Remove all central symlinks for this source's skills
+    for skill in &group.skills {
+        if skill.install_status == SkillInstallStatus::Installed {
+            uninstall_skill(&skill.name, skills_dir)?;
+        }
+    }
+
+    // Delete the source directory
+    if group.path.exists() {
+        fs::remove_dir_all(&group.path)
+            .with_context(|| format!("Failed to delete source: {}", group.path.display()))?;
+    }
+
+    Ok(())
+}
+
 /// Recursively copy a directory tree. Preserves regular files and subdirectories.
 fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(dst)?;
@@ -1004,5 +1022,52 @@ mod tests {
 
         let result = add_local_copy(&original, &source_dir);
         assert!(result.is_err()); // Already exists
+    }
+
+    #[test]
+    fn test_delete_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_dir = dir.path().join("source");
+        let skills_dir = dir.path().join("skills");
+
+        // Create a source with 2 skills
+        let repo = source_dir.join("my-repo");
+        let skill_a = repo.join("skill-a");
+        let skill_b = repo.join("skill-b");
+        fs::create_dir_all(&skill_a).unwrap();
+        fs::create_dir_all(&skill_b).unwrap();
+        fs::write(skill_a.join("SKILL.md"), "# A").unwrap();
+        fs::write(skill_b.join("SKILL.md"), "# B").unwrap();
+        fs::create_dir_all(&skills_dir).unwrap();
+
+        // Install both
+        install_skill("skill-a", &skill_a, &skills_dir).unwrap();
+        install_skill("skill-b", &skill_b, &skills_dir).unwrap();
+
+        let group = SourceGroup {
+            name: "my-repo".to_string(),
+            kind: SourceKind::Repo { url: None },
+            path: repo.clone(),
+            skills: vec![
+                SkillInfo {
+                    name: "skill-a".to_string(),
+                    source_path: skill_a,
+                    install_status: SkillInstallStatus::Installed,
+                },
+                SkillInfo {
+                    name: "skill-b".to_string(),
+                    source_path: skill_b,
+                    install_status: SkillInstallStatus::Installed,
+                },
+            ],
+        };
+
+        delete_source(&group, &skills_dir).unwrap();
+
+        // Central links removed
+        assert!(!skills_dir.join("skill-a").exists());
+        assert!(!skills_dir.join("skill-b").exists());
+        // Source directory removed
+        assert!(!repo.exists());
     }
 }
