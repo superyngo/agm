@@ -27,6 +27,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Rename `agm` target to `central` in `prompt`/`config` commands
 - All commands with optional target now show interactive `dialoguer` picker instead of exiting
 
+## [v0.5.0] - 2026-03-21
+
+### Added
+- Interactive TUI skill manager using ratatui and crossterm
+- Status display shows skill install count from scan_all_sources
+- Delete source function for managing skill sources
+- Add local copy function to copy skills from source directory
+- Clone or pull function split from install operation
+- Scan all sources with source grouping and install status tracking
+- Install skill and uninstall skill functions
+- SkillInfo, SourceGroup, and SkillInstallStatus types
+- Remove skill repo method to Config
+- Ratatui and crossterm dependencies for TUI support
+
+### Changed
+- Refactor: remove old add_local, add_from_url, remove_skill, list_skills functions
+- Update CLI to add multi-select and manage subcommand
+- Deprecate remove command (use manage instead)
+- Update_all now uses source_dir scanning and install_skill
+
+### Fixed
+- Normalize git URLs for comparison and track bulk toggle errors
+- Resolve clippy warnings (boolean simplification, loop indexing, print literal)
+- Fix Cargo.toml version conflicts
+- Remove empty prompt files before linking
+- Show file path in blocked status display
+- Use platform-native path separators in contract_tilde
+
+### Docs
+- Add implementation plan for prompt blocked and display fixes
+- Add design spec for prompt blocked handling and display fixes
+
 ## [v0.4.0] - 2026-03-20
 
 ### Added
