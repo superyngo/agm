@@ -181,6 +181,46 @@ pub fn remove_skill(name: &str, skills_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Install a single skill by creating a symlink in the central skills directory.
+/// Errors if a skill with the same name from a different source already exists.
+pub fn install_skill(name: &str, source_path: &Path, skills_dir: &Path) -> anyhow::Result<()> {
+    fs::create_dir_all(skills_dir)?;
+    let link_path = skills_dir.join(name);
+
+    if link_path.exists() || link_path.symlink_metadata().is_ok() {
+        if platform::is_dir_link(&link_path) {
+            if let Some(target) = platform::read_dir_link_target(&link_path) {
+                let target_canon = fs::canonicalize(&target).unwrap_or(target);
+                let source_canon = fs::canonicalize(source_path).unwrap_or(source_path.to_path_buf());
+                if target_canon == source_canon {
+                    return Ok(());
+                }
+            }
+        }
+        anyhow::bail!(
+            "Skill '{}' already exists (installed from another source). Uninstall it first.",
+            name
+        );
+    }
+
+    platform::link_dir(source_path, &link_path)
+        .with_context(|| format!("Failed to install skill: {}", name))?;
+    Ok(())
+}
+
+/// Uninstall a single skill by removing its symlink from the central skills directory.
+/// No-op if the skill is not installed. Source directory is NOT deleted.
+pub fn uninstall_skill(name: &str, skills_dir: &Path) -> anyhow::Result<()> {
+    let link_path = skills_dir.join(name);
+    if !link_path.symlink_metadata().is_ok() {
+        return Ok(());
+    }
+    if platform::is_dir_link(&link_path) {
+        platform::remove_link(&link_path)?;
+    }
+    Ok(())
+}
+
 /// Scan central skills directory and remove any symlinks whose targets no longer exist.
 /// Returns the number of broken links removed.
 pub fn prune_broken_skills(skills_dir: &Path) -> anyhow::Result<usize> {
@@ -468,5 +508,63 @@ mod tests {
         assert_eq!(removed, 1);
         assert!(skills_dir.join("real-skill").exists());
         assert!(!skills_dir.join("ghost-skill").exists());
+    }
+
+    #[test]
+    fn test_install_skill() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source/my-skill");
+        let skills_dir = dir.path().join("skills");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("SKILL.md"), "# My Skill").unwrap();
+        fs::create_dir_all(&skills_dir).unwrap();
+
+        install_skill("my-skill", &source, &skills_dir).unwrap();
+        let link = skills_dir.join("my-skill");
+        assert!(link.exists());
+        assert!(platform::is_dir_link(&link));
+    }
+
+    #[test]
+    fn test_install_skill_conflict() {
+        let dir = tempfile::tempdir().unwrap();
+        let source_a = dir.path().join("source-a/my-skill");
+        let source_b = dir.path().join("source-b/my-skill");
+        let skills_dir = dir.path().join("skills");
+        fs::create_dir_all(&source_a).unwrap();
+        fs::create_dir_all(&source_b).unwrap();
+        fs::write(source_a.join("SKILL.md"), "# A").unwrap();
+        fs::write(source_b.join("SKILL.md"), "# B").unwrap();
+        fs::create_dir_all(&skills_dir).unwrap();
+
+        install_skill("my-skill", &source_a, &skills_dir).unwrap();
+        let result = install_skill("my-skill", &source_b, &skills_dir);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_uninstall_skill() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source/my-skill");
+        let skills_dir = dir.path().join("skills");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("SKILL.md"), "# My Skill").unwrap();
+        fs::create_dir_all(&skills_dir).unwrap();
+
+        install_skill("my-skill", &source, &skills_dir).unwrap();
+        assert!(skills_dir.join("my-skill").exists());
+
+        uninstall_skill("my-skill", &skills_dir).unwrap();
+        assert!(!skills_dir.join("my-skill").exists());
+        assert!(source.exists());
+    }
+
+    #[test]
+    fn test_uninstall_nonexistent() {
+        let dir = tempfile::tempdir().unwrap();
+        let skills_dir = dir.path().join("skills");
+        fs::create_dir_all(&skills_dir).unwrap();
+        let result = uninstall_skill("nonexistent", &skills_dir);
+        assert!(result.is_ok());
     }
 }
