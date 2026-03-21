@@ -181,6 +181,17 @@ pub fn repo_name_from_url(url: &str) -> String {
         .to_string()
 }
 
+/// Normalize a git URL for comparison (strip trailing .git, convert SSH to path form)
+fn normalize_git_url(url: &str) -> String {
+    let s = url.trim().trim_end_matches('/').trim_end_matches(".git");
+    // Convert git@host:user/repo to host/user/repo for comparison
+    if let Some(rest) = s.strip_prefix("git@") {
+        rest.replacen(':', "/", 1).to_lowercase()
+    } else {
+        s.to_lowercase()
+    }
+}
+
 
 
 /// Git pull all skill source repos (deduplicating by git root), then re-sync symlinks
@@ -485,7 +496,7 @@ pub fn clone_or_pull(
             });
 
         if let Some(ref existing) = existing_url {
-            if existing != url {
+            if normalize_git_url(existing) != normalize_git_url(url) {
                 anyhow::bail!(
                     "Directory '{}' already exists but belongs to a different repo ({}).\n\
                      Remove it manually or use a different URL.",

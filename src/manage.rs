@@ -231,27 +231,47 @@ impl App {
                     .iter()
                     .all(|s| s.install_status == SkillInstallStatus::Installed);
                 let group_name = self.groups[group_index].name.clone();
+                let mut ok = 0;
+                let mut fail = 0;
                 if all_installed {
                     for i in 0..self.groups[group_index].skills.len() {
                         let name = self.groups[group_index].skills[i].name.clone();
                         if self.groups[group_index].skills[i].install_status == SkillInstallStatus::Installed {
-                            let _ = skills::uninstall_skill(&name, &self.skills_dir);
-                            self.groups[group_index].skills[i].install_status =
-                                SkillInstallStatus::NotInstalled;
+                            match skills::uninstall_skill(&name, &self.skills_dir) {
+                                Ok(()) => {
+                                    self.groups[group_index].skills[i].install_status =
+                                        SkillInstallStatus::NotInstalled;
+                                    ok += 1;
+                                }
+                                Err(_) => { fail += 1; }
+                            }
                         }
                     }
-                    self.set_status(format!("Uninstalled all from {group_name}"));
+                    if fail > 0 {
+                        self.set_status(format!("Uninstalled {ok}/{} from {group_name} ({fail} failed)", ok + fail));
+                    } else {
+                        self.set_status(format!("Uninstalled all from {group_name}"));
+                    }
                 } else {
                     for i in 0..self.groups[group_index].skills.len() {
                         let name = self.groups[group_index].skills[i].name.clone();
                         let source = self.groups[group_index].skills[i].source_path.clone();
                         if self.groups[group_index].skills[i].install_status == SkillInstallStatus::NotInstalled {
-                            let _ = skills::install_skill(&name, &source, &self.skills_dir);
-                            self.groups[group_index].skills[i].install_status =
-                                SkillInstallStatus::Installed;
+                            match skills::install_skill(&name, &source, &self.skills_dir) {
+                                Ok(()) => {
+                                    self.groups[group_index].skills[i].install_status =
+                                        SkillInstallStatus::Installed;
+                                    ok += 1;
+                                }
+                                Err(_) => { fail += 1; }
+                            }
                         }
                     }
-                    self.set_status(format!("Installed all from {group_name}"));
+                    if fail > 0 {
+                        self.set_status(format!("Installed {ok}/{} from {group_name} ({fail} failed)", ok + fail));
+                    } else {
+                        self.set_status(format!("Installed all from {group_name}"));
+                    }
                 }
             }
         }
