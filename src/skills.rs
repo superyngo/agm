@@ -889,6 +889,115 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Migrate a tool's skills directory to the central store.
+/// Moves skills from `skills_link` into `tool_skills_target` (under source_dir/agm_tools/{tool}/),
+/// then creates central links pointing to the migrated locations.
+pub fn migrate_tool_dir(
+    skills_link: &Path,
+    tool_skills_target: &Path,
+    central_skills: &Path,
+    tool_key: &str,
+) -> anyhow::Result<usize> {
+    use anyhow::Context;
+
+    fs::create_dir_all(tool_skills_target)?;
+    fs::create_dir_all(central_skills)?;
+
+    let discovered = scan_skills(skills_link);  // was skills::scan_skills — now local call
+    let mut migrated = 0;
+
+    for (name, skill_path) in &discovered {
+        let effective_name = if !central_skills.join(name).exists() {
+            name.clone()
+        } else {
+            let prefixed = format!("{}_{}", tool_key, name);
+            println!(
+                "  {} skill '{}' already in central, renaming to '{}'",
+                "warn".yellow(),
+                name,
+                prefixed
+            );
+            prefixed
+        };
+
+        let dest = tool_skills_target.join(&effective_name);
+        let link = central_skills.join(&effective_name);
+
+        if dest.exists() {
+            println!(
+                "  {} {} already in store, re-linking",
+                "skip".yellow(),
+                effective_name
+            );
+        } else {
+            fs::rename(skill_path, &dest)
+                .with_context(|| format!("Failed to move skill '{}' to store", effective_name))?;
+        }
+
+        if link.symlink_metadata().is_ok() {
+            let already_ok = platform::read_dir_link_target(&link)
+                .and_then(|t| fs::canonicalize(&t).ok())
+                .zip(fs::canonicalize(&dest).ok())
+                .map(|(a, b)| a == b)
+                .unwrap_or(false);
+            if already_ok {
+                println!("  {} {} already linked", "skip".yellow(), effective_name);
+                migrated += 1;
+                continue;
+            }
+            platform::remove_link(&link)?;
+        }
+
+        platform::link_dir(&dest, &link)
+            .with_context(|| format!("Failed to link skill '{}' into central", effective_name))?;
+
+        println!(
+            "  {} {} → {}",
+            " ok ".green(),
+            effective_name,
+            crate::paths::contract_tilde(&dest)
+        );
+        migrated += 1;
+    }
+
+    if skills_link.exists() {
+        fs::remove_dir_all(skills_link)?;
+    }
+
+    Ok(migrated)
+}
+
+/// Recursively copy a directory, preserving symlinks.
+pub fn copy_dir_all(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        let meta = fs::symlink_metadata(&src_path)?;
+        if platform::is_dir_link(&src_path) {
+            if let Some(target) = platform::read_dir_link_target(&src_path) {
+                if dst_path.symlink_metadata().is_ok() {
+                    platform::remove_link(&dst_path)?;
+                }
+                platform::link_dir(&target, &dst_path)?;
+            }
+        } else if meta.file_type().is_symlink() {
+            if let Ok(target) = fs::read_link(&src_path) {
+                if dst_path.symlink_metadata().is_ok() {
+                    fs::remove_file(&dst_path)?;
+                }
+                platform::link_file(&target, &dst_path)?;
+            }
+        } else if meta.is_dir() {
+            copy_dir_all(&src_path, &dst_path)?;
+        } else {
+            fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -12,7 +12,7 @@ use clap::{CommandFactory, Parser, Subcommand};
 use colored::Colorize;
 use std::fs;
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "agm", about = "AI Agent Manager", disable_version_flag = true)]
@@ -176,127 +176,6 @@ fn prompt_yes_no(prompt: &str) -> bool {
     let input = input.trim().to_lowercase();
 
     input == "y" || input == "yes"
-}
-
-/// Migrate an existing skills directory into AGM's central store.
-///
-/// For each skill found in `skills_link`:
-///   - If its name is already taken in `central_skills`, prefix it with `{tool_key}_`
-///   - Move the skill dir to `$source_dir/agm_tools/{tool_key}/{effective_name}`
-///   - Symlink it into `central_skills/{effective_name}`
-///
-/// Non-skill files/dirs left over are cleaned up with remove_dir_all.
-/// Returns the number of skills migrated.
-fn migrate_skills_dir(
-    skills_link: &Path,
-    tool_skills_target: &Path,
-    central_skills: &Path,
-    tool_key: &str,
-) -> anyhow::Result<usize> {
-    use anyhow::Context;
-
-    fs::create_dir_all(tool_skills_target)?;
-    fs::create_dir_all(central_skills)?;
-
-    let discovered = skills::scan_skills(skills_link);
-    let mut migrated = 0;
-
-    for (name, skill_path) in &discovered {
-        // Determine effective name — avoid collision in central, try {tool_key}_{name}
-        let effective_name = if !central_skills.join(name).exists() {
-            name.clone()
-        } else {
-            let prefixed = format!("{}_{}", tool_key, name);
-            println!(
-                "  {} skill '{}' already in central, renaming to '{}'",
-                "warn".yellow(),
-                name,
-                prefixed
-            );
-            prefixed
-        };
-
-        let dest = tool_skills_target.join(&effective_name);
-        let link = central_skills.join(&effective_name);
-
-        // If dest already exists (previous partial run), skip the move
-        if dest.exists() {
-            println!(
-                "  {} {} already in store, re-linking",
-                "skip".yellow(),
-                effective_name
-            );
-        } else {
-            fs::rename(skill_path, &dest)
-                .with_context(|| format!("Failed to move skill '{}' to store", effective_name))?;
-        }
-
-        // If central link already exists and points to dest, skip
-        if link.symlink_metadata().is_ok() {
-            let already_ok = platform::read_dir_link_target(&link)
-                .and_then(|t| fs::canonicalize(&t).ok())
-                .zip(fs::canonicalize(&dest).ok())
-                .map(|(a, b)| a == b)
-                .unwrap_or(false);
-            if already_ok {
-                println!("  {} {} already linked", "skip".yellow(), effective_name);
-                migrated += 1;
-                continue;
-            }
-            // Stale/wrong link — remove and recreate
-            platform::remove_link(&link)?;
-        }
-
-        platform::link_dir(&dest, &link)
-            .with_context(|| format!("Failed to link skill '{}' into central", effective_name))?;
-
-        println!(
-            "  {} {} → {}",
-            " ok ".green(),
-            effective_name,
-            paths::contract_tilde(&dest)
-        );
-        migrated += 1;
-    }
-
-    // Clean up leftover files/dirs (non-skills, e.g. .DS_Store, README.md)
-    if skills_link.exists() {
-        fs::remove_dir_all(skills_link)?;
-    }
-
-    Ok(migrated)
-}
-
-fn copy_dir_all(src: &Path, dst: &Path) -> anyhow::Result<()> {
-    fs::create_dir_all(dst)?;
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-        let meta = fs::symlink_metadata(&src_path)?;
-        if platform::is_dir_link(&src_path) {
-            // Recreate directory link
-            if let Some(target) = platform::read_dir_link_target(&src_path) {
-                if dst_path.symlink_metadata().is_ok() {
-                    platform::remove_link(&dst_path)?;
-                }
-                platform::link_dir(&target, &dst_path)?;
-            }
-        } else if meta.file_type().is_symlink() {
-            // File symlink (Unix) — recreate
-            if let Ok(target) = fs::read_link(&src_path) {
-                if dst_path.symlink_metadata().is_ok() {
-                    fs::remove_file(&dst_path)?;
-                }
-                platform::link_file(&target, &dst_path)?;
-            }
-        } else if meta.is_dir() {
-            copy_dir_all(&src_path, &dst_path)?;
-        } else {
-            fs::copy(&src_path, &dst_path)?;
-        }
-    }
-    Ok(())
 }
 
 fn open_tool_files(
@@ -530,7 +409,7 @@ fn main() -> anyhow::Result<()> {
                                 paths::contract_tilde(&skills_link)
                             )) {
                                 let tool_skills_target = source_dir.join("agm_tools").join(key);
-                                let added = migrate_skills_dir(
+                                let added = skills::migrate_tool_dir(
                                     &skills_link,
                                     &tool_skills_target,
                                     &central_skills,
@@ -714,7 +593,7 @@ fn main() -> anyhow::Result<()> {
                         .join(&tool_config.skills_dir);
                     if linker::remove_link(&skills_link, "skills", true)? && central_skills.is_dir()
                     {
-                        copy_dir_all(&central_skills, &skills_link)?;
+                        skills::copy_dir_all(&central_skills, &skills_link)?;
                         println!("  {} skills copied back", " ok ".green());
                     }
                 }
@@ -726,7 +605,7 @@ fn main() -> anyhow::Result<()> {
                         .join(&tool_config.agents_dir);
                     if linker::remove_link(&agents_link, "agents", true)? && central_agents.is_dir()
                     {
-                        copy_dir_all(&central_agents, &agents_link)?;
+                        skills::copy_dir_all(&central_agents, &agents_link)?;
                         println!("  {} agents copied back", " ok ".green());
                     }
                 }

@@ -191,6 +191,70 @@ pub fn remove_link(link_path: &Path, label: &str, is_dir: bool) -> anyhow::Resul
     }
 }
 
+/// Create a link, returning a status message instead of printing.
+/// Returns Ok((created, message)) where `created` is true if a new link was made.
+pub fn create_link_quiet(
+    link_path: &Path,
+    target: &Path,
+    label: &str,
+    is_dir: bool,
+) -> anyhow::Result<(bool, String)> {
+    match check_link(link_path, target, is_dir) {
+        LinkStatus::Linked => {
+            Ok((false, format!("{} already linked", label)))
+        }
+        LinkStatus::Missing => {
+            do_link(target, link_path, is_dir).with_context(|| {
+                format!("Failed to create link: {} → {}", link_path.display(), target.display())
+            })?;
+            Ok((true, format!("{} → {}", label, target.display())))
+        }
+        LinkStatus::Broken => {
+            platform::remove_link(link_path)?;
+            do_link(target, link_path, is_dir)?;
+            Ok((true, format!("{} (repaired broken link)", label)))
+        }
+        LinkStatus::Wrong(actual) => {
+            Ok((false, format!("{} points to {} (expected {})", label, actual, target.display())))
+        }
+        LinkStatus::Blocked => {
+            Ok((false, format!("{} exists but is not a link, skipping", label)))
+        }
+    }
+}
+
+/// Remove a link, returning a status message instead of printing.
+/// Returns Ok((removed, message)).
+pub fn remove_link_quiet(link_path: &Path, label: &str, is_dir: bool) -> anyhow::Result<(bool, String)> {
+    if link_path.symlink_metadata().is_err() {
+        return Ok((false, format!("{} not found", label)));
+    }
+
+    if is_dir {
+        if platform::is_dir_link(link_path) {
+            platform::remove_link(link_path)?;
+            Ok((true, format!("{} removed", label)))
+        } else {
+            Ok((false, format!("{} is not a link, skipping", label)))
+        }
+    } else {
+        if fs::read_link(link_path).is_ok() {
+            platform::remove_link(link_path)?;
+            Ok((true, format!("{} removed", label)))
+        } else {
+            #[cfg(windows)]
+            {
+                platform::remove_link(link_path)?;
+                Ok((true, format!("{} removed", label)))
+            }
+            #[cfg(not(windows))]
+            {
+                Ok((false, format!("{} is not a symlink, skipping", label)))
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
