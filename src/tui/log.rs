@@ -1,0 +1,1 @@
+// LogBuffer - Task 1.3

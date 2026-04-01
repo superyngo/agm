@@ -7,6 +7,7 @@ mod paths;
 mod platform;
 mod skills;
 mod status;
+mod tui;
 
 use clap::{CommandFactory, Parser, Subcommand};
 use colored::Colorize;
