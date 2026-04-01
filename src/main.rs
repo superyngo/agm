@@ -2,7 +2,6 @@ mod config;
 mod editor;
 mod init;
 mod linker;
-mod manage;
 mod paths;
 mod platform;
 mod skills;
@@ -946,7 +945,7 @@ fn main() -> anyhow::Result<()> {
                 Ok(())
             } else {
                 // No flags — enter TUI
-                manage::run(&mut config)?;
+                tui::source::run(&mut config)?;
                 Ok(())
             }
         }

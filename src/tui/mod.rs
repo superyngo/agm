@@ -1,7 +1,7 @@
 pub mod background;
 pub mod log;
 pub mod popup;
-// pub mod source;  // Will be created by moving manage.rs in Task 2.2
+pub mod source;
 pub mod tool;
 
 use ratatui::layout::Rect;
