@@ -54,6 +54,14 @@ pub struct SourceGroup {
     pub agents: Vec<AgentInfo>,
 }
 
+/// Progress report from update_all_with_progress
+#[derive(Debug, Clone)]
+pub enum UpdateProgress {
+    RepoStart { name: String },
+    RepoComplete { name: String, success: bool, message: String },
+    AllDone { total: usize, updated: usize, new_skills: usize, new_agents: usize },
+}
+
 /// Scan a path for skills. Returns list of (skill_name, skill_dir_path).
 /// If path/SKILL.md exists → single skill.
 /// Else scan subdirectories recursively (max depth 3) for SKILL.md.
@@ -427,6 +435,131 @@ pub fn update_all(skills_dir: &Path, agents_dir: &Path, source_dir: &Path) -> an
     }
 
     Ok(())
+}
+
+/// Like update_all, but reports progress through a callback.
+/// Used by the TUI for non-blocking background updates.
+pub fn update_all_with_progress<F>(
+    skills_dir: &Path,
+    agents_dir: &Path,
+    source_dir: &Path,
+    mut on_progress: F,
+) where
+    F: FnMut(UpdateProgress),
+{
+    // Collect git roots (same logic as update_all)
+    let mut git_roots = std::collections::HashSet::new();
+    if source_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(source_dir) {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let path = entry.path();
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if name == "local" || name == "agm_tools" {
+                    continue;
+                }
+                if path.is_dir() && path.join(".git").exists() {
+                    git_roots.insert(path);
+                }
+            }
+        }
+    }
+
+    let total = git_roots.len();
+    let mut updated = 0;
+    let mut new_skills_total = 0;
+    let mut new_agents_total = 0;
+
+    if total == 0 {
+        on_progress(UpdateProgress::AllDone {
+            total: 0, updated: 0, new_skills: 0, new_agents: 0,
+        });
+        return;
+    }
+
+    // Git pull each repo
+    for git_root in &git_roots {
+        let repo_name = git_root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
+
+        on_progress(UpdateProgress::RepoStart { name: repo_name.clone() });
+
+        let result = std::process::Command::new("git")
+            .args(["pull"])
+            .current_dir(git_root)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output();
+
+        match result {
+            Ok(output) if output.status.success() => {
+                let msg = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let message = if msg.contains("Already up to date") {
+                    "Already up to date".to_string()
+                } else {
+                    "Updated".to_string()
+                };
+                on_progress(UpdateProgress::RepoComplete {
+                    name: repo_name,
+                    success: true,
+                    message,
+                });
+                updated += 1;
+            }
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                on_progress(UpdateProgress::RepoComplete {
+                    name: repo_name,
+                    success: false,
+                    message: format!("Failed: {}", stderr),
+                });
+            }
+            Err(e) => {
+                on_progress(UpdateProgress::RepoComplete {
+                    name: repo_name,
+                    success: false,
+                    message: format!("Error: {}", e),
+                });
+            }
+        }
+    }
+
+    // Prune broken links (silently — TUI will show in log if needed)
+    let _ = prune_broken_skills(skills_dir);
+    let _ = prune_broken_agents(agents_dir);
+
+    // Re-sync new skills/agents
+    for git_root in &git_roots {
+        let new_skills = scan_skills(git_root);
+        for (name, skill_path) in new_skills {
+            let link_path = skills_dir.join(&name);
+            if link_path.symlink_metadata().is_err() {
+                if install_skill(&name, &skill_path, skills_dir).is_ok() {
+                    new_skills_total += 1;
+                }
+            }
+        }
+
+        let new_agents = scan_agents(git_root);
+        for (name, agent_path) in new_agents {
+            let link_name = format!("{}.md", name);
+            let link_path = agents_dir.join(&link_name);
+            if link_path.symlink_metadata().is_err() {
+                if install_agent(&name, &agent_path, agents_dir).is_ok() {
+                    new_agents_total += 1;
+                }
+            }
+        }
+    }
+
+    on_progress(UpdateProgress::AllDone {
+        total,
+        updated,
+        new_skills: new_skills_total,
+        new_agents: new_agents_total,
+    });
 }
 
 /// Try to resolve the git remote URL for a directory.
@@ -1236,5 +1369,54 @@ mod tests {
         assert_eq!(groups[0].skills.len(), 1);
         assert_eq!(groups[0].agents.len(), 1);
         assert_eq!(groups[0].agents[0].name, "helper");
+    }
+
+    #[test]
+    fn test_update_all_with_progress_empty_source() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let skills_dir = tmp.path().join("skills");
+        let agents_dir = tmp.path().join("agents");
+        let source_dir = tmp.path().join("source");
+        fs::create_dir_all(&skills_dir).unwrap();
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::create_dir_all(&source_dir).unwrap();
+
+        let mut events = Vec::new();
+        update_all_with_progress(&skills_dir, &agents_dir, &source_dir, |e| {
+            events.push(e);
+        });
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            UpdateProgress::AllDone { total, updated, new_skills, new_agents } => {
+                assert_eq!(*total, 0);
+                assert_eq!(*updated, 0);
+                assert_eq!(*new_skills, 0);
+                assert_eq!(*new_agents, 0);
+            }
+            other => panic!("Expected AllDone, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_update_all_with_progress_nonexistent_source() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let skills_dir = tmp.path().join("skills");
+        let agents_dir = tmp.path().join("agents");
+        let source_dir = tmp.path().join("nonexistent");
+        fs::create_dir_all(&skills_dir).unwrap();
+        fs::create_dir_all(&agents_dir).unwrap();
+        // source_dir intentionally not created
+
+        let mut events = Vec::new();
+        update_all_with_progress(&skills_dir, &agents_dir, &source_dir, |e| {
+            events.push(e);
+        });
+
+        assert_eq!(events.len(), 1);
+        match &events[0] {
+            UpdateProgress::AllDone { total, .. } => assert_eq!(*total, 0),
+            other => panic!("Expected AllDone, got {:?}", other),
+        }
     }
 }

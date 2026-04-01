@@ -83,7 +83,27 @@ where
     BackgroundTask::new(rx)
 }
 
-// TODO: add spawn_update() after Task 2.1
+/// Spawn a background update. Returns BackgroundTask.
+pub fn spawn_update(
+    skills_dir: PathBuf,
+    agents_dir: PathBuf,
+    source_dir: PathBuf,
+) -> BackgroundTask {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        crate::skills::update_all_with_progress(&skills_dir, &agents_dir, &source_dir, |progress| {
+            let event = match progress {
+                crate::skills::UpdateProgress::RepoStart { name } => TaskEvent::UpdateRepoStart { name },
+                crate::skills::UpdateProgress::RepoComplete { name, success, message } =>
+                    TaskEvent::UpdateRepoComplete { name, success, message },
+                crate::skills::UpdateProgress::AllDone { total, updated, new_skills, new_agents } =>
+                    TaskEvent::UpdateAllDone { total, updated, new_skills, new_agents },
+            };
+            let _ = tx.send(event);
+        });
+    });
+    BackgroundTask::new(rx)
+}
 
 #[cfg(test)]
 mod tests {
