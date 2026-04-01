@@ -87,6 +87,7 @@ struct App {
     show_log: bool,
     log_popup: Option<super::popup::ScrollablePopup>,
     background_task: Option<super::background::BackgroundTask>,
+    info_popup: Option<super::popup::ScrollablePopup>,
 }
 
 impl App {
@@ -121,6 +122,7 @@ impl App {
             show_log: false,
             log_popup: None,
             background_task: None,
+            info_popup: None,
         };
         app.rebuild_rows();
         app
@@ -491,37 +493,202 @@ impl App {
             Some(r) => r.clone(),
             None => return,
         };
-        match row {
-            ListRow::SkillItem {
-                group_index,
-                skill_index,
-            } => {
-                let skill = &self.groups[group_index].skills[skill_index];
-                self.set_status(format!("Path: {}", contract_tilde(&skill.source_path)));
+
+        let lines = match row {
+            ListRow::SkillItem { group_index, skill_index } => {
+                self.build_skill_info_lines(group_index, skill_index)
             }
-            ListRow::AgentItem {
-                group_index,
-                agent_index,
-            } => {
-                let agent = &self.groups[group_index].agents[agent_index];
-                self.set_status(format!("Path: {}", contract_tilde(&agent.source_path)));
+            ListRow::AgentItem { group_index, agent_index } => {
+                self.build_agent_info_lines(group_index, agent_index)
             }
             ListRow::SourceHeader { group_index, .. } => {
-                let group = &self.groups[group_index];
-                let info = match &group.kind {
-                    SourceKind::Repo { url: Some(url) } => format!("Repo: {url}"),
-                    SourceKind::Repo { url: None } => {
-                        format!("Repo: {}", contract_tilde(&group.path))
-                    }
-                    SourceKind::Local => format!("Local: {}", contract_tilde(&group.path)),
-                    SourceKind::Migrated { tool } => {
-                        format!("Migrated from {tool}: {}", contract_tilde(&group.path))
-                    }
-                };
-                self.set_status(info);
+                self.build_source_info_lines(group_index)
             }
-            _ => {}
+            ListRow::CategoryHeader { .. } => {
+                return; // No info for category headers
+            }
+        };
+
+        self.info_popup = Some(
+            super::popup::ScrollablePopup::new("Info", lines)
+                .with_close_hint("Esc:close")
+        );
+    }
+
+    fn build_skill_info_lines(&self, group_index: usize, skill_index: usize) -> Vec<Line<'static>> {
+        let group = &self.groups[group_index];
+        let skill = &group.skills[skill_index];
+        let mut lines = Vec::new();
+
+        // Header info
+        lines.push(Line::from(vec![
+            Span::styled("Name: ", Style::default().fg(Color::Yellow)),
+            Span::raw(skill.name.clone()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Source: ", Style::default().fg(Color::Yellow)),
+            Span::raw(group.name.clone()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Path: ", Style::default().fg(Color::Yellow)),
+            Span::raw(contract_tilde(&skill.source_path).to_string()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Status: ", Style::default().fg(Color::Yellow)),
+            Span::raw(format!("{:?}", skill.install_status)),
+        ]));
+        lines.push(Line::default()); // blank line
+
+        // Directory listing
+        lines.push(Line::from(Span::styled("Files:", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))));
+        if let Ok(mut entries) = std::fs::read_dir(&skill.source_path) {
+            let mut file_names: Vec<String> = Vec::new();
+            while let Some(Ok(entry)) = entries.next() {
+                if let Some(name) = entry.file_name().to_str() {
+                    let suffix = if entry.path().is_dir() { "/" } else { "" };
+                    file_names.push(format!("  {}{}", name, suffix));
+                }
+            }
+            file_names.sort();
+            for name in file_names {
+                lines.push(Line::from(name));
+            }
+        } else {
+            lines.push(Line::from("  (unable to read directory)"));
         }
+        lines.push(Line::default()); // blank line
+
+        // SKILL.md content
+        let skill_md_path = skill.source_path.join("SKILL.md");
+        if skill_md_path.exists() {
+            lines.push(Line::from(Span::styled(
+                "─── SKILL.md ───",
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )));
+            match std::fs::read_to_string(&skill_md_path) {
+                Ok(content) => {
+                    for line in content.lines().take(5000) {
+                        lines.push(Line::from(line.to_string()));
+                    }
+                }
+                Err(e) => {
+                    lines.push(Line::from(format!("(error reading SKILL.md: {})", e)));
+                }
+            }
+        }
+
+        lines
+    }
+
+    fn build_agent_info_lines(&self, group_index: usize, agent_index: usize) -> Vec<Line<'static>> {
+        let group = &self.groups[group_index];
+        let agent = &group.agents[agent_index];
+        let mut lines = Vec::new();
+
+        lines.push(Line::from(vec![
+            Span::styled("Name: ", Style::default().fg(Color::Yellow)),
+            Span::raw(agent.name.clone()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Source: ", Style::default().fg(Color::Yellow)),
+            Span::raw(group.name.clone()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Path: ", Style::default().fg(Color::Yellow)),
+            Span::raw(contract_tilde(&agent.source_path).to_string()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Status: ", Style::default().fg(Color::Yellow)),
+            Span::raw(format!("{:?}", agent.install_status)),
+        ]));
+        lines.push(Line::default());
+
+        // Agent .md content
+        if agent.source_path.exists() {
+            lines.push(Line::from(Span::styled(
+                format!("─── {} ───", agent.source_path.file_name().and_then(|n| n.to_str()).unwrap_or("agent.md")),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )));
+            match std::fs::read_to_string(&agent.source_path) {
+                Ok(content) => {
+                    for line in content.lines().take(5000) {
+                        lines.push(Line::from(line.to_string()));
+                    }
+                }
+                Err(e) => {
+                    lines.push(Line::from(format!("(error reading agent file: {})", e)));
+                }
+            }
+        }
+
+        lines
+    }
+
+    fn build_source_info_lines(&self, group_index: usize) -> Vec<Line<'static>> {
+        let group = &self.groups[group_index];
+        let mut lines = Vec::new();
+
+        lines.push(Line::from(vec![
+            Span::styled("Name: ", Style::default().fg(Color::Yellow)),
+            Span::raw(group.name.clone()),
+        ]));
+
+        let kind_str = match &group.kind {
+            SourceKind::Repo { url: Some(url) } => format!("Repo ({})", url),
+            SourceKind::Repo { url: None } => "Repo (no URL)".to_string(),
+            SourceKind::Local => "Local".to_string(),
+            SourceKind::Migrated { tool } => format!("Migrated from {}", tool),
+        };
+        lines.push(Line::from(vec![
+            Span::styled("Type: ", Style::default().fg(Color::Yellow)),
+            Span::raw(kind_str),
+        ]));
+
+        lines.push(Line::from(vec![
+            Span::styled("Path: ", Style::default().fg(Color::Yellow)),
+            Span::raw(contract_tilde(&group.path).to_string()),
+        ]));
+
+        lines.push(Line::from(vec![
+            Span::styled("Skills: ", Style::default().fg(Color::Yellow)),
+            Span::raw(format!("{}", group.skills.len())),
+        ]));
+
+        lines.push(Line::from(vec![
+            Span::styled("Agents: ", Style::default().fg(Color::Yellow)),
+            Span::raw(format!("{}", group.agents.len())),
+        ]));
+
+        lines.push(Line::default());
+
+        // List skills
+        if !group.skills.is_empty() {
+            lines.push(Line::from(Span::styled("Skills:", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))));
+            for skill in &group.skills {
+                let status_icon = match skill.install_status {
+                    SkillInstallStatus::Installed => "✓",
+                    SkillInstallStatus::NotInstalled => "○",
+                    SkillInstallStatus::Conflict => "⚠",
+                };
+                lines.push(Line::from(format!("  {} {}", status_icon, skill.name)));
+            }
+            lines.push(Line::default());
+        }
+
+        // List agents
+        if !group.agents.is_empty() {
+            lines.push(Line::from(Span::styled("Agents:", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))));
+            for agent in &group.agents {
+                let status_icon = match agent.install_status {
+                    SkillInstallStatus::Installed => "✓",
+                    SkillInstallStatus::NotInstalled => "○",
+                    SkillInstallStatus::Conflict => "⚠",
+                };
+                lines.push(Line::from(format!("  {} {}", status_icon, agent.name)));
+            }
+        }
+
+        lines
     }
 
     fn expand_all(&mut self) {
@@ -646,6 +813,22 @@ impl App {
                 _ => {
                     if let Some(ref mut popup) = self.log_popup {
                         let _ = popup.handle_key(code);
+                    }
+                }
+            }
+            return;
+        }
+
+        // Info popup intercepts all keys when visible
+        if let Some(ref mut popup) = self.info_popup {
+            match code {
+                KeyCode::Char('i') | KeyCode::Esc => {
+                    self.info_popup = None;
+                }
+                _ => {
+                    match popup.handle_key(code) {
+                        super::popup::PopupAction::Close => { self.info_popup = None; }
+                        _ => {}
                     }
                 }
             }
@@ -992,8 +1175,11 @@ fn render(app: &mut App, frame: &mut Frame) {
     render_list(app, frame, chunks[0]);
     render_footer(app, frame, chunks[1]);
 
-    // Log popup overlay
+    // Popups (only one should be visible at a time)
     if let Some(ref mut popup) = app.log_popup {
+        popup.render(frame, frame.area());
+    }
+    if let Some(ref mut popup) = app.info_popup {
         popup.render(frame, frame.area());
     }
 }
@@ -1182,6 +1368,8 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             Span::raw(" update  "),
             Span::styled("d", Style::default().fg(Color::Yellow)),
             Span::raw(" del  "),
+            Span::styled("i", Style::default().fg(Color::Yellow)),
+            Span::raw(" info  "),
             Span::styled("/", Style::default().fg(Color::Yellow)),
             Span::raw(" search  "),
             Span::styled("l", Style::default().fg(Color::Yellow)),
