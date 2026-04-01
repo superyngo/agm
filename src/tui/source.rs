@@ -83,6 +83,9 @@ struct App {
     expanded_agents_sources: HashSet<usize>,
     confirm_state: Option<ConfirmState>,
     matcher: SkimMatcherV2,
+    log: super::log::LogBuffer,
+    show_log: bool,
+    log_popup: Option<super::popup::ScrollablePopup>,
 }
 
 impl App {
@@ -113,6 +116,9 @@ impl App {
             expanded_agents_sources: HashSet::new(),
             confirm_state: None,
             matcher: SkimMatcherV2::default(),
+            log: super::log::LogBuffer::new(500),
+            show_log: false,
+            log_popup: None,
         };
         app.rebuild_rows();
         app
@@ -324,9 +330,13 @@ impl App {
                     Ok(()) => {
                         self.groups[group_index].skills[skill_index].install_status =
                             SkillInstallStatus::NotInstalled;
+                        self.log.push(super::log::LogLevel::Success, format!("Uninstalled {name}"));
                         self.set_status(format!("Uninstalled {name}"));
                     }
-                    Err(e) => self.set_status(format!("Error: {e}")),
+                    Err(e) => {
+                        self.log.push(super::log::LogLevel::Error, format!("Uninstall error: {e}"));
+                        self.set_status(format!("Error: {e}"));
+                    }
                 }
             }
             SkillInstallStatus::NotInstalled => {
@@ -334,12 +344,17 @@ impl App {
                     Ok(()) => {
                         self.groups[group_index].skills[skill_index].install_status =
                             SkillInstallStatus::Installed;
+                        self.log.push(super::log::LogLevel::Success, format!("Installed {name}"));
                         self.set_status(format!("Installed {name}"));
                     }
-                    Err(e) => self.set_status(format!("Error: {e}")),
+                    Err(e) => {
+                        self.log.push(super::log::LogLevel::Error, format!("Install error: {e}"));
+                        self.set_status(format!("Error: {e}"));
+                    }
                 }
             }
             SkillInstallStatus::Conflict => {
+                self.log.push(super::log::LogLevel::Warning, format!("Conflict: {name} installed from another source"));
                 self.set_status(format!("Conflict: {name} installed from another source"));
             }
         }
@@ -355,9 +370,13 @@ impl App {
                     Ok(()) => {
                         self.groups[group_index].agents[agent_index].install_status =
                             SkillInstallStatus::NotInstalled;
+                        self.log.push(super::log::LogLevel::Success, format!("Uninstalled {name}"));
                         self.set_status(format!("Uninstalled agent {name}"));
                     }
-                    Err(e) => self.set_status(format!("Error: {e}")),
+                    Err(e) => {
+                        self.log.push(super::log::LogLevel::Error, format!("Uninstall error: {e}"));
+                        self.set_status(format!("Error: {e}"));
+                    }
                 }
             }
             SkillInstallStatus::NotInstalled => {
@@ -365,12 +384,17 @@ impl App {
                     Ok(()) => {
                         self.groups[group_index].agents[agent_index].install_status =
                             SkillInstallStatus::Installed;
+                        self.log.push(super::log::LogLevel::Success, format!("Installed {name}"));
                         self.set_status(format!("Installed agent {name}"));
                     }
-                    Err(e) => self.set_status(format!("Error: {e}")),
+                    Err(e) => {
+                        self.log.push(super::log::LogLevel::Error, format!("Install error: {e}"));
+                        self.set_status(format!("Error: {e}"));
+                    }
                 }
             }
             SkillInstallStatus::Conflict => {
+                self.log.push(super::log::LogLevel::Warning, format!("Conflict: agent {name} from another source"));
                 self.set_status(format!("Conflict: agent {name} from another source"));
             }
         }
@@ -405,10 +429,14 @@ impl App {
                     self.config.remove_source_repo(url);
                     let _ = self.config.save();
                 }
+                self.log.push(super::log::LogLevel::Success, format!("Deleted source: {}", group.name));
                 self.set_status(format!("Deleted source: {}", group.name));
                 self.refresh();
             }
-            Err(e) => self.set_status(format!("Error deleting: {e}")),
+            Err(e) => {
+                self.log.push(super::log::LogLevel::Error, format!("Delete error: {e}"));
+                self.set_status(format!("Error deleting: {e}"));
+            }
         }
         self.confirm_state = None;
     }
@@ -562,9 +590,13 @@ impl App {
                         }
                     }
                     let _ = self.config.add_source_repo(&source);
+                    self.log.push(super::log::LogLevel::Success, format!("Added from URL: {count} skill(s), {agent_count} agent(s)"));
                     self.set_status(format!("Added: {count} skill(s), {agent_count} agent(s)"));
                 }
-                Err(e) => self.set_status(format!("Error: {e}")),
+                Err(e) => {
+                    self.log.push(super::log::LogLevel::Error, format!("Add error: {e}"));
+                    self.set_status(format!("Error: {e}"));
+                }
             }
         } else {
             let source_path = expand_tilde(&source);
@@ -576,9 +608,13 @@ impl App {
                             count += 1;
                         }
                     }
+                    self.log.push(super::log::LogLevel::Success, format!("Added local: {count} skill(s)"));
                     self.set_status(format!("Added: {count} skill(s)"));
                 }
-                Err(e) => self.set_status(format!("Error: {e}")),
+                Err(e) => {
+                    self.log.push(super::log::LogLevel::Error, format!("Add error: {e}"));
+                    self.set_status(format!("Error: {e}"));
+                }
             }
         }
         self.refresh();
@@ -591,6 +627,22 @@ impl App {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         area_height: u16,
     ) {
+        // Log popup intercepts all keys when visible
+        if self.show_log {
+            match code {
+                KeyCode::Char('l') | KeyCode::Esc => {
+                    self.show_log = false;
+                    self.log_popup = None;
+                }
+                _ => {
+                    if let Some(ref mut popup) = self.log_popup {
+                        let _ = popup.handle_key(code);
+                    }
+                }
+            }
+            return;
+        }
+
         // Confirmation mode
         if let Some(state) = self.confirm_state.clone() {
             match state {
@@ -701,6 +753,7 @@ impl App {
             KeyCode::Char('i') => self.show_info(),
             KeyCode::Char('r') => {
                 self.refresh();
+                self.log.push(super::log::LogLevel::Info, "Refreshed");
                 self.set_status("Refreshed");
             }
             KeyCode::Char('u') => self.do_update(),
@@ -719,6 +772,15 @@ impl App {
                 self.filtered_rows = None;
                 // Expand all for search visibility
                 self.expand_all();
+            }
+            KeyCode::Char('l') => {
+                self.show_log = true;
+                let lines = self.log.to_lines();
+                let mut popup = super::popup::ScrollablePopup::new("Log", lines)
+                    .with_close_hint("l:close");
+                // Auto-scroll to end
+                popup.scroll_offset = popup.lines.len().saturating_sub(1);
+                self.log_popup = Some(popup);
             }
             KeyCode::Esc => {
                 if self.filtered_rows.is_some() {
@@ -910,7 +972,7 @@ fn render_item_line(
 // Rendering
 // ---------------------------------------------------------------------------
 
-fn render(app: &App, frame: &mut Frame) {
+fn render(app: &mut App, frame: &mut Frame) {
     let area = frame.area();
 
     let chunks = Layout::default()
@@ -920,6 +982,11 @@ fn render(app: &App, frame: &mut Frame) {
 
     render_list(app, frame, chunks[0]);
     render_footer(app, frame, chunks[1]);
+
+    // Log popup overlay
+    if let Some(ref mut popup) = app.log_popup {
+        popup.render(frame, frame.area());
+    }
 }
 
 fn render_list(app: &App, frame: &mut Frame, area: Rect) {
@@ -1108,6 +1175,8 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             Span::raw(" del  "),
             Span::styled("/", Style::default().fg(Color::Yellow)),
             Span::raw(" search  "),
+            Span::styled("l", Style::default().fg(Color::Yellow)),
+            Span::raw(" log  "),
             Span::styled("q", Style::default().fg(Color::Yellow)),
             Span::raw(" quit"),
         ]);
@@ -1186,7 +1255,7 @@ pub fn run(config: &mut Config) -> Result<()> {
     loop {
         let area_height = terminal.size()?.height;
         app.ensure_visible(area_height);
-        terminal.draw(|frame| render(&app, frame))?;
+        terminal.draw(|frame| render(&mut app, frame))?;
 
         app.clear_expired_status();
 
