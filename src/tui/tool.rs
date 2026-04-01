@@ -136,6 +136,7 @@ pub struct ToolApp {
     status_message: Option<(String, Instant)>,
     popup: Option<PopupState>,
     should_quit: bool,
+    pending_editor_path: Option<PathBuf>,
 }
 
 impl ToolApp {
@@ -154,6 +155,7 @@ impl ToolApp {
             status_message: None,
             popup: None,
             should_quit: false,
+            pending_editor_path: None,
         }
     }
 
@@ -212,7 +214,7 @@ impl ToolApp {
     fn handle_key(
         &mut self,
         code: KeyCode,
-        _terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+        terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
         area_height: u16,
     ) {
         // Popup intercepts all keys
@@ -262,16 +264,31 @@ impl ToolApp {
                                 _ => {} // Settings/Auth/Mcp: no toggle action
                             }
                         }
-                        ToolRow::CentralItem(CentralField::Skills | CentralField::Agents | CentralField::Source) => {
-                            // Path editor — will be added in Task 4.6
+                        ToolRow::CentralItem(ref cf @ (CentralField::Skills | CentralField::Agents | CentralField::Source)) => {
+                            let current_value = match cf {
+                                CentralField::Skills => self.config.central.skills_source.clone(),
+                                CentralField::Agents => self.config.central.agents_source.clone(),
+                                CentralField::Source => self.config.central.source_dir.clone(),
+                                _ => unreachable!(),
+                            };
+                            let len = current_value.len();
+                            self.popup = Some(PopupState::PathEditor {
+                                field: cf.clone(),
+                                value: current_value,
+                                cursor_pos: len,
+                            });
                         }
                         _ => {}
                     }
                 }
             }
 
-            // Edit — stub, will be filled in Task 4.4
-            KeyCode::Char('e') => {}
+            // Edit — open editor
+            KeyCode::Char('e') => {
+                if let Some(row) = self.current_row().cloned() {
+                    self.handle_edit(&row, terminal);
+                }
+            }
 
             // Log popup
             KeyCode::Char('l') => {
@@ -302,12 +319,22 @@ impl ToolApp {
                 match code {
                     KeyCode::Up | KeyCode::Char('k') => *cursor = cursor.saturating_sub(1),
                     KeyCode::Down | KeyCode::Char('j') => *cursor = (*cursor + 1).min(len.saturating_sub(1)),
+                    KeyCode::Enter => {
+                        if let Some((display, path, exists)) = files.get(*cursor).cloned() {
+                            if exists {
+                                self.popup = None;
+                                // Store path for editor open after popup close
+                                self.pending_editor_path = Some(path);
+                            } else {
+                                self.set_status(format!("File not found: {}", display));
+                            }
+                        }
+                    }
                     KeyCode::Esc => self.popup = None,
-                    // Enter handling will be in Task 4.5
                     _ => {}
                 }
             }
-            Some(PopupState::PathEditor { ref mut value, ref mut cursor_pos, .. }) => {
+            Some(PopupState::PathEditor { ref field, ref mut value, ref mut cursor_pos }) => {
                 match code {
                     KeyCode::Char(c) => { value.insert(*cursor_pos, c); *cursor_pos += 1; }
                     KeyCode::Backspace => {
@@ -320,8 +347,13 @@ impl ToolApp {
                     KeyCode::Right => *cursor_pos = (*cursor_pos + 1).min(value.len()),
                     KeyCode::Home => *cursor_pos = 0,
                     KeyCode::End => *cursor_pos = value.len(),
+                    KeyCode::Enter => {
+                        let field_clone = field.clone();
+                        let value_clone = value.clone();
+                        self.popup = None;
+                        self.save_central_path(field_clone, value_clone);
+                    }
                     KeyCode::Esc => self.popup = None,
-                    // Enter handling will be in Task 4.6
                     _ => {}
                 }
             }
@@ -498,6 +530,160 @@ impl ToolApp {
                 }
             }
         }
+    }
+
+    fn open_in_editor(&self, terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, paths: &[PathBuf]) {
+        let _ = disable_raw_mode();
+        let _ = stdout().execute(LeaveAlternateScreen);
+        let ed = editor::get_editor(&self.config);
+        let refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
+        let _ = editor::open_files(&ed, &refs);
+        let _ = stdout().execute(EnterAlternateScreen);
+        let _ = enable_raw_mode();
+        let _ = terminal.clear();
+    }
+
+    fn handle_edit(&mut self, row: &ToolRow, terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) {
+        match row {
+            ToolRow::CentralItem(CentralField::Config) => {
+                let path = self.config_path.clone()
+                    .unwrap_or_else(|| expand_tilde("~/.config/agm/config.toml"));
+                if path.exists() {
+                    self.open_in_editor(terminal, &[path]);
+                    // Reload config after editing
+                    if let Ok(new_config) = Config::load_from(self.config_path.clone()) {
+                        self.config = new_config;
+                        self.rebuild_rows();
+                    }
+                } else {
+                    self.set_status(format!("File not found: {}", contract_tilde(&path)));
+                }
+            }
+            ToolRow::CentralItem(CentralField::Prompt) => {
+                let path = expand_tilde(&self.config.central.prompt_source);
+                if path.exists() {
+                    self.open_in_editor(terminal, &[path]);
+                } else {
+                    self.set_status(format!("File not found: {}", contract_tilde(&path)));
+                }
+            }
+            ToolRow::ToolItem { tool_key, field: ToolField::Prompt } => {
+                let tool = match self.config.tools.get(tool_key) {
+                    Some(t) => t,
+                    None => return,
+                };
+                let path = expand_tilde(&tool.config_dir).join(&tool.prompt_filename);
+                if path.exists() {
+                    self.open_in_editor(terminal, &[path]);
+                } else {
+                    self.set_status(format!("File not found: {}", contract_tilde(&path)));
+                }
+            }
+            ToolRow::ToolItem { tool_key, field: ToolField::Settings }
+            | ToolRow::ToolItem { tool_key, field: ToolField::Auth }
+            | ToolRow::ToolItem { tool_key, field: ToolField::Mcp } => {
+                self.handle_edit_files(tool_key, &field_from_toolrow(row), terminal);
+            }
+            _ => {} // No edit for Skills/Agents dirs, or headers
+        }
+    }
+
+    fn handle_edit_files(
+        &mut self,
+        tool_key: &str,
+        field: &ToolField,
+        terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    ) {
+        let tool = match self.config.tools.get(tool_key) {
+            Some(t) => t,
+            None => return,
+        };
+        let files: &[String] = match field {
+            ToolField::Settings => &tool.settings,
+            ToolField::Auth => &tool.auth,
+            ToolField::Mcp => &tool.mcp,
+            _ => return,
+        };
+        if files.is_empty() {
+            return;
+        }
+
+        let config_dir = expand_tilde(&tool.config_dir);
+        let resolved: Vec<(String, PathBuf, bool)> = files.iter().map(|f| {
+            let path = if std::path::Path::new(f).is_absolute() || f.starts_with('~') {
+                expand_tilde(f)
+            } else {
+                config_dir.join(f)
+            };
+            let display = contract_tilde(&path);
+            let exists = path.exists();
+            (display, path, exists)
+        }).collect();
+
+        if resolved.len() == 1 {
+            let (display, path, exists) = &resolved[0];
+            if *exists {
+                self.open_in_editor(terminal, &[path.clone()]);
+            } else {
+                self.set_status(format!("File not found: {}", display));
+            }
+        } else {
+            // Multiple files — show file picker popup
+            let label = match field {
+                ToolField::Settings => "settings",
+                ToolField::Auth => "auth",
+                ToolField::Mcp => "mcp",
+                _ => "files",
+            };
+            self.popup = Some(PopupState::FilePicker {
+                title: format!("Select {} file to edit", label),
+                files: resolved,
+                cursor: 0,
+            });
+        }
+    }
+
+    fn save_central_path(&mut self, field: CentralField, value: String) {
+        use super::log::LogLevel;
+
+        let contracted = contract_tilde(&expand_tilde(&value));
+        match field {
+            CentralField::Skills => self.config.central.skills_source = contracted.clone(),
+            CentralField::Agents => self.config.central.agents_source = contracted.clone(),
+            CentralField::Source => self.config.central.source_dir = contracted.clone(),
+            _ => return,
+        };
+
+        let save_result = if let Some(ref path) = self.config_path {
+            self.config.save_to(path)
+        } else {
+            self.config.save()
+        };
+
+        match save_result {
+            Ok(()) => {
+                let expanded = expand_tilde(&contracted);
+                if expanded.exists() {
+                    self.log.push(LogLevel::Success, format!("Updated path: {}", contracted));
+                    self.set_status(format!("✓ Path updated: {}", contracted));
+                } else {
+                    self.log.push(LogLevel::Warning, format!("Updated path (not found): {}", contracted));
+                    self.set_status(format!("⚠ Path updated but does not exist: {}", contracted));
+                }
+            }
+            Err(e) => {
+                self.log.push(LogLevel::Error, format!("Failed to save config: {}", e));
+                self.set_status(format!("✗ Save failed: {}", e));
+            }
+        }
+        self.rebuild_rows();
+    }
+}
+
+fn field_from_toolrow(row: &ToolRow) -> ToolField {
+    match row {
+        ToolRow::ToolItem { field, .. } => field.clone(),
+        _ => unreachable!(),
     }
 }
 
@@ -856,6 +1042,11 @@ pub fn run(config_path: Option<PathBuf>) -> Result<()> {
                     app.handle_key(key.code, &mut terminal, area_height);
                 }
             }
+        }
+
+        // Process pending editor from file picker
+        if let Some(path) = app.pending_editor_path.take() {
+            app.open_in_editor(&mut terminal, &[path]);
         }
 
         if app.should_quit {
