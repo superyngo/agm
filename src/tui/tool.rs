@@ -249,14 +249,22 @@ impl ToolApp {
                 self.rebuild_rows();
             }
 
-            // Toggle expand/collapse or link (Task 4.3 will fill in link toggling)
             KeyCode::Char(' ') | KeyCode::Enter => {
                 if let Some(row) = self.current_row().cloned() {
                     match &row {
                         ToolRow::CentralHeader => self.toggle_expanded("central"),
                         ToolRow::ToolHeader { key, .. } => self.toggle_expanded(key),
-                        // Link toggle will be added in Task 4.3
-                        // Path editor will be added in Task 4.6
+                        ToolRow::ToolItem { tool_key, field } => {
+                            match field {
+                                ToolField::Prompt | ToolField::Skills | ToolField::Agents => {
+                                    self.toggle_link(&tool_key, &field);
+                                }
+                                _ => {} // Settings/Auth/Mcp: no toggle action
+                            }
+                        }
+                        ToolRow::CentralItem(CentralField::Skills | CentralField::Agents | CentralField::Source) => {
+                            // Path editor — will be added in Task 4.6
+                        }
                         _ => {}
                     }
                 }
@@ -318,6 +326,177 @@ impl ToolApp {
                 }
             }
             None => {}
+        }
+    }
+
+    fn toggle_link(&mut self, tool_key: &str, field: &ToolField) {
+        use super::log::LogLevel;
+
+        let tool = match self.config.tools.get(tool_key) {
+            Some(t) => t,
+            None => return,
+        };
+
+        if !tool.is_installed() {
+            self.set_status(format!("{} is not installed", tool_key));
+            return;
+        }
+
+        let config_dir = expand_tilde(&tool.config_dir);
+        let (link_path, target, is_dir, label) = match field {
+            ToolField::Prompt => {
+                let link = config_dir.join(&tool.prompt_filename);
+                let target = expand_tilde(&self.config.central.prompt_source);
+                (link, target, false, "prompt")
+            }
+            ToolField::Skills => {
+                let link = config_dir.join(&tool.skills_dir);
+                let target = expand_tilde(&self.config.central.skills_source);
+                (link, target, true, "skills")
+            }
+            ToolField::Agents => {
+                let link = config_dir.join(&tool.agents_dir);
+                let target = expand_tilde(&self.config.central.agents_source);
+                (link, target, true, "agents")
+            }
+            _ => return, // Settings/Auth/Mcp are not linkable
+        };
+
+        let status = linker::check_link(&link_path, &target, is_dir);
+        match status {
+            LinkStatus::Linked => {
+                // Unlink
+                match linker::remove_link_quiet(&link_path, label, is_dir) {
+                    Ok((true, msg)) => {
+                        self.log.push(LogLevel::Success, format!("[{}] {}", tool_key, msg));
+                        self.set_status(format!("✓ {} {} unlinked", tool_key, label));
+                    }
+                    Ok((false, msg)) => {
+                        self.set_status(msg);
+                    }
+                    Err(e) => {
+                        self.log.push(LogLevel::Error, format!("[{}] Unlink {} failed: {}", tool_key, label, e));
+                        self.set_status(format!("✗ {}", e));
+                    }
+                }
+            }
+            LinkStatus::Missing | LinkStatus::Broken => {
+                // Create link
+                match linker::create_link_quiet(&link_path, &target, label, is_dir) {
+                    Ok((true, msg)) => {
+                        self.log.push(LogLevel::Success, format!("[{}] {}", tool_key, msg));
+                        self.set_status(format!("✓ {} {} linked", tool_key, label));
+                    }
+                    Ok((false, msg)) => {
+                        self.set_status(msg);
+                    }
+                    Err(e) => {
+                        self.log.push(LogLevel::Error, format!("[{}] Link {} failed: {}", tool_key, label, e));
+                        self.set_status(format!("✗ {}", e));
+                    }
+                }
+            }
+            LinkStatus::Wrong(_) => {
+                // Repair: remove wrong link, create correct one
+                if let Err(e) = crate::platform::remove_link(&link_path) {
+                    self.log.push(LogLevel::Error, format!("[{}] Failed to remove wrong link: {}", tool_key, e));
+                    self.set_status(format!("✗ Failed to remove wrong link: {}", e));
+                    return;
+                }
+                match linker::create_link_quiet(&link_path, &target, label, is_dir) {
+                    Ok((true, msg)) => {
+                        self.log.push(LogLevel::Success, format!("[{}] Repaired: {}", tool_key, msg));
+                        self.set_status(format!("✓ {} {} repaired", tool_key, label));
+                    }
+                    Ok((false, msg)) => self.set_status(msg),
+                    Err(e) => {
+                        self.log.push(LogLevel::Error, format!("[{}] Repair failed: {}", tool_key, e));
+                        self.set_status(format!("✗ {}", e));
+                    }
+                }
+            }
+            LinkStatus::Blocked => {
+                // Existing file/dir that's not a link — handle backup
+                self.handle_blocked_link(tool_key, field, &link_path, &target, is_dir, label);
+            }
+        }
+    }
+
+    fn handle_blocked_link(
+        &mut self,
+        tool_key: &str,
+        field: &ToolField,
+        link_path: &std::path::Path,
+        target: &std::path::Path,
+        is_dir: bool,
+        label: &str,
+    ) {
+        use super::log::LogLevel;
+        use chrono::Local;
+
+        if is_dir {
+            // For skills/agents directories: migrate contents to central, then link
+            let source_dir = expand_tilde(&self.config.central.source_dir);
+            let tool_target = source_dir
+                .join("agm_tools")
+                .join(tool_key);
+            let central_dir = target;
+
+            match skills::migrate_tool_dir(link_path, &tool_target, central_dir, tool_key) {
+                Ok(count) => {
+                    // migrate_tool_dir removes the original dir and creates central links
+                    // Now create the symlink from tool config to central
+                    match linker::create_link_quiet(link_path, target, label, true) {
+                        Ok((true, msg)) => {
+                            self.log.push(LogLevel::Success,
+                                format!("[{}] Migrated {} items, {}", tool_key, count, msg));
+                            self.set_status(format!("✓ {} {} migrated and linked", tool_key, label));
+                        }
+                        Ok((false, msg)) => self.set_status(msg),
+                        Err(e) => {
+                            self.log.push(LogLevel::Error,
+                                format!("[{}] Migration succeeded but link failed: {}", tool_key, e));
+                            self.set_status(format!("✗ Link failed after migration: {}", e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.log.push(LogLevel::Error,
+                        format!("[{}] Migration failed: {}", tool_key, e));
+                    self.set_status(format!("✗ Migration failed: {}", e));
+                }
+            }
+        } else {
+            // For prompt files: backup then link
+            let timestamp = Local::now().format("%Y%m%d_%H%M%S");
+            let backup = link_path.with_extension(format!("{}.bak", timestamp));
+            match std::fs::rename(link_path, &backup) {
+                Ok(()) => {
+                    self.log.push(LogLevel::Info,
+                        format!("[{}] Backed up {} to {}", tool_key, label,
+                            contract_tilde(&backup)));
+                    match linker::create_link_quiet(link_path, target, label, false) {
+                        Ok((true, msg)) => {
+                            self.log.push(LogLevel::Success,
+                                format!("[{}] {}", tool_key, msg));
+                            self.set_status(format!("✓ {} {} backed up and linked", tool_key, label));
+                        }
+                        Ok((false, msg)) => self.set_status(msg),
+                        Err(e) => {
+                            // Restore backup on failure
+                            let _ = std::fs::rename(&backup, link_path);
+                            self.log.push(LogLevel::Error,
+                                format!("[{}] Link failed, restored backup: {}", tool_key, e));
+                            self.set_status(format!("✗ Link failed: {}", e));
+                        }
+                    }
+                }
+                Err(e) => {
+                    self.log.push(LogLevel::Error,
+                        format!("[{}] Backup failed: {}", tool_key, e));
+                    self.set_status(format!("✗ Backup failed: {}", e));
+                }
+            }
         }
     }
 }
