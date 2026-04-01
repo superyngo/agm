@@ -724,8 +724,7 @@ fn main() -> anyhow::Result<()> {
                     let agents_link = tool_config
                         .resolved_config_dir()
                         .join(&tool_config.agents_dir);
-                    if linker::remove_link(&agents_link, "agents", true)?
-                        && central_agents.is_dir()
+                    if linker::remove_link(&agents_link, "agents", true)? && central_agents.is_dir()
                     {
                         copy_dir_all(&central_agents, &agents_link)?;
                         println!("  {} agents copied back", " ok ".green());
@@ -762,8 +761,7 @@ fn main() -> anyhow::Result<()> {
             if let Some(source) = add {
                 // --add: add a source repo or local path
                 if skills::is_url(&source) {
-                    let (repo_path, found_skills) =
-                        skills::clone_or_pull(&source, &source_dir)?;
+                    let (repo_path, found_skills) = skills::clone_or_pull(&source, &source_dir)?;
                     config.add_source_repo(&source)?;
                     let to_install = select_skills_to_install(&found_skills, all)?;
                     let mut count = 0;
@@ -810,8 +808,7 @@ fn main() -> anyhow::Result<()> {
                         "Adding skills from {}...",
                         paths::contract_tilde(&source_path)
                     );
-                    let (dest, found_skills) =
-                        skills::add_local_copy(&source_path, &source_dir)?;
+                    let (dest, found_skills) = skills::add_local_copy(&source_path, &source_dir)?;
                     let to_install = select_skills_to_install(&found_skills, all)?;
                     let mut count = 0;
                     for (name, skill_path) in &to_install {
@@ -843,7 +840,11 @@ fn main() -> anyhow::Result<()> {
                 // --list: show all skills and agents
                 let pruned = skills::prune_broken_skills(&skills_dir)?;
                 if pruned > 0 {
-                    println!("  {} Removed {} broken skill link(s)", "warn".yellow(), pruned);
+                    println!(
+                        "  {} Removed {} broken skill link(s)",
+                        "warn".yellow(),
+                        pruned
+                    );
                 }
                 let pruned_agents = skills::prune_broken_agents(&agents_dir)?;
                 if pruned_agents > 0 {
@@ -902,10 +903,7 @@ fn main() -> anyhow::Result<()> {
                                         ("⚡".yellow().to_string(), "conflict".yellow().to_string())
                                     }
                                 };
-                                println!(
-                                    "   {} {:<24} {}",
-                                    indicator, skill.name, status_text
-                                );
+                                println!("   {} {:<24} {}", indicator, skill.name, status_text);
                             }
                         }
 
@@ -926,10 +924,7 @@ fn main() -> anyhow::Result<()> {
                                         ("⚡".yellow().to_string(), "conflict".yellow().to_string())
                                     }
                                 };
-                                println!(
-                                    "   {} {:<24} {}",
-                                    indicator, agent.name, status_text
-                                );
+                                println!("   {} {:<24} {}", indicator, agent.name, status_text);
                             }
                         }
                         println!();

@@ -37,10 +37,21 @@ enum Category {
 
 #[derive(Clone)]
 enum ListRow {
-    CategoryHeader { category: Category },
-    SourceHeader { category: Category, group_index: usize },
-    SkillItem { group_index: usize, skill_index: usize },
-    AgentItem { group_index: usize, agent_index: usize },
+    CategoryHeader {
+        category: Category,
+    },
+    SourceHeader {
+        category: Category,
+        group_index: usize,
+    },
+    SkillItem {
+        group_index: usize,
+        skill_index: usize,
+    },
+    AgentItem {
+        group_index: usize,
+        agent_index: usize,
+    },
 }
 
 #[derive(Clone)]
@@ -551,9 +562,7 @@ impl App {
                         }
                     }
                     let _ = self.config.add_source_repo(&source);
-                    self.set_status(format!(
-                        "Added: {count} skill(s), {agent_count} agent(s)"
-                    ));
+                    self.set_status(format!("Added: {count} skill(s), {agent_count} agent(s)"));
                 }
                 Err(e) => self.set_status(format!("Error: {e}")),
             }
@@ -655,9 +664,7 @@ impl App {
                 KeyCode::Up | KeyCode::Char('k') if modifiers.contains(KeyModifiers::CONTROL) => {
                     self.move_cursor(-1);
                 }
-                KeyCode::Down | KeyCode::Char('j')
-                    if modifiers.contains(KeyModifiers::CONTROL) =>
-                {
+                KeyCode::Down | KeyCode::Char('j') if modifiers.contains(KeyModifiers::CONTROL) => {
                     self.move_cursor(1);
                 }
                 _ => {}
@@ -861,7 +868,7 @@ fn render_item_line(
     let prefix = if is_cursor {
         format!("      {prefix_char} ")
     } else {
-        format!("        ")
+        "        ".to_string()
     };
 
     let mut spans = vec![
@@ -1000,30 +1007,21 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                 let (item_count, expanded) = match category {
                     Category::Skills => {
                         let c = count_label(
-                            &group
-                                .skills
-                                .iter()
-                                .map(|_| 0u8)
-                                .collect::<Vec<_>>(),
+                            &group.skills.iter().map(|_| 0u8).collect::<Vec<_>>(),
                             "skill",
                         );
                         (c, app.expanded_skills_sources.contains(group_index))
                     }
                     Category::Agents => {
                         let c = count_label(
-                            &group
-                                .agents
-                                .iter()
-                                .map(|_| 0u8)
-                                .collect::<Vec<_>>(),
+                            &group.agents.iter().map(|_| 0u8).collect::<Vec<_>>(),
                             "agent",
                         );
                         (c, app.expanded_agents_sources.contains(group_index))
                     }
                 };
                 let arrow = if expanded { "▼" } else { "▶" };
-                let text =
-                    format!("  {arrow} {icon} {} ({label})  [{item_count}]", group.name);
+                let text = format!("  {arrow} {icon} {} ({label})  [{item_count}]", group.name);
 
                 let style = if is_cursor {
                     Style::default()
@@ -1079,10 +1077,7 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             }
             ConfirmState::Migrated { group_index, typed } => {
                 let g = &app.groups[*group_index];
-                format!(
-                    "⚠ PERMANENT: Delete \"{}\"? Type 'delete': {typed}",
-                    g.name,
-                )
+                format!("⚠ PERMANENT: Delete \"{}\"? Type 'delete': {typed}", g.name,)
             }
         };
         let p = Paragraph::new(Line::from(Span::styled(

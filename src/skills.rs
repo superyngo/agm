@@ -245,16 +245,17 @@ pub fn prune_broken_agents(agents_dir: &Path) -> anyhow::Result<usize> {
         let entry = entry?;
         let path = entry.path();
         // Only consider .md files that are symlinks
-        if path.extension().and_then(|e| e.to_str()) == Some("md") {
-            if path.symlink_metadata().is_ok() && !path.exists() {
-                let name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("<unknown>");
-                platform::remove_link(&path)?;
-                println!("  {} {} (broken agent link removed)", "warn".yellow(), name);
-                removed += 1;
-            }
+        if path.extension().and_then(|e| e.to_str()) == Some("md")
+            && path.symlink_metadata().is_ok()
+            && !path.exists()
+        {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("<unknown>");
+            platform::remove_link(&path)?;
+            println!("  {} {} (broken agent link removed)", "warn".yellow(), name);
+            removed += 1;
         }
     }
     Ok(removed)
@@ -306,11 +307,7 @@ fn normalize_git_url(url: &str) -> String {
 }
 
 /// Git pull all skill source repos (deduplicating by git root), then re-sync symlinks
-pub fn update_all(
-    skills_dir: &Path,
-    agents_dir: &Path,
-    source_dir: &Path,
-) -> anyhow::Result<()> {
+pub fn update_all(skills_dir: &Path, agents_dir: &Path, source_dir: &Path) -> anyhow::Result<()> {
     if !skills_dir.is_dir() {
         anyhow::bail!("Skills directory does not exist: {}", skills_dir.display());
     }
@@ -362,7 +359,11 @@ pub fn update_all(
     println!("{}", "Syncing central skills symlinks...".bold());
     let pruned = prune_broken_skills(skills_dir)?;
     if pruned > 0 {
-        println!("  {} Removed {} broken skill link(s)", "warn".yellow(), pruned);
+        println!(
+            "  {} Removed {} broken skill link(s)",
+            "warn".yellow(),
+            pruned
+        );
     }
     let pruned_agents = prune_broken_agents(agents_dir)?;
     if pruned_agents > 0 {
