@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Breaking Changes
+- **CLI consolidation:** Removed subcommands `link`, `unlink`, `status`, `config`, `prompt`, `auth`, `mcp`. All tool management is now under `agm tool`:
+  - `agm tool` — Interactive TUI for managing tools, links, and configuration
+  - `agm tool --link` — Link all tools (replaces `agm link`)
+  - `agm tool --unlink` — Unlink all tools (replaces `agm unlink`)
+  - `agm tool --status` — Show status table (replaces `agm status`)
+  - Editing config/prompt/auth/mcp files is done via the TUI (`e` key)
+
+### Added
+- **Tool TUI** (`agm tool`): Interactive terminal UI for managing tools
+  - View and toggle link status (prompt, skills, agents) per tool
+  - Edit files with `e` key, file picker popup for multi-file fields
+  - Inline path editing for central config paths
+  - Expand/collapse sections with space/enter, 0/9 for all
+  - Log popup (`l` key) showing operation history
+- **Source TUI improvements:**
+  - Non-blocking background updates (TUI stays responsive during `git pull`)
+  - Scrollable info popup (`i` key) showing skill/agent details and SKILL.md content
+  - Log popup (`l` key) with timestamped operation history
+- Shared TUI infrastructure: `ScrollablePopup`, `LogBuffer`, `BackgroundTask` modules
+- Integration tests for new CLI structure
+
+### Changed
+- Moved `manage.rs` → `src/tui/source.rs` as part of TUI module reorganization
+- Extracted `migrate_tool_dir()` and `copy_dir_all()` to `skills.rs` for reuse
+- Added quiet linker variants (`create_link_quiet`, `remove_link_quiet`) for TUI use
+
 ## [v0.6.0] - 2026-04-01
 
 ### Fixed
