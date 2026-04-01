@@ -1,22 +1,19 @@
 use colored::Colorize;
 
 use crate::config::Config;
-use crate::files::{centralized_path, check_file_status, FileStatus};
 use crate::linker::{check_link, LinkStatus};
-use crate::paths::{contract_tilde, expand_path, expand_tilde};
+use crate::paths::{contract_tilde, expand_tilde};
 use crate::skills;
 
-/// Display table with tool name, config dir, prompt/skills link status and paths
+/// Display table with tool name, config dir, prompt/skills/agents link status and paths
 pub fn status() -> anyhow::Result<()> {
     let config = Config::load()?;
     let central_skills = expand_tilde(&config.central.skills_source);
+    let central_agents = expand_tilde(&config.central.agents_source);
     let central_prompt = expand_tilde(&config.central.prompt_source);
-    let files_base = expand_tilde(&config.central.files_base);
 
     // Indent for detail lines: aligns under the data columns
     const INDENT: &str = "                ";
-    // Second-line indent for file central path: INDENT(16) + label(8) + status(9) + space(1)
-    const FILE2: &str = "                          ";
 
     println!("\n{}", "AGM — AI Agent Manager".bold());
     println!("{}", "═".repeat(62));
@@ -38,6 +35,13 @@ pub fn status() -> anyhow::Result<()> {
         let skills_ls = if !tool.skills_dir.is_empty() {
             let link = tool.resolved_config_dir().join(&tool.skills_dir);
             Some(check_link(&link, &central_skills, true))
+        } else {
+            None
+        };
+
+        let agents_ls = if !tool.agents_dir.is_empty() {
+            let link = tool.resolved_config_dir().join(&tool.agents_dir);
+            Some(check_link(&link, &central_agents, true))
         } else {
             None
         };
@@ -99,53 +103,50 @@ pub fn status() -> anyhow::Result<()> {
             }
         }
 
-        // Detail lines: managed files
-        for file_path in &tool.files {
-            let original = tool.resolve_path(file_path);
-            let central = centralized_path(&original, &files_base);
-            let display = contract_tilde(&original);
-            print!("{}{:<8}", INDENT, "file");
-            match check_file_status(&original, &files_base) {
-                FileStatus::Linked => {
-                    println!("{} {}", "✓ linked".green(), display.dimmed());
-                    println!("{}→ {}", FILE2, contract_tilde(&central).dimmed());
-                }
-                FileStatus::ReadyToLink => {
-                    println!("{} {}", "→ ready ".cyan(), display.dimmed());
-                    println!("{}→ {}", FILE2, contract_tilde(&central).dimmed());
-                }
-                FileStatus::Unmanaged => println!("{} {}", "  file  ".normal(), display.dimmed()),
-                FileStatus::Missing => println!("{} {}", "✗ missing".yellow(), display.dimmed()),
-                FileStatus::Broken => {
-                    println!("{} {}", "✗ broken ".red(), display.dimmed());
-                    println!("{}→ {}", FILE2, contract_tilde(&central).dimmed());
-                }
-                FileStatus::Wrong(t) => {
-                    println!("{} {}", "✗ wrong ".red(), display.dimmed());
-                    println!(
-                        "{}→ {} (expected)",
-                        FILE2,
-                        contract_tilde(&central).dimmed()
-                    );
-                    println!("{}   was: {}", FILE2, t.dimmed());
-                }
+        // Detail lines: agents
+        if let Some(ls) = agents_ls {
+            let agents_link = tool.resolved_config_dir().join(&tool.agents_dir);
+            print!("{}{:<8}", INDENT, "agents");
+            match ls {
+                LinkStatus::Linked => println!(
+                    "{} → {}",
+                    "✓ linked".green(),
+                    contract_tilde(&agents_link).dimmed()
+                ),
+                LinkStatus::Missing => println!(
+                    "{} → {}",
+                    "✗ missing".yellow(),
+                    contract_tilde(&central_agents).dimmed()
+                ),
+                LinkStatus::Broken => println!("{}", "✗ broken".red()),
+                LinkStatus::Wrong(t) => println!("{} → {}", "✗ wrong".red(), t.dimmed()),
+                LinkStatus::Blocked => println!(
+                    "{} → {}",
+                    "✗ blocked".red(),
+                    contract_tilde(&agents_link).dimmed()
+                ),
             }
         }
     }
 
     println!("{}", "═".repeat(62));
 
-    // Count skills from all sources
+    // Count skills and agents from all sources
     let groups = skills::scan_all_sources(
         &expand_tilde(&config.central.source_dir),
         &central_skills,
-        &config.central.skill_repos,
+        &central_agents,
+        &config.central.source_repos,
     );
-    let _total_skills: usize = groups.iter().map(|g| g.skills.len()).sum();
     let installed_skills: usize = groups
         .iter()
         .flat_map(|g| &g.skills)
         .filter(|s| s.install_status == skills::SkillInstallStatus::Installed)
+        .count();
+    let installed_agents: usize = groups
+        .iter()
+        .flat_map(|g| &g.agents)
+        .filter(|a| a.install_status == skills::SkillInstallStatus::Installed)
         .count();
 
     println!("Central prompt : {}", contract_tilde(&central_prompt));
@@ -155,46 +156,13 @@ pub fn status() -> anyhow::Result<()> {
         installed_skills,
         groups.len()
     );
+    println!(
+        "Central agents : {} ({} installed)",
+        contract_tilde(&central_agents),
+        installed_agents,
+    );
     let source_dir = expand_tilde(&config.central.source_dir);
     println!("Central source : {}", contract_tilde(&source_dir));
-    println!("Central files  : {}", contract_tilde(&files_base));
-
-    // Central-level managed files
-    if !config.central.files.is_empty() {
-        println!("{}", "─".repeat(62));
-        println!(" {}", "Central managed files:".bold());
-        for file_path in &config.central.files {
-            let original = expand_path(file_path);
-            let central = centralized_path(&original, &files_base);
-            let display = contract_tilde(&original);
-            print!("{}{:<8}", INDENT, "file");
-            match check_file_status(&original, &files_base) {
-                FileStatus::Linked => {
-                    println!("{} {}", "✓ linked".green(), display.dimmed());
-                    println!("{}→ {}", FILE2, contract_tilde(&central).dimmed());
-                }
-                FileStatus::ReadyToLink => {
-                    println!("{} {}", "→ ready ".cyan(), display.dimmed());
-                    println!("{}→ {}", FILE2, contract_tilde(&central).dimmed());
-                }
-                FileStatus::Unmanaged => println!("{} {}", "  file  ".normal(), display.dimmed()),
-                FileStatus::Missing => println!("{} {}", "✗ missing".yellow(), display.dimmed()),
-                FileStatus::Broken => {
-                    println!("{} {}", "✗ broken ".red(), display.dimmed());
-                    println!("{}→ {}", FILE2, contract_tilde(&central).dimmed());
-                }
-                FileStatus::Wrong(t) => {
-                    println!("{} {}", "✗ wrong ".red(), display.dimmed());
-                    println!(
-                        "{}→ {} (expected)",
-                        FILE2,
-                        contract_tilde(&central).dimmed()
-                    );
-                    println!("{}   was: {}", FILE2, t.dimmed());
-                }
-            }
-        }
-    }
     println!();
 
     Ok(())

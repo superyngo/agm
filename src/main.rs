@@ -1,6 +1,5 @@
 mod config;
 mod editor;
-mod files;
 mod init;
 mod linker;
 mod manage;
@@ -36,7 +35,7 @@ enum Commands {
     Init,
     /// Create/repair links
     Link {
-        /// Target: a tool name, "all" (all installed tools), or "central" (central files only)
+        /// Target: a tool name or "all" (all installed tools)
         target: Option<String>,
         /// Skip all confirmation prompts
         #[arg(short = 'y', long = "yes")]
@@ -44,9 +43,11 @@ enum Commands {
     },
     /// Remove links for a tool
     Unlink {
-        /// Target: a tool name, "all" (all installed tools), or "central" (central files only)
+        /// Target: a tool name or "all" (all installed tools)
         target: Option<String>,
     },
+    /// Show link status for all tools
+    Status,
     /// Edit config file (central = agm config.toml, or a tool key)
     Config { target: Option<String> },
     /// Edit prompt file (central = central MASTER.md, or a tool key)
@@ -55,36 +56,21 @@ enum Commands {
     Auth { target: Option<String> },
     /// Edit MCP config files for a tool
     Mcp { target: Option<String> },
-    /// Manage skills
-    Skills {
-        #[command(subcommand)]
-        action: Option<SkillsAction>,
-    },
-    /// Show link status for all tools
-    Status,
-}
-
-#[derive(Subcommand)]
-enum SkillsAction {
-    /// List all skills grouped by source
-    List,
-    /// Install skill(s) from local path or repo URL
-    Add {
-        source: String,
-        /// Install all skills without prompting
-        #[arg(short = 'a', long = "all")]
+    /// Manage source repos, skills, and agents
+    Source {
+        /// Add a source (URL or local path)
+        #[arg(short = 'a', long = "add")]
+        add: Option<String>,
+        /// Update all source repos (git pull)
+        #[arg(short = 'u', long = "update")]
+        update: bool,
+        /// List all skills and agents grouped by source
+        #[arg(short = 'l', long = "list")]
+        list: bool,
+        /// Install all skills without prompting (used with --add)
+        #[arg(long = "all")]
         all: bool,
     },
-    /// Interactive skill manager (TUI)
-    Manage {
-        /// Source name to manage, or "all" for all sources
-        name: Option<String>,
-    },
-    /// Git pull all skill source repos
-    Update,
-    /// (deprecated, use 'manage' instead)
-    #[command(hide = true)]
-    Remove { name: String },
 }
 
 fn pick_target(
@@ -127,11 +113,8 @@ fn pick_target(
 fn pick_link_target(config: &config::Config, cmd: &str) -> anyhow::Result<String> {
     use dialoguer::{theme::ColorfulTheme, Select};
 
-    let mut keys: Vec<String> = vec!["all".into(), "central".into()];
-    let mut labels: Vec<String> = vec![
-        format!("{:<14} {}", "all", "all installed tools"),
-        format!("{:<14} {}", "central", "central files only"),
-    ];
+    let mut keys: Vec<String> = vec!["all".into()];
+    let mut labels: Vec<String> = vec![format!("{:<14} {}", "all", "all installed tools")];
     for (key, tool) in &config.tools {
         keys.push(key.clone());
         labels.push(format!("{:<14} {}", key, tool.name));
@@ -413,29 +396,14 @@ fn main() -> anyhow::Result<()> {
         Commands::Link { target, yes } => {
             let config = config::Config::load_from(cli.config.clone())?;
             let central_skills = paths::expand_tilde(&config.central.skills_source);
+            let central_agents = paths::expand_tilde(&config.central.agents_source);
             let central_prompt = paths::expand_tilde(&config.central.prompt_source);
             let source_dir = paths::expand_tilde(&config.central.source_dir);
-            let files_base = paths::expand_tilde(&config.central.files_base);
 
             let target = match target {
                 Some(t) => t,
                 None => pick_link_target(&config, "link")?,
             };
-
-            // "central" — only process central files
-            if target == "central" {
-                if config.central.files.is_empty() {
-                    println!("No central files configured.");
-                } else {
-                    fs::create_dir_all(&files_base)?;
-                    println!("{}", "Central files:".bold());
-                    for file_path in &config.central.files {
-                        let original = paths::expand_path(file_path);
-                        files::link_file(&original, &files_base, yes)?;
-                    }
-                }
-                return Ok(());
-            }
 
             // Collect which tools to link
             let tools_to_link: Vec<(&String, &config::ToolConfig)> = if target == "all" {
@@ -455,7 +423,7 @@ fn main() -> anyhow::Result<()> {
                 )]
             };
 
-            // Prune broken skill links from central store
+            // Prune broken skill/agent links from central store
             if central_skills.is_dir() {
                 let pruned = skills::prune_broken_skills(&central_skills)?;
                 if pruned > 0 {
@@ -466,23 +434,49 @@ fn main() -> anyhow::Result<()> {
                     );
                 }
             }
+            if central_agents.is_dir() {
+                let pruned = skills::prune_broken_agents(&central_agents)?;
+                if pruned > 0 {
+                    println!(
+                        "{} Removed {} broken agent link(s)",
+                        "warn".yellow(),
+                        pruned
+                    );
+                }
+            }
 
-            // Process skill_repos when linking skills
-            if !config.central.skill_repos.is_empty() {
-                println!("\n{}", "Processing skill repositories...".bold());
-                for url in &config.central.skill_repos {
+            // Process source_repos when linking
+            if !config.central.source_repos.is_empty() {
+                println!("\n{}", "Processing source repositories...".bold());
+                for url in &config.central.source_repos {
                     match skills::clone_or_pull(url, &source_dir) {
                         Ok((_repo_path, found_skills)) => {
                             let mut count = 0;
-                            for (name, skill_path) in found_skills {
+                            for (name, skill_path) in &found_skills {
                                 if let Ok(()) =
-                                    skills::install_skill(&name, &skill_path, &central_skills)
+                                    skills::install_skill(name, skill_path, &central_skills)
                                 {
                                     count += 1;
                                 }
                             }
-                            if count > 0 {
-                                println!("  {} {} skill(s) from {}", " ok ".green(), count, url);
+                            // Also install agents from the repo
+                            let found_agents = skills::scan_agents(&_repo_path);
+                            let mut agent_count = 0;
+                            for (name, agent_path) in &found_agents {
+                                if let Ok(()) =
+                                    skills::install_agent(name, agent_path, &central_agents)
+                                {
+                                    agent_count += 1;
+                                }
+                            }
+                            if count > 0 || agent_count > 0 {
+                                println!(
+                                    "  {} {} skill(s), {} agent(s) from {}",
+                                    " ok ".green(),
+                                    count,
+                                    agent_count,
+                                    url
+                                );
                             }
                         }
                         Err(e) => {
@@ -558,6 +552,61 @@ fn main() -> anyhow::Result<()> {
                     linker::create_link(&skills_link, &central_skills, "skills", true)?;
                 }
 
+                // Link agents directory
+                if !tool.agents_dir.is_empty() {
+                    let agents_link = tool.resolved_config_dir().join(&tool.agents_dir);
+
+                    if platform::is_dir_link(&agents_link) {
+                        let actual_target = fs::read_link(&agents_link)?;
+                        let expected_target = central_agents
+                            .canonicalize()
+                            .unwrap_or_else(|_| central_agents.clone());
+                        let resolved_actual = agents_link
+                            .parent()
+                            .map(|p: &std::path::Path| p.join(&actual_target))
+                            .unwrap_or_else(|| actual_target.clone());
+                        let resolved_actual =
+                            resolved_actual.canonicalize().unwrap_or(resolved_actual);
+
+                        if resolved_actual != expected_target {
+                            if yes
+                                || prompt_yes_no(&format!(
+                                    "Agents already linked to {}. Re-link to AGM?",
+                                    paths::contract_tilde(&resolved_actual)
+                                ))
+                            {
+                                platform::remove_link(&agents_link)?;
+                                println!("  {} Removed old agents link", " ok ".green());
+                            } else {
+                                println!("  {} Skipping agents link", "skip".yellow());
+                                continue;
+                            }
+                        }
+                    } else if agents_link.is_dir() {
+                        // Existing agents dir — remove empty or warn
+                        let has_files = fs::read_dir(&agents_link)
+                            .map(|rd| rd.count() > 0)
+                            .unwrap_or(false);
+                        if has_files {
+                            if yes
+                                || prompt_yes_no(&format!(
+                                    "Existing agents dir at {}. Remove and create link?",
+                                    paths::contract_tilde(&agents_link)
+                                ))
+                            {
+                                fs::remove_dir_all(&agents_link)?;
+                            } else {
+                                println!("  {} Skipping agents link", "skip".yellow());
+                                continue;
+                            }
+                        } else {
+                            fs::remove_dir_all(&agents_link)?;
+                        }
+                    }
+
+                    linker::create_link(&agents_link, &central_agents, "agents", true)?;
+                }
+
                 // Link prompt file
                 if !tool.prompt_filename.is_empty() {
                     let prompt_link = tool.resolved_config_dir().join(&tool.prompt_filename);
@@ -622,25 +671,6 @@ fn main() -> anyhow::Result<()> {
 
                     linker::create_link(&prompt_link, &central_prompt, "prompt", false)?;
                 }
-
-                // Link managed files
-                if !tool.files.is_empty() {
-                    fs::create_dir_all(&files_base)?;
-                    for file_path in &tool.files {
-                        let original = tool.resolve_path(file_path);
-                        files::link_file(&original, &files_base, yes)?;
-                    }
-                }
-            }
-
-            // Process central-level managed files when linking all tools
-            if target == "all" && !config.central.files.is_empty() {
-                fs::create_dir_all(&files_base)?;
-                println!("\n{}", "Central files:".bold());
-                for file_path in &config.central.files {
-                    let original = paths::expand_path(file_path);
-                    files::link_file(&original, &files_base, yes)?;
-                }
             }
 
             Ok(())
@@ -648,36 +678,13 @@ fn main() -> anyhow::Result<()> {
         Commands::Unlink { target } => {
             let config = config::Config::load_from(cli.config.clone())?;
             let central_skills = paths::expand_tilde(&config.central.skills_source);
+            let central_agents = paths::expand_tilde(&config.central.agents_source);
             let central_prompt = paths::expand_tilde(&config.central.prompt_source);
-            let files_base = paths::expand_tilde(&config.central.files_base);
 
             let target = match target {
                 Some(t) => t,
                 None => pick_link_target(&config, "unlink")?,
             };
-
-            // "central" — only remove central file links
-            if target == "central" {
-                if config.central.files.is_empty() {
-                    println!("No central files configured.");
-                } else {
-                    println!("{}", "Central files:".bold());
-                    for file_path in &config.central.files {
-                        let original = paths::expand_path(file_path);
-                        if files::unlink_file(&original, &files_base)? {
-                            let central = files::centralized_path(&original, &files_base);
-                            if central.exists() {
-                                if let Some(parent) = original.parent() {
-                                    fs::create_dir_all(parent)?;
-                                }
-                                fs::copy(&central, &original)?;
-                                println!("  {} {} copied back", " ok ".green(), original.display());
-                            }
-                        }
-                    }
-                }
-                return Ok(());
-            }
 
             // Collect which tools to unlink
             let tools_to_unlink: Vec<(&String, &config::ToolConfig)> = if target == "all" {
@@ -712,6 +719,19 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
 
+                // Remove agents link then copy central agents back
+                if !tool_config.agents_dir.is_empty() {
+                    let agents_link = tool_config
+                        .resolved_config_dir()
+                        .join(&tool_config.agents_dir);
+                    if linker::remove_link(&agents_link, "agents", true)?
+                        && central_agents.is_dir()
+                    {
+                        copy_dir_all(&central_agents, &agents_link)?;
+                        println!("  {} agents copied back", " ok ".green());
+                    }
+                }
+
                 // Remove prompt link then copy central prompt back
                 if !tool_config.prompt_filename.is_empty() {
                     let prompt_link = tool_config
@@ -724,117 +744,154 @@ fn main() -> anyhow::Result<()> {
                         println!("  {} prompt copied back", " ok ".green());
                     }
                 }
-
-                // Remove managed file links then copy central files back
-                for file_path in &tool_config.files {
-                    let original = tool_config.resolve_path(file_path);
-                    if files::unlink_file(&original, &files_base)? {
-                        let central = files::centralized_path(&original, &files_base);
-                        if central.exists() {
-                            if let Some(parent) = original.parent() {
-                                fs::create_dir_all(parent)?;
-                            }
-                            fs::copy(&central, &original)?;
-                            println!("  {} {} copied back", " ok ".green(), original.display());
-                        }
-                    }
-                }
-            }
-
-            // Remove central-level managed file links (only when "all")
-            if target == "all" && !config.central.files.is_empty() {
-                println!("\n{}", "Central files:".bold());
-                for file_path in &config.central.files {
-                    let original = paths::expand_path(file_path);
-                    if files::unlink_file(&original, &files_base)? {
-                        let central = files::centralized_path(&original, &files_base);
-                        if central.exists() {
-                            if let Some(parent) = original.parent() {
-                                fs::create_dir_all(parent)?;
-                            }
-                            fs::copy(&central, &original)?;
-                            println!("  {} {} copied back", " ok ".green(), original.display());
-                        }
-                    }
-                }
             }
 
             Ok(())
         }
-        Commands::Skills { action } => {
+        Commands::Source {
+            add,
+            update,
+            list,
+            all,
+        } => {
             let mut config = config::Config::load_from(cli.config.clone())?;
             let skills_dir = paths::expand_tilde(&config.central.skills_source);
+            let agents_dir = paths::expand_tilde(&config.central.agents_source);
             let source_dir = paths::expand_tilde(&config.central.source_dir);
 
-            let action = match action {
-                Some(a) => a,
-                None => {
-                    use dialoguer::{theme::ColorfulTheme, Select};
-                    let labels = [
-                        "list        show all skills grouped by source",
-                        "add         install skill(s) from path or URL",
-                        "manage      interactive skill manager",
-                        "update      git pull all skill repos",
-                    ];
-                    let idx = Select::with_theme(&ColorfulTheme::default())
-                        .with_prompt("agm skills — select action")
-                        .items(&labels)
-                        .default(0)
-                        .interact()?;
-                    match idx {
-                        0 => SkillsAction::List,
-                        1 => {
-                            use dialoguer::Input;
-                            let source: String = Input::with_theme(&ColorfulTheme::default())
-                                .with_prompt("Path or URL")
-                                .interact_text()?;
-                            SkillsAction::Add { source, all: false }
+            if let Some(source) = add {
+                // --add: add a source repo or local path
+                if skills::is_url(&source) {
+                    let (repo_path, found_skills) =
+                        skills::clone_or_pull(&source, &source_dir)?;
+                    config.add_source_repo(&source)?;
+                    let to_install = select_skills_to_install(&found_skills, all)?;
+                    let mut count = 0;
+                    for (name, skill_path) in &to_install {
+                        match skills::install_skill(name, skill_path, &skills_dir) {
+                            Ok(()) => {
+                                println!(
+                                    "  {} {} → {}",
+                                    " ok ".green(),
+                                    name,
+                                    paths::contract_tilde(skill_path)
+                                );
+                                count += 1;
+                            }
+                            Err(e) => println!("  {} {}: {}", "warn".yellow(), name, e),
                         }
-                        2 => SkillsAction::Manage { name: None },
-                        _ => SkillsAction::Update,
                     }
-                }
-            };
-
-            match action {
-                SkillsAction::List => {
-                    let pruned = skills::prune_broken_skills(&skills_dir)?;
-                    if pruned > 0 {
-                        println!("  {} Removed {} broken link(s)", "warn".yellow(), pruned);
+                    // Auto-install agents from the repo
+                    let found_agents = skills::scan_agents(&repo_path);
+                    let mut agent_count = 0;
+                    for (name, agent_path) in &found_agents {
+                        match skills::install_agent(name, agent_path, &agents_dir) {
+                            Ok(()) => {
+                                println!(
+                                    "  {} agent {} → {}",
+                                    " ok ".green(),
+                                    name,
+                                    paths::contract_tilde(agent_path)
+                                );
+                                agent_count += 1;
+                            }
+                            Err(e) => println!("  {} agent {}: {}", "warn".yellow(), name, e),
+                        }
                     }
-                    let groups = skills::scan_all_sources(
-                        &source_dir,
-                        &skills_dir,
-                        &config.central.skill_repos,
+                    println!(
+                        "\n{} skill(s), {} agent(s) installed from {}.",
+                        count,
+                        agent_count,
+                        paths::contract_tilde(&repo_path)
                     );
-                    if groups.is_empty() {
-                        println!("No skill sources found. Use 'agm skills add' to add a source.");
-                    } else {
-                        println!();
-                        let mut total = 0;
-                        let mut installed = 0;
-                        for group in &groups {
-                            let icon = match &group.kind {
-                                skills::SourceKind::Repo { .. } => "📦",
-                                skills::SourceKind::Local => "📁",
-                                skills::SourceKind::Migrated { .. } => "📁",
-                            };
-                            let detail = match &group.kind {
-                                skills::SourceKind::Repo { url } => url
-                                    .as_deref()
-                                    .map(|u| format!("repo: {}", u))
-                                    .unwrap_or_else(|| "repo".into()),
-                                skills::SourceKind::Local => "local".into(),
-                                skills::SourceKind::Migrated { tool } => {
-                                    format!("migrated from {}", tool)
-                                }
-                            };
-                            println!("{} {} ({})", icon, group.name.bold(), detail);
+                } else {
+                    let source_path = paths::expand_tilde(&source);
+                    println!(
+                        "Adding skills from {}...",
+                        paths::contract_tilde(&source_path)
+                    );
+                    let (dest, found_skills) =
+                        skills::add_local_copy(&source_path, &source_dir)?;
+                    let to_install = select_skills_to_install(&found_skills, all)?;
+                    let mut count = 0;
+                    for (name, skill_path) in &to_install {
+                        match skills::install_skill(name, skill_path, &skills_dir) {
+                            Ok(()) => {
+                                println!(
+                                    "  {} {} → {}",
+                                    " ok ".green(),
+                                    name,
+                                    paths::contract_tilde(skill_path)
+                                );
+                                count += 1;
+                            }
+                            Err(e) => println!("  {} {}: {}", "warn".yellow(), name, e),
+                        }
+                    }
+                    println!(
+                        "\n{} skill(s) installed from {}.",
+                        count,
+                        paths::contract_tilde(&dest)
+                    );
+                }
+                Ok(())
+            } else if update {
+                // --update: git pull all repos
+                skills::update_all(&skills_dir, &agents_dir, &source_dir)?;
+                Ok(())
+            } else if list {
+                // --list: show all skills and agents
+                let pruned = skills::prune_broken_skills(&skills_dir)?;
+                if pruned > 0 {
+                    println!("  {} Removed {} broken skill link(s)", "warn".yellow(), pruned);
+                }
+                let pruned_agents = skills::prune_broken_agents(&agents_dir)?;
+                if pruned_agents > 0 {
+                    println!(
+                        "  {} Removed {} broken agent link(s)",
+                        "warn".yellow(),
+                        pruned_agents
+                    );
+                }
+                let groups = skills::scan_all_sources(
+                    &source_dir,
+                    &skills_dir,
+                    &agents_dir,
+                    &config.central.source_repos,
+                );
+                if groups.is_empty() {
+                    println!("No sources found. Use 'agm source --add <url>' to add a source.");
+                } else {
+                    println!();
+                    let mut total_skills = 0;
+                    let mut installed_skills = 0;
+                    let mut total_agents = 0;
+                    let mut installed_agents = 0;
+                    for group in &groups {
+                        let icon = match &group.kind {
+                            skills::SourceKind::Repo { .. } => "📦",
+                            skills::SourceKind::Local => "📁",
+                            skills::SourceKind::Migrated { .. } => "📁",
+                        };
+                        let detail = match &group.kind {
+                            skills::SourceKind::Repo { url } => url
+                                .as_deref()
+                                .map(|u| format!("repo: {}", u))
+                                .unwrap_or_else(|| "repo".into()),
+                            skills::SourceKind::Local => "local".into(),
+                            skills::SourceKind::Migrated { tool } => {
+                                format!("migrated from {}", tool)
+                            }
+                        };
+                        println!("{} {} ({})", icon, group.name.bold(), detail);
+
+                        if !group.skills.is_empty() {
+                            println!("  {}", "Skills:".dimmed());
                             for skill in &group.skills {
-                                total += 1;
+                                total_skills += 1;
                                 let (indicator, status_text) = match skill.install_status {
                                     skills::SkillInstallStatus::Installed => {
-                                        installed += 1;
+                                        installed_skills += 1;
                                         ("✓".green().to_string(), "installed".green().to_string())
                                     }
                                     skills::SkillInstallStatus::NotInstalled => (
@@ -845,97 +902,56 @@ fn main() -> anyhow::Result<()> {
                                         ("⚡".yellow().to_string(), "conflict".yellow().to_string())
                                     }
                                 };
-                                println!("   {} {:<24} {}", indicator, skill.name, status_text);
+                                println!(
+                                    "   {} {:<24} {}",
+                                    indicator, skill.name, status_text
+                                );
                             }
-                            println!();
                         }
-                        println!(
-                            "── {} ──",
-                            format!(
-                                "{} source(s), {} skill(s) ({} installed, {} not installed)",
-                                groups.len(),
-                                total,
-                                installed,
-                                total - installed
-                            )
-                            .bold()
-                        );
+
+                        if !group.agents.is_empty() {
+                            println!("  {}", "Agents:".dimmed());
+                            for agent in &group.agents {
+                                total_agents += 1;
+                                let (indicator, status_text) = match agent.install_status {
+                                    skills::SkillInstallStatus::Installed => {
+                                        installed_agents += 1;
+                                        ("✓".green().to_string(), "installed".green().to_string())
+                                    }
+                                    skills::SkillInstallStatus::NotInstalled => (
+                                        "✗".dimmed().to_string(),
+                                        "not installed".dimmed().to_string(),
+                                    ),
+                                    skills::SkillInstallStatus::Conflict => {
+                                        ("⚡".yellow().to_string(), "conflict".yellow().to_string())
+                                    }
+                                };
+                                println!(
+                                    "   {} {:<24} {}",
+                                    indicator, agent.name, status_text
+                                );
+                            }
+                        }
+                        println!();
                     }
-                    Ok(())
-                }
-                SkillsAction::Add { source, all } => {
-                    if skills::is_url(&source) {
-                        let (repo_path, found_skills) =
-                            skills::clone_or_pull(&source, &source_dir)?;
-                        config.add_skill_repo(&source)?;
-                        let to_install = select_skills_to_install(&found_skills, all)?;
-                        let mut count = 0;
-                        for (name, skill_path) in to_install {
-                            match skills::install_skill(&name, &skill_path, &skills_dir) {
-                                Ok(()) => {
-                                    println!(
-                                        "  {} {} → {}",
-                                        " ok ".green(),
-                                        name,
-                                        paths::contract_tilde(&skill_path)
-                                    );
-                                    count += 1;
-                                }
-                                Err(e) => println!("  {} {}: {}", "warn".yellow(), name, e),
-                            }
-                        }
-                        println!(
-                            "\n{} skill(s) installed from {}.",
-                            count,
-                            paths::contract_tilde(&repo_path)
-                        );
-                    } else {
-                        let source_path = paths::expand_tilde(&source);
-                        println!(
-                            "Adding skills from {}...",
-                            paths::contract_tilde(&source_path)
-                        );
-                        let (dest, found_skills) =
-                            skills::add_local_copy(&source_path, &source_dir)?;
-                        let to_install = select_skills_to_install(&found_skills, all)?;
-                        let mut count = 0;
-                        for (name, skill_path) in to_install {
-                            match skills::install_skill(&name, &skill_path, &skills_dir) {
-                                Ok(()) => {
-                                    println!(
-                                        "  {} {} → {}",
-                                        " ok ".green(),
-                                        name,
-                                        paths::contract_tilde(&skill_path)
-                                    );
-                                    count += 1;
-                                }
-                                Err(e) => println!("  {} {}: {}", "warn".yellow(), name, e),
-                            }
-                        }
-                        println!(
-                            "\n{} skill(s) installed from {}.",
-                            count,
-                            paths::contract_tilde(&dest)
-                        );
-                    }
-                    Ok(())
-                }
-                SkillsAction::Manage { name } => {
-                    manage::run(&mut config, name.as_deref())?;
-                    Ok(())
-                }
-                SkillsAction::Remove { name: _ } => {
                     println!(
-                        "{}\nUse 'agm skills manage' to interactively install/uninstall skills.",
-                        "'agm skills remove' has been replaced by 'agm skills manage'.".yellow(),
+                        "── {} ──",
+                        format!(
+                            "{} source(s), {} skill(s) ({} installed), {} agent(s) ({} installed)",
+                            groups.len(),
+                            total_skills,
+                            installed_skills,
+                            total_agents,
+                            installed_agents,
+                        )
+                        .bold()
                     );
-                    Ok(())
                 }
-                SkillsAction::Update => {
-                    skills::update_all(&skills_dir, &source_dir)?;
-                    Ok(())
-                }
+                Ok(())
+            } else {
+                // No flags — enter TUI
+                manage::run(&mut config)?;
+                Ok(())
             }
         }
         Commands::Prompt { target } => {

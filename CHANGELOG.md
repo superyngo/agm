@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.6.0] - 2026-04-01
+
+### Added
+- **Agents management**: Support for agent `.md` files alongside directory-based skills
+  - Central agents store at `~/.local/share/agm/agents/`
+  - `agents_dir` field in each tool config for per-tool agent directories
+  - Agent discovery from `agents/` folders in source repos
+  - Agent install/uninstall/prune operations
+- **3 new default tools** (7 total): Codex CLI, Pi, Crush
+- **Interactive TUI overhaul** with 3-level hierarchy (Category → Source → Item)
+  - Collapse/expand with space/enter, `0` (collapse all), `9` (expand all)
+  - Fuzzy search with `/` key
+  - Quick keys: `a` (add), `u` (update), `d` (delete)
+  - Auto-update on TUI launch
+  - Dual-panel view: Skills section + Agents section
+
+### Changed
+- **BREAKING**: `agm skills` command renamed to `agm source`
+  - Subcommands replaced with flags: `--add/-a`, `--update/-u`, `--list/-l`
+  - No arguments opens interactive TUI directly
+- **BREAKING**: Config schema changes
+  - `skill_repos` renamed to `source_repos` in `[central]`
+  - `agents_source` added to `[central]` (default: `~/.local/share/agm/agents`)
+  - `agents_dir` added to `[tools.*]` (default: `agents`)
+- `agm link`/`agm unlink` now handle agents in addition to prompts and skills
+
+### Removed
+- **BREAKING**: Removed `files_base` and `files` from config (central and per-tool)
+- Removed `files.rs` module and all file-linking logic
+- Removed per-source management from `agm source` (use TUI instead)
+
 ## [v0.3.1] - 2026-03-18
 
 ### Removed

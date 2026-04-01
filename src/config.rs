@@ -17,19 +17,16 @@ pub struct Config {
 pub struct CentralConfig {
     pub prompt_source: String,
     pub skills_source: String,
+    #[serde(default = "CentralConfig::default_agents_source")]
+    pub agents_source: String,
     pub source_dir: String,
     #[serde(default)]
-    pub skill_repos: Vec<String>,
-    #[serde(default = "CentralConfig::default_files_base")]
-    pub files_base: String,
-    /// Absolute paths (supports ~ and $VAR) to centrally managed files
-    #[serde(default)]
-    pub files: Vec<String>,
+    pub source_repos: Vec<String>,
 }
 
 impl CentralConfig {
-    fn default_files_base() -> String {
-        "~/.local/share/agm/files".into()
+    fn default_agents_source() -> String {
+        "~/.local/share/agm/agents".into()
     }
 }
 
@@ -46,9 +43,9 @@ pub struct ToolConfig {
     #[serde(default)]
     pub skills_dir: String,
     #[serde(default)]
-    pub mcp: Vec<String>,
+    pub agents_dir: String,
     #[serde(default)]
-    pub files: Vec<String>,
+    pub mcp: Vec<String>,
 }
 
 impl Config {
@@ -100,8 +97,47 @@ impl Config {
                 auth: vec![".credentials.json".into()],
                 prompt_filename: "CLAUDE.md".into(),
                 skills_dir: "skills".into(),
+                agents_dir: "agents".into(),
                 mcp: vec!["settings.json".into()],
-                files: vec![],
+            },
+        );
+        tools.insert(
+            "codex".into(),
+            ToolConfig {
+                name: "Codex".into(),
+                config_dir: "~/.codex".into(),
+                settings: vec!["config.toml".into()],
+                auth: vec!["auth.json".into()],
+                prompt_filename: "AGENTS.md".into(),
+                skills_dir: "skills".into(),
+                agents_dir: "agents".into(),
+                mcp: vec!["config.toml".into()],
+            },
+        );
+        tools.insert(
+            "copilot".into(),
+            ToolConfig {
+                name: "Copilot CLI".into(),
+                config_dir: "~/.copilot".into(),
+                settings: vec!["config.json".into()],
+                auth: vec!["config.json".into()],
+                prompt_filename: "AGENTS.md".into(),
+                skills_dir: "skills".into(),
+                agents_dir: "agents".into(),
+                mcp: vec!["mcp-config.json".into()],
+            },
+        );
+        tools.insert(
+            "crush".into(),
+            ToolConfig {
+                name: "Crush".into(),
+                config_dir: "~/.config/crush".into(),
+                settings: vec!["crush.json".into()],
+                auth: vec!["crush.json".into()],
+                prompt_filename: "AGENTS.md".into(),
+                skills_dir: "skills".into(),
+                agents_dir: "agents".into(),
+                mcp: vec!["crush.json".into()],
             },
         );
         tools.insert(
@@ -117,21 +153,8 @@ impl Config {
                 ],
                 prompt_filename: "GEMINI.md".into(),
                 skills_dir: "skills".into(),
+                agents_dir: "agents".into(),
                 mcp: vec!["settings.json".into()],
-                files: vec![],
-            },
-        );
-        tools.insert(
-            "copilot".into(),
-            ToolConfig {
-                name: "Copilot CLI".into(),
-                config_dir: "~/.copilot".into(),
-                settings: vec!["config.json".into()],
-                auth: vec!["config.json".into()],
-                prompt_filename: "AGENTS.md".into(),
-                skills_dir: "skills".into(),
-                mcp: vec!["mcp-config.json".into()],
-                files: vec![],
             },
         );
         tools.insert(
@@ -143,8 +166,21 @@ impl Config {
                 auth: vec!["~/.local/share/opencode/auth.json".into()],
                 prompt_filename: "AGENTS.md".into(),
                 skills_dir: "skills".into(),
+                agents_dir: "agents".into(),
                 mcp: vec!["opencode.json".into()],
-                files: vec![],
+            },
+        );
+        tools.insert(
+            "pi".into(),
+            ToolConfig {
+                name: "Pi".into(),
+                config_dir: "~/.pi/agent".into(),
+                settings: vec!["settings.json".into()],
+                auth: vec!["auth.json".into()],
+                prompt_filename: "AGENTS.md".into(),
+                skills_dir: "skills".into(),
+                agents_dir: "agents".into(),
+                mcp: vec![],
             },
         );
 
@@ -153,28 +189,27 @@ impl Config {
             central: CentralConfig {
                 prompt_source: "~/.local/share/agm/prompts/MASTER.md".into(),
                 skills_source: "~/.local/share/agm/skills".into(),
+                agents_source: "~/.local/share/agm/agents".into(),
                 source_dir: "~/.local/share/agm/source".into(),
-                skill_repos: vec![],
-                files_base: "~/.local/share/agm/files".into(),
-                files: vec![],
+                source_repos: vec![],
             },
             tools,
         }
     }
 
-    /// Add a skill repo URL if not already present, then save
-    pub fn add_skill_repo(&mut self, url: &str) -> anyhow::Result<()> {
-        if !self.central.skill_repos.contains(&url.to_string()) {
-            self.central.skill_repos.push(url.to_string());
+    /// Add a source repo URL if not already present, then save
+    pub fn add_source_repo(&mut self, url: &str) -> anyhow::Result<()> {
+        if !self.central.source_repos.contains(&url.to_string()) {
+            self.central.source_repos.push(url.to_string());
             self.save()?;
             println!("Added {} to config", url);
         }
         Ok(())
     }
 
-    /// Remove a skill repo URL if present
-    pub fn remove_skill_repo(&mut self, url: &str) {
-        self.central.skill_repos.retain(|u| u != url);
+    /// Remove a source repo URL if present
+    pub fn remove_source_repo(&mut self, url: &str) {
+        self.central.source_repos.retain(|u| u != url);
     }
 }
 
@@ -216,11 +251,14 @@ mod tests {
         let config = Config::default_config();
         let toml_str = toml::to_string_pretty(&config).unwrap();
         let parsed: Config = toml::from_str(&toml_str).unwrap();
-        assert_eq!(parsed.tools.len(), 4);
+        assert_eq!(parsed.tools.len(), 7);
         assert!(parsed.tools.contains_key("claude"));
-        assert!(parsed.tools.contains_key("gemini"));
+        assert!(parsed.tools.contains_key("codex"));
         assert!(parsed.tools.contains_key("copilot"));
+        assert!(parsed.tools.contains_key("crush"));
+        assert!(parsed.tools.contains_key("gemini"));
         assert!(parsed.tools.contains_key("opencode"));
+        assert!(parsed.tools.contains_key("pi"));
     }
 
     #[test]
@@ -231,10 +269,9 @@ mod tests {
             "~/.local/share/agm/prompts/MASTER.md"
         );
         assert_eq!(config.central.skills_source, "~/.local/share/agm/skills");
+        assert_eq!(config.central.agents_source, "~/.local/share/agm/agents");
         assert_eq!(config.central.source_dir, "~/.local/share/agm/source");
-        assert!(config.central.skill_repos.is_empty());
-        assert_eq!(config.central.files_base, "~/.local/share/agm/files");
-        assert!(config.central.files.is_empty());
+        assert!(config.central.source_repos.is_empty());
     }
 
     #[test]
@@ -246,8 +283,8 @@ mod tests {
             auth: vec![],
             prompt_filename: "TEST.md".into(),
             skills_dir: "skills".into(),
+            agents_dir: "agents".into(),
             mcp: vec![],
-            files: vec![],
         };
         let home = dirs::home_dir().unwrap();
         assert_eq!(tool.resolved_config_dir(), home.join(".test-tool"));
@@ -262,11 +299,10 @@ mod tests {
             auth: vec![],
             prompt_filename: "".into(),
             skills_dir: "".into(),
+            agents_dir: "".into(),
             mcp: vec![],
-            files: vec![],
         };
         let home = dirs::home_dir().unwrap();
-        // No "/" → relative to config_dir
         assert_eq!(
             tool.resolve_path("settings.json"),
             home.join(".test-tool/settings.json")
@@ -282,11 +318,10 @@ mod tests {
             auth: vec![],
             prompt_filename: "".into(),
             skills_dir: "".into(),
+            agents_dir: "".into(),
             mcp: vec![],
-            files: vec![],
         };
         let home = dirs::home_dir().unwrap();
-        // Contains "/" → absolute, expand ~
         assert_eq!(
             tool.resolve_path("~/.claude.json"),
             home.join(".claude.json")
@@ -302,8 +337,8 @@ mod tests {
             auth: vec![],
             prompt_filename: "".into(),
             skills_dir: "".into(),
+            agents_dir: "".into(),
             mcp: vec![],
-            files: vec![],
         };
         assert_eq!(
             tool.resolve_path("/etc/some.conf"),
@@ -320,8 +355,8 @@ mod tests {
             auth: vec![],
             prompt_filename: "".into(),
             skills_dir: "".into(),
+            agents_dir: "".into(),
             mcp: vec![],
-            files: vec![],
         };
         std::env::set_var("AGM_TEST_RESOLVE", "/tmp/agm_resolve");
         assert_eq!(
@@ -339,25 +374,36 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_skill_repo() {
+    fn test_remove_source_repo() {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("config.toml");
         let mut config = Config::default_config();
-        config.central.skill_repos = vec![
+        config.central.source_repos = vec![
             "https://github.com/user/repo1.git".to_string(),
             "https://github.com/user/repo2.git".to_string(),
         ];
         config.save_to(&config_path).unwrap();
 
-        config.remove_skill_repo("https://github.com/user/repo1.git");
-        assert_eq!(config.central.skill_repos.len(), 1);
+        config.remove_source_repo("https://github.com/user/repo1.git");
+        assert_eq!(config.central.source_repos.len(), 1);
         assert_eq!(
-            config.central.skill_repos[0],
+            config.central.source_repos[0],
             "https://github.com/user/repo2.git"
         );
 
-        // Removing non-existent URL is a no-op
-        config.remove_skill_repo("https://github.com/user/nonexistent.git");
-        assert_eq!(config.central.skill_repos.len(), 1);
+        config.remove_source_repo("https://github.com/user/nonexistent.git");
+        assert_eq!(config.central.source_repos.len(), 1);
+    }
+
+    #[test]
+    fn test_new_tools_have_agents_dir() {
+        let config = Config::default_config();
+        for (key, tool) in &config.tools {
+            assert_eq!(
+                tool.agents_dir, "agents",
+                "Tool '{}' should have agents_dir = 'agents'",
+                key
+            );
+        }
     }
 }

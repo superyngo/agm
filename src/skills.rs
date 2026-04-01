@@ -25,6 +25,14 @@ pub struct SkillInfo {
     pub install_status: SkillInstallStatus,
 }
 
+/// Full info about a single agent (.md file)
+#[derive(Debug, Clone)]
+pub struct AgentInfo {
+    pub name: String,
+    pub source_path: PathBuf,
+    pub install_status: SkillInstallStatus,
+}
+
 /// What kind of source this is
 #[derive(Debug, Clone)]
 pub enum SourceKind {
@@ -36,13 +44,14 @@ pub enum SourceKind {
     Migrated { tool: String },
 }
 
-/// A source and all skills it contains
+/// A source and all skills/agents it contains
 #[derive(Debug, Clone)]
 pub struct SourceGroup {
     pub name: String,
     pub kind: SourceKind,
     pub path: PathBuf,
     pub skills: Vec<SkillInfo>,
+    pub agents: Vec<AgentInfo>,
 }
 
 /// Scan a path for skills. Returns list of (skill_name, skill_dir_path).
@@ -62,6 +71,33 @@ pub fn scan_skills(path: &Path) -> Vec<(String, PathBuf)> {
     // Recursively scan for skills (max depth 3)
     scan_skills_recursive(path, &mut skills, 0, 3);
     skills
+}
+
+/// Scan the `agents/` directory within a source path for `.md` files.
+/// Returns list of (agent_name_without_ext, full_path_to_md).
+pub fn scan_agents(path: &Path) -> Vec<(String, PathBuf)> {
+    let agents_dir = path.join("agents");
+    if !agents_dir.is_dir() {
+        return vec![];
+    }
+    let mut agents = Vec::new();
+    let Ok(entries) = fs::read_dir(&agents_dir) else {
+        return agents;
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_file() {
+            if let Some(ext) = p.extension() {
+                if ext == "md" {
+                    if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                        agents.push((stem.to_string(), p));
+                    }
+                }
+            }
+        }
+    }
+    agents.sort_by(|a, b| a.0.cmp(&b.0));
+    agents
 }
 
 fn scan_skills_recursive(
@@ -134,6 +170,43 @@ pub fn uninstall_skill(name: &str, skills_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Install a single agent by creating a file symlink in the central agents directory.
+pub fn install_agent(name: &str, source_path: &Path, agents_dir: &Path) -> anyhow::Result<()> {
+    fs::create_dir_all(agents_dir)?;
+    let link_name = format!("{}.md", name);
+    let link_path = agents_dir.join(&link_name);
+
+    if link_path.exists() || link_path.symlink_metadata().is_ok() {
+        // Check if it already points to same source
+        if let Ok(target) = fs::read_link(&link_path) {
+            let target_canon = fs::canonicalize(&target).unwrap_or(target);
+            let source_canon = fs::canonicalize(source_path).unwrap_or(source_path.to_path_buf());
+            if target_canon == source_canon {
+                return Ok(());
+            }
+        }
+        anyhow::bail!(
+            "Agent '{}' already exists (installed from another source). Uninstall it first.",
+            name
+        );
+    }
+
+    platform::link_file(source_path, &link_path)
+        .with_context(|| format!("Failed to install agent: {}", name))?;
+    Ok(())
+}
+
+/// Uninstall a single agent by removing its symlink from the central agents directory.
+pub fn uninstall_agent(name: &str, agents_dir: &Path) -> anyhow::Result<()> {
+    let link_name = format!("{}.md", name);
+    let link_path = agents_dir.join(&link_name);
+    if link_path.symlink_metadata().is_err() {
+        return Ok(());
+    }
+    platform::remove_link(&link_path)?;
+    Ok(())
+}
+
 /// Scan central skills directory and remove any symlinks whose targets no longer exist.
 /// Returns the number of broken links removed.
 pub fn prune_broken_skills(skills_dir: &Path) -> anyhow::Result<usize> {
@@ -161,7 +234,52 @@ pub fn prune_broken_skills(skills_dir: &Path) -> anyhow::Result<usize> {
     Ok(removed)
 }
 
-/// Check if source string is a URL
+/// Scan central agents directory and remove any symlinks whose targets no longer exist.
+pub fn prune_broken_agents(agents_dir: &Path) -> anyhow::Result<usize> {
+    if !agents_dir.is_dir() {
+        return Ok(0);
+    }
+
+    let mut removed = 0;
+    for entry in fs::read_dir(agents_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        // Only consider .md files that are symlinks
+        if path.extension().and_then(|e| e.to_str()) == Some("md") {
+            if path.symlink_metadata().is_ok() && !path.exists() {
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("<unknown>");
+                platform::remove_link(&path)?;
+                println!("  {} {} (broken agent link removed)", "warn".yellow(), name);
+                removed += 1;
+            }
+        }
+    }
+    Ok(removed)
+}
+
+/// Check the install status of an agent by examining the central agents directory.
+fn check_agent_install_status(
+    name: &str,
+    source_path: &Path,
+    agents_dir: &Path,
+) -> SkillInstallStatus {
+    let link_name = format!("{}.md", name);
+    let link_path = agents_dir.join(&link_name);
+    if link_path.symlink_metadata().is_err() {
+        return SkillInstallStatus::NotInstalled;
+    }
+    if let Ok(target) = fs::read_link(&link_path) {
+        let target_canon = fs::canonicalize(&target).unwrap_or(target);
+        let source_canon = fs::canonicalize(source_path).unwrap_or(source_path.to_path_buf());
+        if target_canon == source_canon {
+            return SkillInstallStatus::Installed;
+        }
+    }
+    SkillInstallStatus::Conflict
+}
 pub fn is_url(source: &str) -> bool {
     source.starts_with("http://") || source.starts_with("https://") || source.starts_with("git@")
 }
@@ -188,7 +306,11 @@ fn normalize_git_url(url: &str) -> String {
 }
 
 /// Git pull all skill source repos (deduplicating by git root), then re-sync symlinks
-pub fn update_all(skills_dir: &Path, source_dir: &Path) -> anyhow::Result<()> {
+pub fn update_all(
+    skills_dir: &Path,
+    agents_dir: &Path,
+    source_dir: &Path,
+) -> anyhow::Result<()> {
     if !skills_dir.is_dir() {
         anyhow::bail!("Skills directory does not exist: {}", skills_dir.display());
     }
@@ -240,17 +362,24 @@ pub fn update_all(skills_dir: &Path, source_dir: &Path) -> anyhow::Result<()> {
     println!("{}", "Syncing central skills symlinks...".bold());
     let pruned = prune_broken_skills(skills_dir)?;
     if pruned > 0 {
-        println!("  {} Removed {} broken link(s)", "warn".yellow(), pruned);
+        println!("  {} Removed {} broken skill link(s)", "warn".yellow(), pruned);
+    }
+    let pruned_agents = prune_broken_agents(agents_dir)?;
+    if pruned_agents > 0 {
+        println!(
+            "  {} Removed {} broken agent link(s)",
+            "warn".yellow(),
+            pruned_agents
+        );
     }
 
-    // Re-sync: for each repo, find new skills not yet installed and install them
+    // Re-sync: for each repo, find new skills/agents not yet installed
     for git_root in &git_roots {
         let new_skills = scan_skills(git_root);
         let mut added = 0;
         for (name, skill_path) in new_skills {
             let link_path = skills_dir.join(&name);
             if link_path.symlink_metadata().is_err() {
-                // Not installed — install it (new skill discovered after pull)
                 if let Err(e) = install_skill(&name, &skill_path, skills_dir) {
                     println!("  {} {}: {}", "warn".yellow(), name, e);
                 } else {
@@ -264,11 +393,33 @@ pub fn update_all(skills_dir: &Path, source_dir: &Path) -> anyhow::Result<()> {
                 }
             }
         }
-        if added > 0 {
+
+        let new_agents = scan_agents(git_root);
+        let mut agents_added = 0;
+        for (name, agent_path) in new_agents {
+            let link_name = format!("{}.md", name);
+            let link_path = agents_dir.join(&link_name);
+            if link_path.symlink_metadata().is_err() {
+                if let Err(e) = install_agent(&name, &agent_path, agents_dir) {
+                    println!("  {} agent {}: {}", "warn".yellow(), name, e);
+                } else {
+                    println!(
+                        "  {} agent {} → {}",
+                        " ok ".green(),
+                        name,
+                        contract_tilde(&agent_path)
+                    );
+                    agents_added += 1;
+                }
+            }
+        }
+
+        if added > 0 || agents_added > 0 {
             println!(
-                "  {} {} new skill(s) from {}",
+                "  {} {} new skill(s), {} new agent(s) from {}",
                 " ok ".green(),
                 added,
+                agents_added,
                 contract_tilde(git_root)
             );
         }
@@ -278,8 +429,8 @@ pub fn update_all(skills_dir: &Path, source_dir: &Path) -> anyhow::Result<()> {
 }
 
 /// Try to resolve the git remote URL for a directory.
-fn resolve_repo_url(dir_name: &str, path: &Path, skill_repos: &[String]) -> Option<String> {
-    for url in skill_repos {
+fn resolve_repo_url(dir_name: &str, path: &Path, source_repos: &[String]) -> Option<String> {
+    for url in source_repos {
         if repo_name_from_url(url) == dir_name {
             return Some(url.clone());
         }
@@ -318,12 +469,13 @@ fn check_install_status(name: &str, source_path: &Path, skills_dir: &Path) -> Sk
     SkillInstallStatus::Conflict
 }
 
-/// Scan the source directory and return all sources grouped with their skills and install status.
+/// Scan the source directory and return all sources grouped with their skills/agents and install status.
 /// Gracefully returns empty Vec if source_dir doesn't exist.
 pub fn scan_all_sources(
     source_dir: &Path,
     skills_dir: &Path,
-    skill_repos: &[String],
+    agents_dir: &Path,
+    source_repos: &[String],
 ) -> Vec<SourceGroup> {
     if !source_dir.is_dir() {
         return vec![];
@@ -365,11 +517,20 @@ pub fn scan_all_sources(
                             source_path: sp,
                         })
                         .collect();
+                    let agents = scan_agents(&sub_path)
+                        .into_iter()
+                        .map(|(name, sp)| AgentInfo {
+                            install_status: check_agent_install_status(&name, &sp, agents_dir),
+                            name,
+                            source_path: sp,
+                        })
+                        .collect();
                     groups.push(SourceGroup {
                         name: sub_name,
                         kind: SourceKind::Local,
                         path: sub_path,
                         skills,
+                        agents,
                     });
                 }
             }
@@ -392,20 +553,37 @@ pub fn scan_all_sources(
                             source_path: sp,
                         })
                         .collect();
+                    let agents = scan_agents(&sub_path)
+                        .into_iter()
+                        .map(|(name, sp)| AgentInfo {
+                            install_status: check_agent_install_status(&name, &sp, agents_dir),
+                            name,
+                            source_path: sp,
+                        })
+                        .collect();
                     groups.push(SourceGroup {
                         name: format!("agm_tools/{}", tool_name),
                         kind: SourceKind::Migrated { tool: tool_name },
                         path: sub_path,
                         skills,
+                        agents,
                     });
                 }
             }
         } else {
-            let url = resolve_repo_url(&dir_name, &path, skill_repos);
+            let url = resolve_repo_url(&dir_name, &path, source_repos);
             let skills = scan_skills(&path)
                 .into_iter()
                 .map(|(name, sp)| SkillInfo {
                     install_status: check_install_status(&name, &sp, skills_dir),
+                    name,
+                    source_path: sp,
+                })
+                .collect();
+            let agents = scan_agents(&path)
+                .into_iter()
+                .map(|(name, sp)| AgentInfo {
+                    install_status: check_agent_install_status(&name, &sp, agents_dir),
                     name,
                     source_path: sp,
                 })
@@ -415,6 +593,7 @@ pub fn scan_all_sources(
                 kind: SourceKind::Repo { url },
                 path,
                 skills,
+                agents,
             });
         }
     }
@@ -531,12 +710,23 @@ pub fn clone_or_pull(
     Ok((repo_path, skills))
 }
 
-/// Delete a source: remove all its central symlinks and delete the source directory.
-pub fn delete_source(group: &SourceGroup, skills_dir: &Path) -> anyhow::Result<()> {
+/// Delete a source: remove all its central symlinks (skills + agents) and delete the source directory.
+pub fn delete_source(
+    group: &SourceGroup,
+    skills_dir: &Path,
+    agents_dir: &Path,
+) -> anyhow::Result<()> {
     // Remove all central symlinks for this source's skills
     for skill in &group.skills {
         if skill.install_status == SkillInstallStatus::Installed {
             uninstall_skill(&skill.name, skills_dir)?;
+        }
+    }
+
+    // Remove all central symlinks for this source's agents
+    for agent in &group.agents {
+        if agent.install_status == SkillInstallStatus::Installed {
+            uninstall_agent(&agent.name, agents_dir)?;
         }
     }
 
@@ -686,7 +876,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let source_dir = dir.path().join("source");
         let skills_dir = dir.path().join("skills");
-        let groups = scan_all_sources(&source_dir, &skills_dir, &[]);
+        let agents_dir = dir.path().join("agents");
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &[]);
         assert!(groups.is_empty());
     }
 
@@ -695,7 +886,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let source_dir = dir.path().join("source");
         let skills_dir = dir.path().join("skills");
+        let agents_dir = dir.path().join("agents");
         fs::create_dir_all(&skills_dir).unwrap();
+        fs::create_dir_all(&agents_dir).unwrap();
 
         let repo = source_dir.join("my-repo");
         let skill_a = repo.join("skill-a");
@@ -706,7 +899,7 @@ mod tests {
         fs::write(skill_b.join("SKILL.md"), "# B").unwrap();
 
         let url = "https://github.com/user/my-repo.git".to_string();
-        let groups = scan_all_sources(&source_dir, &skills_dir, &[url.clone()]);
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &[url.clone()]);
 
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].name, "my-repo");
@@ -726,14 +919,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let source_dir = dir.path().join("source");
         let skills_dir = dir.path().join("skills");
+        let agents_dir = dir.path().join("agents");
         fs::create_dir_all(&skills_dir).unwrap();
+        fs::create_dir_all(&agents_dir).unwrap();
 
         let local = source_dir.join("local").join("my-local");
         let skill = local.join("my-skill");
         fs::create_dir_all(&skill).unwrap();
         fs::write(skill.join("SKILL.md"), "# Local").unwrap();
 
-        let groups = scan_all_sources(&source_dir, &skills_dir, &[]);
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &[]);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].name, "my-local");
         assert!(matches!(groups[0].kind, SourceKind::Local));
@@ -744,14 +939,16 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let source_dir = dir.path().join("source");
         let skills_dir = dir.path().join("skills");
+        let agents_dir = dir.path().join("agents");
         fs::create_dir_all(&skills_dir).unwrap();
+        fs::create_dir_all(&agents_dir).unwrap();
 
         let migrated = source_dir.join("agm_tools").join("claude");
         let skill = migrated.join("my-skill");
         fs::create_dir_all(&skill).unwrap();
         fs::write(skill.join("SKILL.md"), "# Migrated").unwrap();
 
-        let groups = scan_all_sources(&source_dir, &skills_dir, &[]);
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &[]);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].name, "agm_tools/claude");
         match &groups[0].kind {
@@ -765,7 +962,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let source_dir = dir.path().join("source");
         let skills_dir = dir.path().join("skills");
+        let agents_dir = dir.path().join("agents");
         fs::create_dir_all(&skills_dir).unwrap();
+        fs::create_dir_all(&agents_dir).unwrap();
 
         let repo = source_dir.join("my-repo");
         let skill_path = repo.join("cool-skill");
@@ -774,7 +973,7 @@ mod tests {
 
         install_skill("cool-skill", &skill_path, &skills_dir).unwrap();
 
-        let groups = scan_all_sources(&source_dir, &skills_dir, &[]);
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &[]);
         assert_eq!(
             groups[0].skills[0].install_status,
             SkillInstallStatus::Installed
@@ -786,7 +985,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let source_dir = dir.path().join("source");
         let skills_dir = dir.path().join("skills");
+        let agents_dir = dir.path().join("agents");
         fs::create_dir_all(&skills_dir).unwrap();
+        fs::create_dir_all(&agents_dir).unwrap();
 
         let repo_a = source_dir.join("repo-a");
         let skill_a = repo_a.join("common-skill");
@@ -800,7 +1001,7 @@ mod tests {
 
         install_skill("common-skill", &skill_a, &skills_dir).unwrap();
 
-        let groups = scan_all_sources(&source_dir, &skills_dir, &[]);
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &[]);
         let group_a = groups.iter().find(|g| g.name == "repo-a").unwrap();
         let group_b = groups.iter().find(|g| g.name == "repo-b").unwrap();
         assert_eq!(
@@ -901,14 +1102,135 @@ mod tests {
                     install_status: SkillInstallStatus::Installed,
                 },
             ],
+            agents: vec![],
         };
 
-        delete_source(&group, &skills_dir).unwrap();
+        delete_source(&group, &skills_dir, &dir.path().join("agents")).unwrap();
 
         // Central links removed
         assert!(!skills_dir.join("skill-a").exists());
         assert!(!skills_dir.join("skill-b").exists());
         // Source directory removed
         assert!(!repo.exists());
+    }
+
+    #[test]
+    fn test_scan_agents() {
+        let tmp = TempDir::new().unwrap();
+        let repo = tmp.path().join("my-repo");
+        let agents = repo.join("agents");
+        fs::create_dir_all(&agents).unwrap();
+        fs::write(agents.join("helper.md"), "# Helper").unwrap();
+        fs::write(agents.join("reviewer.md"), "# Reviewer").unwrap();
+        fs::write(agents.join("README.txt"), "not an agent").unwrap();
+
+        let found = scan_agents(&repo);
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].0, "helper");
+        assert_eq!(found[1].0, "reviewer");
+    }
+
+    #[test]
+    fn test_scan_agents_no_dir() {
+        let tmp = TempDir::new().unwrap();
+        let found = scan_agents(tmp.path());
+        assert!(found.is_empty());
+    }
+
+    #[test]
+    fn test_install_agent() {
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("source/agents/helper.md");
+        let agents_dir = dir.path().join("agents");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::write(&source, "# Helper Agent").unwrap();
+        fs::create_dir_all(&agents_dir).unwrap();
+
+        install_agent("helper", &source, &agents_dir).unwrap();
+        let link = agents_dir.join("helper.md");
+        assert!(link.exists());
+        assert_eq!(fs::read_to_string(&link).unwrap(), "# Helper Agent");
+    }
+
+    #[test]
+    fn test_install_agent_conflict() {
+        let dir = TempDir::new().unwrap();
+        let source_a = dir.path().join("a/agents/helper.md");
+        let source_b = dir.path().join("b/agents/helper.md");
+        let agents_dir = dir.path().join("agents");
+        fs::create_dir_all(source_a.parent().unwrap()).unwrap();
+        fs::create_dir_all(source_b.parent().unwrap()).unwrap();
+        fs::write(&source_a, "# A").unwrap();
+        fs::write(&source_b, "# B").unwrap();
+        fs::create_dir_all(&agents_dir).unwrap();
+
+        install_agent("helper", &source_a, &agents_dir).unwrap();
+        let result = install_agent("helper", &source_b, &agents_dir);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_uninstall_agent() {
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("source/agents/helper.md");
+        let agents_dir = dir.path().join("agents");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::write(&source, "# Helper").unwrap();
+        fs::create_dir_all(&agents_dir).unwrap();
+
+        install_agent("helper", &source, &agents_dir).unwrap();
+        assert!(agents_dir.join("helper.md").exists());
+
+        uninstall_agent("helper", &agents_dir).unwrap();
+        assert!(!agents_dir.join("helper.md").exists());
+        assert!(source.exists());
+    }
+
+    #[test]
+    fn test_prune_broken_agents() {
+        let tmp = TempDir::new().unwrap();
+        let agents_dir = tmp.path().join("agents");
+        fs::create_dir(&agents_dir).unwrap();
+
+        // Create a valid agent link
+        let real_source = tmp.path().join("real.md");
+        fs::write(&real_source, "# Real").unwrap();
+        install_agent("real", &real_source, &agents_dir).unwrap();
+
+        // Create a broken agent link
+        let ghost = tmp.path().join("ghost.md");
+        fs::write(&ghost, "# Ghost").unwrap();
+        install_agent("ghost", &ghost, &agents_dir).unwrap();
+        fs::remove_file(&ghost).unwrap();
+
+        let removed = prune_broken_agents(&agents_dir).unwrap();
+        assert_eq!(removed, 1);
+        assert!(agents_dir.join("real.md").exists());
+        assert!(!agents_dir.join("ghost.md").exists());
+    }
+
+    #[test]
+    fn test_scan_all_sources_with_agents() {
+        let dir = TempDir::new().unwrap();
+        let source_dir = dir.path().join("source");
+        let skills_dir = dir.path().join("skills");
+        let agents_dir = dir.path().join("agents");
+        fs::create_dir_all(&skills_dir).unwrap();
+        fs::create_dir_all(&agents_dir).unwrap();
+
+        let repo = source_dir.join("my-repo");
+        let skill = repo.join("my-skill");
+        fs::create_dir_all(&skill).unwrap();
+        fs::write(skill.join("SKILL.md"), "# Skill").unwrap();
+
+        let agent_dir = repo.join("agents");
+        fs::create_dir_all(&agent_dir).unwrap();
+        fs::write(agent_dir.join("helper.md"), "# Helper").unwrap();
+
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &[]);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].skills.len(), 1);
+        assert_eq!(groups[0].agents.len(), 1);
+        assert_eq!(groups[0].agents[0].name, "helper");
     }
 }

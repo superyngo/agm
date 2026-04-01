@@ -33,8 +33,8 @@ pub fn run(config_path_override: Option<PathBuf>) -> anyhow::Result<()> {
     // Create central directories
     let dirs_to_create = [
         &config.central.skills_source,
+        &config.central.agents_source,
         &config.central.source_dir,
-        &config.central.files_base,
     ];
     for dir in dirs_to_create {
         let path = expand_tilde(dir);

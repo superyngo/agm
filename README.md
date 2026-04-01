@@ -1,12 +1,13 @@
 # AGM (AI Agent Manager)
 
-A Rust CLI tool for centralized management of AI coding agent CLI tools (Claude Code, Gemini CLI, Copilot CLI, OpenCode, etc.).
+A Rust CLI tool for centralized management of AI coding agent CLI tools (Claude Code, Gemini CLI, Copilot CLI, Codex CLI, Pi, Crush, OpenCode, etc.).
 
 ## Features
 
-- **Centralized Configuration**: Manage prompts, skills, and configs for all AI CLI tools in one place
+- **Centralized Configuration**: Manage prompts, skills, agents, and configs for all AI CLI tools in one place
 - **Symlink Management**: Automatically create and maintain links from each tool to central sources (symlinks on Unix, junctions + hardlinks on Windows)
-- **Skills Management**: Install skills from local paths or git repos, with auto-update support
+- **Skills & Agents Management**: Install skills (directory-based) and agents (single `.md` files) from local paths or git repos, with auto-update support
+- **Interactive TUI**: Browse, search, and toggle skills/agents with a ratatui-based terminal UI
 - **Registry-Driven**: Add new tools by editing TOML config—no code changes needed
 - **Status Monitoring**: Check link health and tool installation status at a glance
 
@@ -92,35 +93,39 @@ agm status
 # Create links for all installed tools
 agm link
 
-# Add skills from a git repo
-agm skills add https://github.com/anthropics/claude-code-skills
+# Add a source from a git repo
+agm source -a https://github.com/anthropics/claude-code-skills
 
-# List installed skills
-agm skills
+# Open interactive TUI to manage skills & agents
+agm source
 
-# Update all skill repos
-agm skills update
+# List all sources
+agm source -l
+
+# Update all source repos
+agm source -u
 ```
 
 ## Commands
 
 ### Status & Info
 
-- `agm status` - Show link status for all tools
+- `agm status` - Show link status for all tools (prompts, skills, agents)
 
 ### Link Management
 
-- `agm link` - Create/repair all links (prompts + skills)
+- `agm link` - Create/repair all links (prompts + skills + agents)
 - `agm link skills` - Only handle skills links
 - `agm link prompts` - Only handle prompt links
+- `agm link agents` - Only handle agents links
 - `agm unlink <tool>` - Remove links for a specific tool
 
-### Skills Management
+### Source Management
 
-- `agm skills` - List installed skills with source paths
-- `agm skills add <source>` - Install skill(s) from local path or repo URL
-- `agm skills remove <name>` - Remove a skill link
-- `agm skills update` - Git pull on all skill source repositories
+- `agm source` - Open interactive TUI to manage skills & agents
+- `agm source -a <url>` / `agm source --add <url>` - Add a source repo by URL
+- `agm source -u` / `agm source --update` - Update all source repos
+- `agm source -l` / `agm source --list` - List all sources with skills & agents
 
 ### Editing Shortcuts
 
@@ -159,17 +164,21 @@ Config location: `~/.config/agm/config.toml`
 Default central directories:
 - Prompts: `~/.local/share/agm/prompts/MASTER.md`
 - Skills: `~/.local/share/agm/skills/`
+- Agents: `~/.local/share/agm/agents/`
 - Source repos: `~/.local/share/agm/source/`
 
 See [design doc](docs/plans/2026-02-14-agm-design.md) for detailed architecture.
 
 ## Supported Tools
 
-Out of the box support for:
+Out of the box support for 7 tools:
 - Claude Code (`~/.claude`)
-- Gemini CLI (`~/.gemini`)
+- Codex CLI (`~/.codex`)
 - Copilot CLI (`~/.copilot`)
+- Crush (`~/.config/crush`)
+- Gemini CLI (`~/.gemini`)
 - OpenCode (`~/.config/opencode`)
+- Pi (`~/.pi/agent`)
 
 Add more tools by editing `config.toml` - no code changes needed!
 

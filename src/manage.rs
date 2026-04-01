@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::io::{self, stdout};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -8,6 +9,8 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
+use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
@@ -26,22 +29,23 @@ use crate::skills::{self, SkillInstallStatus, SourceGroup, SourceKind};
 // Data model
 // ---------------------------------------------------------------------------
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Category {
+    Skills,
+    Agents,
+}
+
 #[derive(Clone)]
 enum ListRow {
-    SourceHeader {
-        group_index: usize,
-    },
-    Skill {
-        group_index: usize,
-        skill_index: usize,
-    },
+    CategoryHeader { category: Category },
+    SourceHeader { category: Category, group_index: usize },
+    SkillItem { group_index: usize, skill_index: usize },
+    AgentItem { group_index: usize, agent_index: usize },
 }
 
 #[derive(Clone)]
 enum ConfirmState {
-    /// Simple y/N confirmation for non-migrated sources
     Normal { group_index: usize },
-    /// Type "delete" confirmation for migrated sources
     Migrated { group_index: usize, typed: String },
 }
 
@@ -60,22 +64,26 @@ struct App {
     search_query: String,
     filtered_rows: Option<Vec<usize>>,
     should_quit: bool,
-    source_filter: Option<String>,
     skills_dir: PathBuf,
+    agents_dir: PathBuf,
     source_dir: PathBuf,
+    expanded_categories: HashSet<Category>,
+    expanded_skills_sources: HashSet<usize>,
+    expanded_agents_sources: HashSet<usize>,
     confirm_state: Option<ConfirmState>,
+    matcher: SkimMatcherV2,
 }
 
 impl App {
     fn new(
         config: Config,
         groups: Vec<SourceGroup>,
-        source_filter: Option<String>,
         skills_dir: PathBuf,
+        agents_dir: PathBuf,
         source_dir: PathBuf,
     ) -> Self {
-        let rows = build_rows(&groups);
-        Self {
+        let rows = Vec::new();
+        let mut app = Self {
             config,
             groups,
             rows,
@@ -86,11 +94,27 @@ impl App {
             search_query: String::new(),
             filtered_rows: None,
             should_quit: false,
-            source_filter,
             skills_dir,
+            agents_dir,
             source_dir,
+            expanded_categories: HashSet::new(),
+            expanded_skills_sources: HashSet::new(),
+            expanded_agents_sources: HashSet::new(),
             confirm_state: None,
-        }
+            matcher: SkimMatcherV2::default(),
+        };
+        app.rebuild_rows();
+        app
+    }
+
+    fn rebuild_rows(&mut self) {
+        self.rows = build_rows(
+            &self.groups,
+            &self.expanded_categories,
+            &self.expanded_skills_sources,
+            &self.expanded_agents_sources,
+        );
+        self.apply_search_filter();
     }
 
     fn visible_rows(&self) -> Vec<usize> {
@@ -102,18 +126,18 @@ impl App {
 
     fn refresh(&mut self) {
         let _ = skills::prune_broken_skills(&self.skills_dir);
+        let _ = skills::prune_broken_agents(&self.agents_dir);
         self.groups = skills::scan_all_sources(
             &self.source_dir,
             &self.skills_dir,
-            &self.config.central.skill_repos,
+            &self.agents_dir,
+            &self.config.central.source_repos,
         );
-        if let Some(ref filter) = self.source_filter {
-            if filter != "all" {
-                self.groups.retain(|g| g.name == *filter);
-            }
-        }
-        self.rows = build_rows(&self.groups);
-        self.apply_search_filter();
+        self.rebuild_rows();
+        self.clamp_cursor();
+    }
+
+    fn clamp_cursor(&mut self) {
         let vis = self.visible_rows();
         if vis.is_empty() {
             self.cursor = 0;
@@ -149,7 +173,6 @@ impl App {
     }
 
     fn page_size(&self, area_height: u16) -> usize {
-        // Subtract borders + footer
         (area_height.saturating_sub(5)) as usize
     }
 
@@ -167,142 +190,177 @@ impl App {
             self.filtered_rows = None;
             return;
         }
-        let query = self.search_query.to_lowercase();
-        let mut matching_groups = std::collections::HashSet::new();
-        let mut visible = Vec::new();
+        let query = &self.search_query;
+        let mut matching_groups_skills = HashSet::new();
+        let mut matching_groups_agents = HashSet::new();
+        let mut visible_items = Vec::new();
 
-        // First pass: find skills matching query
+        // Find matching items
         for (i, row) in self.rows.iter().enumerate() {
-            if let ListRow::Skill {
-                group_index,
-                skill_index,
-            } = row
-            {
-                let skill = &self.groups[*group_index].skills[*skill_index];
-                if skill.name.to_lowercase().contains(&query) {
-                    matching_groups.insert(*group_index);
-                    visible.push(i);
+            match row {
+                ListRow::SkillItem {
+                    group_index,
+                    skill_index,
+                } => {
+                    let skill = &self.groups[*group_index].skills[*skill_index];
+                    if self.matcher.fuzzy_match(&skill.name, query).is_some() {
+                        matching_groups_skills.insert(*group_index);
+                        visible_items.push(i);
+                    }
                 }
+                ListRow::AgentItem {
+                    group_index,
+                    agent_index,
+                } => {
+                    let agent = &self.groups[*group_index].agents[*agent_index];
+                    if self.matcher.fuzzy_match(&agent.name, query).is_some() {
+                        matching_groups_agents.insert(*group_index);
+                        visible_items.push(i);
+                    }
+                }
+                _ => {}
             }
         }
 
-        // Second pass: include source headers for matching groups
+        // Build filtered list: include headers for matching groups
         let mut result = Vec::new();
         for (i, row) in self.rows.iter().enumerate() {
             match row {
-                ListRow::SourceHeader { group_index } if matching_groups.contains(group_index) => {
-                    result.push(i);
+                ListRow::CategoryHeader { category } => {
+                    let has_matches = match category {
+                        Category::Skills => !matching_groups_skills.is_empty(),
+                        Category::Agents => !matching_groups_agents.is_empty(),
+                    };
+                    if has_matches {
+                        result.push(i);
+                    }
                 }
-                ListRow::Skill { .. } if visible.contains(&i) => {
-                    result.push(i);
+                ListRow::SourceHeader {
+                    category,
+                    group_index,
+                } => {
+                    let is_match = match category {
+                        Category::Skills => matching_groups_skills.contains(group_index),
+                        Category::Agents => matching_groups_agents.contains(group_index),
+                    };
+                    if is_match {
+                        result.push(i);
+                    }
                 }
-                _ => {}
+                ListRow::SkillItem { .. } | ListRow::AgentItem { .. } => {
+                    if visible_items.contains(&i) {
+                        result.push(i);
+                    }
+                }
             }
         }
         self.filtered_rows = Some(result);
     }
 
-    fn toggle_skill(&mut self) {
+    fn toggle_item(&mut self) {
         let row = match self.current_row() {
             Some(r) => r.clone(),
             None => return,
         };
         match row {
-            ListRow::Skill {
+            ListRow::CategoryHeader { category } => {
+                if self.expanded_categories.contains(&category) {
+                    self.expanded_categories.remove(&category);
+                } else {
+                    self.expanded_categories.insert(category);
+                }
+                self.rebuild_rows();
+                self.clamp_cursor();
+            }
+            ListRow::SourceHeader {
+                category,
+                group_index,
+            } => {
+                let set = match category {
+                    Category::Skills => &mut self.expanded_skills_sources,
+                    Category::Agents => &mut self.expanded_agents_sources,
+                };
+                if set.contains(&group_index) {
+                    set.remove(&group_index);
+                } else {
+                    set.insert(group_index);
+                }
+                self.rebuild_rows();
+                self.clamp_cursor();
+            }
+            ListRow::SkillItem {
                 group_index,
                 skill_index,
             } => {
-                let skill = &self.groups[group_index].skills[skill_index];
-                let name = skill.name.clone();
-                let source_path = skill.source_path.clone();
-                match skill.install_status {
-                    SkillInstallStatus::Installed => {
-                        match skills::uninstall_skill(&name, &self.skills_dir) {
-                            Ok(()) => {
-                                self.groups[group_index].skills[skill_index].install_status =
-                                    SkillInstallStatus::NotInstalled;
-                                self.set_status(format!("Uninstalled {name}"));
-                            }
-                            Err(e) => self.set_status(format!("Error: {e}")),
-                        }
+                self.toggle_skill(group_index, skill_index);
+            }
+            ListRow::AgentItem {
+                group_index,
+                agent_index,
+            } => {
+                self.toggle_agent(group_index, agent_index);
+            }
+        }
+    }
+
+    fn toggle_skill(&mut self, group_index: usize, skill_index: usize) {
+        let skill = &self.groups[group_index].skills[skill_index];
+        let name = skill.name.clone();
+        let source_path = skill.source_path.clone();
+        match skill.install_status {
+            SkillInstallStatus::Installed => {
+                match skills::uninstall_skill(&name, &self.skills_dir) {
+                    Ok(()) => {
+                        self.groups[group_index].skills[skill_index].install_status =
+                            SkillInstallStatus::NotInstalled;
+                        self.set_status(format!("Uninstalled {name}"));
                     }
-                    SkillInstallStatus::NotInstalled => {
-                        match skills::install_skill(&name, &source_path, &self.skills_dir) {
-                            Ok(()) => {
-                                self.groups[group_index].skills[skill_index].install_status =
-                                    SkillInstallStatus::Installed;
-                                self.set_status(format!("Installed {name}"));
-                            }
-                            Err(e) => self.set_status(format!("Error: {e}")),
-                        }
-                    }
-                    SkillInstallStatus::Conflict => {
-                        self.set_status(format!("Conflict: {name} installed from another source"));
-                    }
+                    Err(e) => self.set_status(format!("Error: {e}")),
                 }
             }
-            ListRow::SourceHeader { group_index } => {
-                let all_installed = self.groups[group_index]
-                    .skills
-                    .iter()
-                    .all(|s| s.install_status == SkillInstallStatus::Installed);
-                let group_name = self.groups[group_index].name.clone();
-                let mut ok = 0;
-                let mut fail = 0;
-                if all_installed {
-                    for i in 0..self.groups[group_index].skills.len() {
-                        let name = self.groups[group_index].skills[i].name.clone();
-                        if self.groups[group_index].skills[i].install_status
-                            == SkillInstallStatus::Installed
-                        {
-                            match skills::uninstall_skill(&name, &self.skills_dir) {
-                                Ok(()) => {
-                                    self.groups[group_index].skills[i].install_status =
-                                        SkillInstallStatus::NotInstalled;
-                                    ok += 1;
-                                }
-                                Err(_) => {
-                                    fail += 1;
-                                }
-                            }
-                        }
+            SkillInstallStatus::NotInstalled => {
+                match skills::install_skill(&name, &source_path, &self.skills_dir) {
+                    Ok(()) => {
+                        self.groups[group_index].skills[skill_index].install_status =
+                            SkillInstallStatus::Installed;
+                        self.set_status(format!("Installed {name}"));
                     }
-                    if fail > 0 {
-                        self.set_status(format!(
-                            "Uninstalled {ok}/{} from {group_name} ({fail} failed)",
-                            ok + fail
-                        ));
-                    } else {
-                        self.set_status(format!("Uninstalled all from {group_name}"));
-                    }
-                } else {
-                    for i in 0..self.groups[group_index].skills.len() {
-                        let name = self.groups[group_index].skills[i].name.clone();
-                        let source = self.groups[group_index].skills[i].source_path.clone();
-                        if self.groups[group_index].skills[i].install_status
-                            == SkillInstallStatus::NotInstalled
-                        {
-                            match skills::install_skill(&name, &source, &self.skills_dir) {
-                                Ok(()) => {
-                                    self.groups[group_index].skills[i].install_status =
-                                        SkillInstallStatus::Installed;
-                                    ok += 1;
-                                }
-                                Err(_) => {
-                                    fail += 1;
-                                }
-                            }
-                        }
-                    }
-                    if fail > 0 {
-                        self.set_status(format!(
-                            "Installed {ok}/{} from {group_name} ({fail} failed)",
-                            ok + fail
-                        ));
-                    } else {
-                        self.set_status(format!("Installed all from {group_name}"));
-                    }
+                    Err(e) => self.set_status(format!("Error: {e}")),
                 }
+            }
+            SkillInstallStatus::Conflict => {
+                self.set_status(format!("Conflict: {name} installed from another source"));
+            }
+        }
+    }
+
+    fn toggle_agent(&mut self, group_index: usize, agent_index: usize) {
+        let agent = &self.groups[group_index].agents[agent_index];
+        let name = agent.name.clone();
+        let source_path = agent.source_path.clone();
+        match agent.install_status {
+            SkillInstallStatus::Installed => {
+                match skills::uninstall_agent(&name, &self.agents_dir) {
+                    Ok(()) => {
+                        self.groups[group_index].agents[agent_index].install_status =
+                            SkillInstallStatus::NotInstalled;
+                        self.set_status(format!("Uninstalled agent {name}"));
+                    }
+                    Err(e) => self.set_status(format!("Error: {e}")),
+                }
+            }
+            SkillInstallStatus::NotInstalled => {
+                match skills::install_agent(&name, &source_path, &self.agents_dir) {
+                    Ok(()) => {
+                        self.groups[group_index].agents[agent_index].install_status =
+                            SkillInstallStatus::Installed;
+                        self.set_status(format!("Installed agent {name}"));
+                    }
+                    Err(e) => self.set_status(format!("Error: {e}")),
+                }
+            }
+            SkillInstallStatus::Conflict => {
+                self.set_status(format!("Conflict: agent {name} from another source"));
             }
         }
     }
@@ -312,7 +370,7 @@ impl App {
             Some(r) => r.clone(),
             None => return,
         };
-        if let ListRow::SourceHeader { group_index } = row {
+        if let ListRow::SourceHeader { group_index, .. } = row {
             let group = &self.groups[group_index];
             match &group.kind {
                 SourceKind::Migrated { .. } => {
@@ -330,11 +388,10 @@ impl App {
 
     fn execute_delete(&mut self, group_index: usize) {
         let group = self.groups[group_index].clone();
-        match skills::delete_source(&group, &self.skills_dir) {
+        match skills::delete_source(&group, &self.skills_dir, &self.agents_dir) {
             Ok(()) => {
-                // If it was a repo, remove from config
                 if let SourceKind::Repo { url: Some(ref url) } = group.kind {
-                    self.config.remove_skill_repo(url);
+                    self.config.remove_source_repo(url);
                     let _ = self.config.save();
                 }
                 self.set_status(format!("Deleted source: {}", group.name));
@@ -350,30 +407,42 @@ impl App {
             Some(r) => r.clone(),
             None => return,
         };
-        if let ListRow::Skill {
-            group_index,
-            skill_index,
-        } = row
-        {
-            let skill = &self.groups[group_index].skills[skill_index];
-            let skill_md = skill.source_path.join("SKILL.md");
-            if !skill_md.exists() {
-                self.set_status("SKILL.md not found");
-                return;
+        let file_path = match row {
+            ListRow::SkillItem {
+                group_index,
+                skill_index,
+            } => {
+                let skill = &self.groups[group_index].skills[skill_index];
+                let skill_md = skill.source_path.join("SKILL.md");
+                if !skill_md.exists() {
+                    self.set_status("SKILL.md not found");
+                    return;
+                }
+                skill_md
             }
+            ListRow::AgentItem {
+                group_index,
+                agent_index,
+            } => {
+                let agent = &self.groups[group_index].agents[agent_index];
+                if !agent.source_path.exists() {
+                    self.set_status("Agent file not found");
+                    return;
+                }
+                agent.source_path.clone()
+            }
+            _ => return,
+        };
 
-            // Leave TUI
-            let _ = disable_raw_mode();
-            let _ = stdout().execute(LeaveAlternateScreen);
+        let _ = disable_raw_mode();
+        let _ = stdout().execute(LeaveAlternateScreen);
 
-            let ed = editor::get_editor(&self.config);
-            let _ = editor::open_files(&ed, &[skill_md.as_path()]);
+        let ed = editor::get_editor(&self.config);
+        let _ = editor::open_files(&ed, &[file_path.as_path()]);
 
-            // Re-enter TUI
-            let _ = stdout().execute(EnterAlternateScreen);
-            let _ = enable_raw_mode();
-            let _ = terminal.clear();
-        }
+        let _ = stdout().execute(EnterAlternateScreen);
+        let _ = enable_raw_mode();
+        let _ = terminal.clear();
     }
 
     fn show_info(&mut self) {
@@ -382,14 +451,21 @@ impl App {
             None => return,
         };
         match row {
-            ListRow::Skill {
+            ListRow::SkillItem {
                 group_index,
                 skill_index,
             } => {
                 let skill = &self.groups[group_index].skills[skill_index];
                 self.set_status(format!("Path: {}", contract_tilde(&skill.source_path)));
             }
-            ListRow::SourceHeader { group_index } => {
+            ListRow::AgentItem {
+                group_index,
+                agent_index,
+            } => {
+                let agent = &self.groups[group_index].agents[agent_index];
+                self.set_status(format!("Path: {}", contract_tilde(&agent.source_path)));
+            }
+            ListRow::SourceHeader { group_index, .. } => {
                 let group = &self.groups[group_index];
                 let info = match &group.kind {
                     SourceKind::Repo { url: Some(url) } => format!("Repo: {url}"),
@@ -403,7 +479,100 @@ impl App {
                 };
                 self.set_status(info);
             }
+            _ => {}
         }
+    }
+
+    fn expand_all(&mut self) {
+        self.expanded_categories.insert(Category::Skills);
+        self.expanded_categories.insert(Category::Agents);
+        for i in 0..self.groups.len() {
+            if self.groups[i].skills.iter().any(|_| true) {
+                self.expanded_skills_sources.insert(i);
+            }
+            if self.groups[i].agents.iter().any(|_| true) {
+                self.expanded_agents_sources.insert(i);
+            }
+        }
+        self.rebuild_rows();
+        self.clamp_cursor();
+    }
+
+    fn collapse_all(&mut self) {
+        self.expanded_categories.clear();
+        self.expanded_skills_sources.clear();
+        self.expanded_agents_sources.clear();
+        self.rebuild_rows();
+        self.clamp_cursor();
+    }
+
+    fn do_update(&mut self) {
+        self.set_status("Updating repos...");
+        let _ = skills::update_all(&self.skills_dir, &self.agents_dir, &self.source_dir);
+        self.refresh();
+        self.set_status("Update complete");
+    }
+
+    fn do_add(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) {
+        let _ = disable_raw_mode();
+        let _ = stdout().execute(LeaveAlternateScreen);
+
+        use dialoguer::Input;
+        let source: Result<String, _> = Input::new()
+            .with_prompt("URL or local path")
+            .interact_text();
+
+        let _ = stdout().execute(EnterAlternateScreen);
+        let _ = enable_raw_mode();
+        let _ = terminal.clear();
+
+        let source = match source {
+            Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
+            _ => {
+                self.set_status("Add cancelled");
+                return;
+            }
+        };
+
+        if skills::is_url(&source) {
+            match skills::clone_or_pull(&source, &self.source_dir) {
+                Ok((repo_path, found_skills)) => {
+                    let mut count = 0;
+                    for (name, skill_path) in &found_skills {
+                        if skills::install_skill(name, skill_path, &self.skills_dir).is_ok() {
+                            count += 1;
+                        }
+                    }
+                    let found_agents = skills::scan_agents(&repo_path);
+                    let mut agent_count = 0;
+                    for (name, agent_path) in &found_agents {
+                        if skills::install_agent(name, agent_path, &self.agents_dir).is_ok() {
+                            agent_count += 1;
+                        }
+                    }
+                    let _ = self.config.add_source_repo(&source);
+                    self.set_status(format!(
+                        "Added: {count} skill(s), {agent_count} agent(s)"
+                    ));
+                }
+                Err(e) => self.set_status(format!("Error: {e}")),
+            }
+        } else {
+            let source_path = expand_tilde(&source);
+            match skills::add_local_copy(&source_path, &self.source_dir) {
+                Ok((_dest, found_skills)) => {
+                    let mut count = 0;
+                    for (name, skill_path) in &found_skills {
+                        if skills::install_skill(name, skill_path, &self.skills_dir).is_ok() {
+                            count += 1;
+                        }
+                    }
+                    self.set_status(format!("Added: {count} skill(s)"));
+                }
+                Err(e) => self.set_status(format!("Error: {e}")),
+            }
+        }
+        self.refresh();
     }
 
     fn handle_key(
@@ -413,7 +582,7 @@ impl App {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         area_height: u16,
     ) {
-        // Confirmation mode intercepts all keys
+        // Confirmation mode
         if let Some(state) = self.confirm_state.clone() {
             match state {
                 ConfirmState::Normal { group_index } => match code {
@@ -474,10 +643,22 @@ impl App {
                     self.apply_search_filter();
                     self.cursor = 0;
                 }
-                KeyCode::Char(c) => {
+                KeyCode::Char(' ') => {
+                    // Toggle current item even in search mode
+                    self.toggle_item();
+                }
+                KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
                     self.search_query.push(c);
                     self.apply_search_filter();
                     self.cursor = 0;
+                }
+                KeyCode::Up | KeyCode::Char('k') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.move_cursor(-1);
+                }
+                KeyCode::Down | KeyCode::Char('j')
+                    if modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    self.move_cursor(1);
                 }
                 _ => {}
             }
@@ -507,7 +688,7 @@ impl App {
                     self.cursor = vis.len() - 1;
                 }
             }
-            KeyCode::Char(' ') => self.toggle_skill(),
+            KeyCode::Char(' ') | KeyCode::Enter => self.toggle_item(),
             KeyCode::Char('e') => self.open_editor(terminal),
             KeyCode::Delete | KeyCode::Char('d') => self.start_delete(),
             KeyCode::Char('i') => self.show_info(),
@@ -515,10 +696,22 @@ impl App {
                 self.refresh();
                 self.set_status("Refreshed");
             }
+            KeyCode::Char('u') => self.do_update(),
+            KeyCode::Char('a') => self.do_add(terminal),
+            KeyCode::Char('0') => {
+                self.collapse_all();
+                self.set_status("Collapsed all");
+            }
+            KeyCode::Char('9') => {
+                self.expand_all();
+                self.set_status("Expanded all");
+            }
             KeyCode::Char('/') => {
                 self.search_mode = true;
                 self.search_query.clear();
                 self.filtered_rows = None;
+                // Expand all for search visibility
+                self.expand_all();
             }
             KeyCode::Esc => {
                 if self.filtered_rows.is_some() {
@@ -534,21 +727,84 @@ impl App {
 }
 
 // ---------------------------------------------------------------------------
+// Row building
+// ---------------------------------------------------------------------------
+
+fn build_rows(
+    groups: &[SourceGroup],
+    expanded_categories: &HashSet<Category>,
+    expanded_skills_sources: &HashSet<usize>,
+    expanded_agents_sources: &HashSet<usize>,
+) -> Vec<ListRow> {
+    let mut rows = Vec::new();
+
+    // Skills section
+    let has_skills = groups.iter().any(|g| !g.skills.is_empty());
+    if has_skills {
+        rows.push(ListRow::CategoryHeader {
+            category: Category::Skills,
+        });
+        if expanded_categories.contains(&Category::Skills) {
+            for (gi, group) in groups.iter().enumerate() {
+                if group.skills.is_empty() {
+                    continue;
+                }
+                rows.push(ListRow::SourceHeader {
+                    category: Category::Skills,
+                    group_index: gi,
+                });
+                if expanded_skills_sources.contains(&gi) {
+                    for si in 0..group.skills.len() {
+                        rows.push(ListRow::SkillItem {
+                            group_index: gi,
+                            skill_index: si,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // Agents section
+    let has_agents = groups.iter().any(|g| !g.agents.is_empty());
+    if has_agents {
+        rows.push(ListRow::CategoryHeader {
+            category: Category::Agents,
+        });
+        if expanded_categories.contains(&Category::Agents) {
+            for (gi, group) in groups.iter().enumerate() {
+                if group.agents.is_empty() {
+                    continue;
+                }
+                rows.push(ListRow::SourceHeader {
+                    category: Category::Agents,
+                    group_index: gi,
+                });
+                if expanded_agents_sources.contains(&gi) {
+                    for ai in 0..group.agents.len() {
+                        rows.push(ListRow::AgentItem {
+                            group_index: gi,
+                            agent_index: ai,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    rows
+}
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn build_rows(groups: &[SourceGroup]) -> Vec<ListRow> {
-    let mut rows = Vec::new();
-    for (gi, group) in groups.iter().enumerate() {
-        rows.push(ListRow::SourceHeader { group_index: gi });
-        for si in 0..group.skills.len() {
-            rows.push(ListRow::Skill {
-                group_index: gi,
-                skill_index: si,
-            });
-        }
+fn kind_icon(kind: &SourceKind) -> &'static str {
+    match kind {
+        SourceKind::Repo { .. } => "📦",
+        SourceKind::Local => "📁",
+        SourceKind::Migrated { .. } => "🔀",
     }
-    rows
 }
 
 fn kind_label(kind: &SourceKind) -> &'static str {
@@ -556,14 +812,6 @@ fn kind_label(kind: &SourceKind) -> &'static str {
         SourceKind::Repo { .. } => "repo",
         SourceKind::Local => "local",
         SourceKind::Migrated { .. } => "migrated",
-    }
-}
-
-fn kind_icon(kind: &SourceKind) -> &'static str {
-    match kind {
-        SourceKind::Repo { .. } => "📦",
-        SourceKind::Local => "📁",
-        SourceKind::Migrated { .. } => "🔀",
     }
 }
 
@@ -591,6 +839,66 @@ fn status_label(status: &SkillInstallStatus) -> &'static str {
     }
 }
 
+fn count_label(items: &[impl std::any::Any], kind: &str) -> String {
+    let n = items.len();
+    if n == 1 {
+        format!("1 {kind}")
+    } else {
+        format!("{n} {kind}s")
+    }
+}
+
+fn render_item_line(
+    name: &str,
+    status: &SkillInstallStatus,
+    is_cursor: bool,
+    prefix_char: &str,
+) -> Line<'static> {
+    let icon = status_icon(status);
+    let color = status_color(status);
+    let label = status_label(status);
+
+    let prefix = if is_cursor {
+        format!("      {prefix_char} ")
+    } else {
+        format!("        ")
+    };
+
+    let mut spans = vec![
+        Span::styled(
+            prefix,
+            if is_cursor {
+                Style::default().fg(Color::Yellow).bg(Color::DarkGray)
+            } else {
+                Style::default()
+            },
+        ),
+        Span::styled(
+            format!("{icon} "),
+            if is_cursor {
+                Style::default().fg(color).bg(Color::DarkGray)
+            } else {
+                Style::default().fg(color)
+            },
+        ),
+    ];
+
+    let name_style = if is_cursor {
+        Style::default().fg(Color::White).bg(Color::DarkGray)
+    } else {
+        Style::default().fg(Color::White)
+    };
+    let label_style = if is_cursor {
+        Style::default().fg(color).bg(Color::DarkGray)
+    } else {
+        Style::default().fg(color)
+    };
+    spans.push(Span::styled(format!("{:<30}", name), name_style));
+    spans.push(Span::styled(label.to_string(), label_style));
+
+    Line::from(spans)
+}
+
 // ---------------------------------------------------------------------------
 // Rendering
 // ---------------------------------------------------------------------------
@@ -598,7 +906,6 @@ fn status_label(status: &SkillInstallStatus) -> &'static str {
 fn render(app: &App, frame: &mut Frame) {
     let area = frame.area();
 
-    // Split: main list area + footer (2 lines)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(3)])
@@ -610,7 +917,7 @@ fn render(app: &App, frame: &mut Frame) {
 
 fn render_list(app: &App, frame: &mut Frame, area: Rect) {
     let block = Block::default()
-        .title(" AGM Skills Manager ")
+        .title(" AGM Source Manager ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
 
@@ -620,9 +927,9 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
     let visible = app.visible_rows();
     if visible.is_empty() {
         let msg = if app.search_query.is_empty() {
-            "No skills found."
+            "No sources found. Press 'a' to add one."
         } else {
-            "No matching skills."
+            "No matching items."
         };
         let p = Paragraph::new(msg).style(Style::default().fg(Color::DarkGray));
         frame.render_widget(p, inner);
@@ -639,18 +946,42 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
         let row = &app.rows[row_idx];
 
         let line = match row {
-            ListRow::SourceHeader { group_index } => {
-                let group = &app.groups[*group_index];
-                let count = group.skills.len();
-                let plural = if count == 1 { "skill" } else { "skills" };
-                let icon = kind_icon(&group.kind);
-                let label = kind_label(&group.kind);
-                let text = format!("{icon} {} ({label})  [{count} {plural}]", group.name);
+            ListRow::CategoryHeader { category } => {
+                let (label, expanded) = match category {
+                    Category::Skills => {
+                        let total: usize = app.groups.iter().map(|g| g.skills.len()).sum();
+                        let installed: usize = app
+                            .groups
+                            .iter()
+                            .flat_map(|g| &g.skills)
+                            .filter(|s| s.install_status == SkillInstallStatus::Installed)
+                            .count();
+                        (
+                            format!("🔧 Skills [{installed}/{total}]"),
+                            app.expanded_categories.contains(&Category::Skills),
+                        )
+                    }
+                    Category::Agents => {
+                        let total: usize = app.groups.iter().map(|g| g.agents.len()).sum();
+                        let installed: usize = app
+                            .groups
+                            .iter()
+                            .flat_map(|g| &g.agents)
+                            .filter(|a| a.install_status == SkillInstallStatus::Installed)
+                            .count();
+                        (
+                            format!("🤖 Agents [{installed}/{total}]"),
+                            app.expanded_categories.contains(&Category::Agents),
+                        )
+                    }
+                };
+                let arrow = if expanded { "▼" } else { "▶" };
+                let text = format!("{arrow} {label}");
 
                 let style = if is_cursor {
                     Style::default()
                         .fg(Color::White)
-                        .bg(Color::DarkGray)
+                        .bg(Color::Blue)
                         .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
@@ -659,51 +990,66 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                 };
                 Line::from(Span::styled(text, style))
             }
-            ListRow::Skill {
+            ListRow::SourceHeader {
+                category,
+                group_index,
+            } => {
+                let group = &app.groups[*group_index];
+                let icon = kind_icon(&group.kind);
+                let label = kind_label(&group.kind);
+                let (item_count, expanded) = match category {
+                    Category::Skills => {
+                        let c = count_label(
+                            &group
+                                .skills
+                                .iter()
+                                .map(|_| 0u8)
+                                .collect::<Vec<_>>(),
+                            "skill",
+                        );
+                        (c, app.expanded_skills_sources.contains(group_index))
+                    }
+                    Category::Agents => {
+                        let c = count_label(
+                            &group
+                                .agents
+                                .iter()
+                                .map(|_| 0u8)
+                                .collect::<Vec<_>>(),
+                            "agent",
+                        );
+                        (c, app.expanded_agents_sources.contains(group_index))
+                    }
+                };
+                let arrow = if expanded { "▼" } else { "▶" };
+                let text =
+                    format!("  {arrow} {icon} {} ({label})  [{item_count}]", group.name);
+
+                let style = if is_cursor {
+                    Style::default()
+                        .fg(Color::White)
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                };
+                Line::from(Span::styled(text, style))
+            }
+            ListRow::SkillItem {
                 group_index,
                 skill_index,
             } => {
                 let skill = &app.groups[*group_index].skills[*skill_index];
-                let icon = status_icon(&skill.install_status);
-                let color = status_color(&skill.install_status);
-                let label = status_label(&skill.install_status);
-
-                let prefix = if is_cursor { " > " } else { "   " };
-
-                let mut spans = vec![
-                    Span::styled(
-                        prefix,
-                        if is_cursor {
-                            Style::default().fg(Color::Yellow).bg(Color::DarkGray)
-                        } else {
-                            Style::default()
-                        },
-                    ),
-                    Span::styled(
-                        format!("{icon} "),
-                        if is_cursor {
-                            Style::default().fg(color).bg(Color::DarkGray)
-                        } else {
-                            Style::default().fg(color)
-                        },
-                    ),
-                ];
-
-                // Skill name with padding to right-align status
-                let name_style = if is_cursor {
-                    Style::default().fg(Color::White).bg(Color::DarkGray)
-                } else {
-                    Style::default().fg(Color::White)
-                };
-                let label_style = if is_cursor {
-                    Style::default().fg(color).bg(Color::DarkGray)
-                } else {
-                    Style::default().fg(color)
-                };
-                spans.push(Span::styled(format!("{:<30}", skill.name), name_style));
-                spans.push(Span::styled(label.to_string(), label_style));
-
-                Line::from(spans)
+                render_item_line(&skill.name, &skill.install_status, is_cursor, ">")
+            }
+            ListRow::AgentItem {
+                group_index,
+                agent_index,
+            } => {
+                let agent = &app.groups[*group_index].agents[*agent_index];
+                render_item_line(&agent.name, &agent.install_status, is_cursor, ">")
             }
         };
         lines.push(line);
@@ -720,23 +1066,22 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Line 1: keybindings or confirmation prompt
     if let Some(ref state) = app.confirm_state {
         let prompt = match state {
             ConfirmState::Normal { group_index } => {
                 let g = &app.groups[*group_index];
                 format!(
-                    "Delete \"{}\" and {} skill(s)? [y/N]",
+                    "Delete \"{}\" ({} skill(s), {} agent(s))? [y/N]",
                     g.name,
-                    g.skills.len()
+                    g.skills.len(),
+                    g.agents.len()
                 )
             }
             ConfirmState::Migrated { group_index, typed } => {
                 let g = &app.groups[*group_index];
                 format!(
-                    "⚠ PERMANENT: Delete \"{}\" ({} skills)? Type 'delete': {typed}",
+                    "⚠ PERMANENT: Delete \"{}\"? Type 'delete': {typed}",
                     g.name,
-                    g.skills.len()
                 )
             }
         };
@@ -753,18 +1098,19 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
         )));
         frame.render_widget(p, inner);
     } else {
-        // Compose two lines: hints + status
         let hints = Line::from(vec![
             Span::styled("␣", Style::default().fg(Color::Yellow)),
             Span::raw(" toggle  "),
-            Span::styled("e", Style::default().fg(Color::Yellow)),
-            Span::raw(" edit  "),
-            Span::styled("Del", Style::default().fg(Color::Yellow)),
-            Span::raw(" remove source  "),
-            Span::styled("i", Style::default().fg(Color::Yellow)),
-            Span::raw(" info  "),
-            Span::styled("r", Style::default().fg(Color::Yellow)),
-            Span::raw(" refresh  "),
+            Span::styled("0", Style::default().fg(Color::Yellow)),
+            Span::raw("/"),
+            Span::styled("9", Style::default().fg(Color::Yellow)),
+            Span::raw(" fold/unfold  "),
+            Span::styled("a", Style::default().fg(Color::Yellow)),
+            Span::raw(" add  "),
+            Span::styled("u", Style::default().fg(Color::Yellow)),
+            Span::raw(" update  "),
+            Span::styled("d", Style::default().fg(Color::Yellow)),
+            Span::raw(" del  "),
             Span::styled("/", Style::default().fg(Color::Yellow)),
             Span::raw(" search  "),
             Span::styled("q", Style::default().fg(Color::Yellow)),
@@ -777,7 +1123,6 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             Line::default()
         };
 
-        // If inner has room for 1 line, show hints. If 2+ show both.
         if inner.height >= 2 {
             let sub = Layout::default()
                 .direction(Direction::Vertical)
@@ -785,13 +1130,10 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
                 .split(inner);
             frame.render_widget(Paragraph::new(hints), sub[0]);
             frame.render_widget(Paragraph::new(status_line), sub[1]);
+        } else if app.status_message.is_some() {
+            frame.render_widget(Paragraph::new(status_line), inner);
         } else {
-            // Prefer status if active, else hints
-            if app.status_message.is_some() {
-                frame.render_widget(Paragraph::new(status_line), inner);
-            } else {
-                frame.render_widget(Paragraph::new(hints), inner);
-            }
+            frame.render_widget(Paragraph::new(hints), inner);
         }
     }
 }
@@ -800,52 +1142,30 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
 // Entry point
 // ---------------------------------------------------------------------------
 
-/// Interactive TUI for managing skills.
-pub fn run(config: &mut Config, source_filter: Option<&str>) -> Result<()> {
+/// Interactive TUI for managing skills and agents.
+pub fn run(config: &mut Config) -> Result<()> {
     let skills_dir = expand_tilde(&config.central.skills_source);
+    let agents_dir = expand_tilde(&config.central.agents_source);
     let source_dir = expand_tilde(&config.central.source_dir);
 
-    // Prune broken symlinks first
+    // Auto-update on launch
+    println!("Updating source repos...");
+    let _ = skills::update_all(&skills_dir, &agents_dir, &source_dir);
+
+    // Prune broken symlinks
     let _ = skills::prune_broken_skills(&skills_dir);
+    let _ = skills::prune_broken_agents(&agents_dir);
 
     // Load groups
-    let mut groups =
-        skills::scan_all_sources(&source_dir, &skills_dir, &config.central.skill_repos);
+    let groups = skills::scan_all_sources(
+        &source_dir,
+        &skills_dir,
+        &agents_dir,
+        &config.central.source_repos,
+    );
 
     if groups.is_empty() {
-        println!("No skill sources found. Use `agm skills add` to add skill sources.");
-        return Ok(());
-    }
-
-    // Source selection
-    let chosen_filter: Option<String> = match source_filter {
-        Some(f) => Some(f.to_string()),
-        None if groups.len() > 1 => {
-            let mut items: Vec<String> = vec!["all".to_string()];
-            items.extend(groups.iter().map(|g| g.name.clone()));
-            let selection = dialoguer::Select::new()
-                .with_prompt("Select source to manage")
-                .items(&items)
-                .default(0)
-                .interact_opt()?;
-            match selection {
-                Some(0) => Some("all".to_string()),
-                Some(i) => Some(items[i].clone()),
-                None => return Ok(()), // user cancelled
-            }
-        }
-        None => Some("all".to_string()), // single group → show all
-    };
-
-    // Filter groups if not "all"
-    if let Some(ref f) = chosen_filter {
-        if f != "all" {
-            groups.retain(|g| g.name == *f);
-        }
-    }
-
-    if groups.is_empty() {
-        println!("No matching source found.");
+        println!("No sources found. Use `agm source --add <url>` to add sources.");
         return Ok(());
     }
 
@@ -865,13 +1185,7 @@ pub fn run(config: &mut Config, source_filter: Option<&str>) -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
 
-    let mut app = App::new(
-        config.clone(),
-        groups,
-        chosen_filter,
-        skills_dir,
-        source_dir,
-    );
+    let mut app = App::new(config.clone(), groups, skills_dir, agents_dir, source_dir);
 
     // Event loop
     loop {
@@ -897,8 +1211,6 @@ pub fn run(config: &mut Config, source_filter: Option<&str>) -> Result<()> {
     // Restore terminal
     disable_raw_mode()?;
     stdout().execute(LeaveAlternateScreen)?;
-
-    // Restore default panic hook
     let _ = std::panic::take_hook();
 
     // Write back any config changes
