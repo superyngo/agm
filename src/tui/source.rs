@@ -86,6 +86,7 @@ struct App {
     log: super::log::LogBuffer,
     show_log: bool,
     log_popup: Option<super::popup::ScrollablePopup>,
+    background_task: Option<super::background::BackgroundTask>,
 }
 
 impl App {
@@ -119,6 +120,7 @@ impl App {
             log: super::log::LogBuffer::new(500),
             show_log: false,
             log_popup: None,
+            background_task: None,
         };
         app.rebuild_rows();
         app
@@ -546,10 +548,17 @@ impl App {
     }
 
     fn do_update(&mut self) {
-        self.set_status("Updating repos...");
-        let _ = skills::update_all(&self.skills_dir, &self.agents_dir, &self.source_dir);
-        self.refresh();
-        self.set_status("Update complete");
+        if self.background_task.as_ref().map_or(false, |t| t.is_running) {
+            self.set_status("Update already in progress");
+            return;
+        }
+        self.background_task = Some(super::background::spawn_update(
+            self.skills_dir.clone(),
+            self.agents_dir.clone(),
+            self.source_dir.clone(),
+        ));
+        self.log.push(super::log::LogLevel::Info, "Update started");
+        self.set_status("⟳ Updating...");
     }
 
     fn do_add(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) {
@@ -1181,7 +1190,13 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             Span::raw(" quit"),
         ]);
 
-        let status_line = if let Some((ref msg, _)) = app.status_message {
+        let status_line = if app.background_task.as_ref().map_or(false, |t| t.is_running) {
+            let progress_text = app.background_task.as_ref()
+                .and_then(|t| t.progress.as_ref())
+                .map(|p| format!("⟳ {}", p))
+                .unwrap_or_else(|| "⟳ Updating...".to_string());
+            Line::from(Span::styled(progress_text, Style::default().fg(Color::Yellow)))
+        } else if let Some((ref msg, _)) = app.status_message {
             Line::from(Span::styled(msg.clone(), Style::default().fg(Color::Green)))
         } else {
             Line::default()
@@ -1212,11 +1227,7 @@ pub fn run(config: &mut Config) -> Result<()> {
     let agents_dir = expand_tilde(&config.central.agents_source);
     let source_dir = expand_tilde(&config.central.source_dir);
 
-    // Auto-update on launch
-    println!("Updating source repos...");
-    let _ = skills::update_all(&skills_dir, &agents_dir, &source_dir);
-
-    // Prune broken symlinks
+    // Prune broken symlinks before loading
     let _ = skills::prune_broken_skills(&skills_dir);
     let _ = skills::prune_broken_agents(&agents_dir);
 
@@ -1250,6 +1261,9 @@ pub fn run(config: &mut Config) -> Result<()> {
     terminal.clear()?;
 
     let mut app = App::new(config.clone(), groups, skills_dir, agents_dir, source_dir);
+    
+    // Start background update immediately (non-blocking)
+    app.do_update();
 
     // Event loop
     loop {
@@ -1258,6 +1272,34 @@ pub fn run(config: &mut Config) -> Result<()> {
         terminal.draw(|frame| render(&mut app, frame))?;
 
         app.clear_expired_status();
+
+        // Poll background task for events
+        if let Some(ref mut task) = app.background_task {
+            for event in task.poll() {
+                use super::background::TaskEvent;
+                match event {
+                    TaskEvent::UpdateRepoStart { name } => {
+                        app.log.push(super::log::LogLevel::Info, format!("Updating {}...", name));
+                    }
+                    TaskEvent::UpdateRepoComplete { name, success, message } => {
+                        let level = if success { super::log::LogLevel::Success } else { super::log::LogLevel::Error };
+                        app.log.push(level, format!("{}: {}", name, message));
+                    }
+                    TaskEvent::UpdateAllDone { total, updated, new_skills, new_agents } => {
+                        app.log.push(super::log::LogLevel::Success, format!(
+                            "Update complete: {} repos, {} updated, {} new skills, {} new agents",
+                            total, updated, new_skills, new_agents
+                        ));
+                        app.refresh();
+                        app.set_status("Update complete");
+                    }
+                    TaskEvent::OperationResult { message, success } => {
+                        let level = if success { super::log::LogLevel::Success } else { super::log::LogLevel::Error };
+                        app.log.push(level, message);
+                    }
+                }
+            }
+        }
 
         if event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
