@@ -1187,6 +1187,9 @@ mod tests {
         assert!(source.exists());
     }
 
+    // On Windows, link_file uses hard links which cannot become "broken"
+    // when the source is deleted — the data persists through the hard link.
+    #[cfg(unix)]
     #[test]
     fn test_prune_broken_agents() {
         let tmp = TempDir::new().unwrap();

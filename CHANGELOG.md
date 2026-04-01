@@ -5,7 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
 ## [v0.6.0] - 2026-04-01
+
+### Fixed
+- Fix Windows CI test failure: gate `test_prune_broken_agents` with `#[cfg(unix)]`
+  since hard links (used on Windows) cannot become "broken" like symlinks
 
 ### Added
 - **Agents management**: Support for agent `.md` files alongside directory-based skills
