@@ -1462,7 +1462,8 @@ mod tests {
         let source_dir = dir.path().join("source");
         let skills_dir = dir.path().join("skills");
         let agents_dir = dir.path().join("agents");
-        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &[]);
+        let commands_dir = dir.path().join("commands");
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir, &[]);
         assert!(groups.is_empty());
     }
 
@@ -1472,6 +1473,7 @@ mod tests {
         let source_dir = dir.path().join("source");
         let skills_dir = dir.path().join("skills");
         let agents_dir = dir.path().join("agents");
+        let commands_dir = dir.path().join("commands");
         fs::create_dir_all(&skills_dir).unwrap();
         fs::create_dir_all(&agents_dir).unwrap();
 
@@ -1484,7 +1486,7 @@ mod tests {
         fs::write(skill_b.join("SKILL.md"), "# B").unwrap();
 
         let url = "https://github.com/user/my-repo.git".to_string();
-        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &[url.clone()]);
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir, &[url.clone()]);
 
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].name, "my-repo");
@@ -1505,6 +1507,7 @@ mod tests {
         let source_dir = dir.path().join("source");
         let skills_dir = dir.path().join("skills");
         let agents_dir = dir.path().join("agents");
+        let commands_dir = dir.path().join("commands");
         fs::create_dir_all(&skills_dir).unwrap();
         fs::create_dir_all(&agents_dir).unwrap();
 
@@ -1513,7 +1516,7 @@ mod tests {
         fs::create_dir_all(&skill).unwrap();
         fs::write(skill.join("SKILL.md"), "# Local").unwrap();
 
-        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &[]);
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir, &[]);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].name, "my-local");
         assert!(matches!(groups[0].kind, SourceKind::Local));
@@ -1525,6 +1528,7 @@ mod tests {
         let source_dir = dir.path().join("source");
         let skills_dir = dir.path().join("skills");
         let agents_dir = dir.path().join("agents");
+        let commands_dir = dir.path().join("commands");
         fs::create_dir_all(&skills_dir).unwrap();
         fs::create_dir_all(&agents_dir).unwrap();
 
@@ -1533,7 +1537,7 @@ mod tests {
         fs::create_dir_all(&skill).unwrap();
         fs::write(skill.join("SKILL.md"), "# Migrated").unwrap();
 
-        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &[]);
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir, &[]);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].name, "agm_tools/claude");
         match &groups[0].kind {
@@ -1548,6 +1552,7 @@ mod tests {
         let source_dir = dir.path().join("source");
         let skills_dir = dir.path().join("skills");
         let agents_dir = dir.path().join("agents");
+        let commands_dir = dir.path().join("commands");
         fs::create_dir_all(&skills_dir).unwrap();
         fs::create_dir_all(&agents_dir).unwrap();
 
@@ -1558,7 +1563,7 @@ mod tests {
 
         install_skill("cool-skill", &skill_path, &skills_dir).unwrap();
 
-        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &[]);
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir, &[]);
         assert_eq!(
             groups[0].skills[0].install_status,
             SkillInstallStatus::Installed
@@ -1571,6 +1576,7 @@ mod tests {
         let source_dir = dir.path().join("source");
         let skills_dir = dir.path().join("skills");
         let agents_dir = dir.path().join("agents");
+        let commands_dir = dir.path().join("commands");
         fs::create_dir_all(&skills_dir).unwrap();
         fs::create_dir_all(&agents_dir).unwrap();
 
@@ -1586,7 +1592,7 @@ mod tests {
 
         install_skill("common-skill", &skill_a, &skills_dir).unwrap();
 
-        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &[]);
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir, &[]);
         let group_a = groups.iter().find(|g| g.name == "repo-a").unwrap();
         let group_b = groups.iter().find(|g| g.name == "repo-b").unwrap();
         assert_eq!(
@@ -1804,6 +1810,7 @@ mod tests {
         let source_dir = dir.path().join("source");
         let skills_dir = dir.path().join("skills");
         let agents_dir = dir.path().join("agents");
+        let commands_dir = dir.path().join("commands");
         fs::create_dir_all(&skills_dir).unwrap();
         fs::create_dir_all(&agents_dir).unwrap();
 
@@ -1816,7 +1823,7 @@ mod tests {
         fs::create_dir_all(&agent_dir).unwrap();
         fs::write(agent_dir.join("helper.md"), "# Helper").unwrap();
 
-        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &[]);
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir, &[]);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].skills.len(), 1);
         assert_eq!(groups[0].agents.len(), 1);
@@ -1828,13 +1835,14 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let skills_dir = tmp.path().join("skills");
         let agents_dir = tmp.path().join("agents");
+        let commands_dir = tmp.path().join("commands");
         let source_dir = tmp.path().join("source");
         fs::create_dir_all(&skills_dir).unwrap();
         fs::create_dir_all(&agents_dir).unwrap();
         fs::create_dir_all(&source_dir).unwrap();
 
         let mut events = Vec::new();
-        update_all_with_progress(&skills_dir, &agents_dir, &source_dir, |e| {
+        update_all_with_progress(&skills_dir, &agents_dir, &commands_dir, &source_dir, |e| {
             events.push(e);
         });
 
@@ -1845,11 +1853,13 @@ mod tests {
                 updated,
                 new_skills,
                 new_agents,
+                new_commands,
             } => {
                 assert_eq!(*total, 0);
                 assert_eq!(*updated, 0);
                 assert_eq!(*new_skills, 0);
                 assert_eq!(*new_agents, 0);
+                assert_eq!(*new_commands, 0);
             }
             other => panic!("Expected AllDone, got {:?}", other),
         }
@@ -1860,13 +1870,14 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let skills_dir = tmp.path().join("skills");
         let agents_dir = tmp.path().join("agents");
+        let commands_dir = tmp.path().join("commands");
         let source_dir = tmp.path().join("nonexistent");
         fs::create_dir_all(&skills_dir).unwrap();
         fs::create_dir_all(&agents_dir).unwrap();
         // source_dir intentionally not created
 
         let mut events = Vec::new();
-        update_all_with_progress(&skills_dir, &agents_dir, &source_dir, |e| {
+        update_all_with_progress(&skills_dir, &agents_dir, &commands_dir, &source_dir, |e| {
             events.push(e);
         });
 

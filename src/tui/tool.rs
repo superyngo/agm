@@ -2271,7 +2271,7 @@ mod tests {
         expanded.insert("central".to_string());
         let rows = build_rows(&config, &expanded);
 
-        assert_eq!(rows.len(), 7);
+        assert_eq!(rows.len(), 8);
         assert!(matches!(rows[0], ToolRow::CentralHeader));
         assert!(matches!(
             rows[1],
