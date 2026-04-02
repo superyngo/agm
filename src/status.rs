@@ -10,6 +10,7 @@ pub fn status() -> anyhow::Result<()> {
     let config = Config::load()?;
     let central_skills = expand_tilde(&config.central.skills_source);
     let central_agents = expand_tilde(&config.central.agents_source);
+    let central_commands = expand_tilde(&config.central.commands_source);
     let central_prompt = expand_tilde(&config.central.prompt_source);
 
     // Indent for detail lines: aligns under the data columns
@@ -42,6 +43,13 @@ pub fn status() -> anyhow::Result<()> {
         let agents_ls = if !tool.agents_dir.is_empty() {
             let link = tool.resolved_config_dir().join(&tool.agents_dir);
             Some(check_link(&link, &central_agents, true))
+        } else {
+            None
+        };
+
+        let commands_ls = if !tool.commands_dir.is_empty() {
+            let link = tool.resolved_config_dir().join(&tool.commands_dir);
+            Some(check_link(&link, &central_commands, true))
         } else {
             None
         };
@@ -127,6 +135,31 @@ pub fn status() -> anyhow::Result<()> {
                 ),
             }
         }
+
+        // Detail lines: commands
+        if let Some(ls) = commands_ls {
+            let commands_link = tool.resolved_config_dir().join(&tool.commands_dir);
+            print!("{}{:<8}", INDENT, "commands");
+            match ls {
+                LinkStatus::Linked => println!(
+                    "{} → {}",
+                    "✓ linked".green(),
+                    contract_tilde(&commands_link).dimmed()
+                ),
+                LinkStatus::Missing => println!(
+                    "{} → {}",
+                    "✗ missing".yellow(),
+                    contract_tilde(&central_commands).dimmed()
+                ),
+                LinkStatus::Broken => println!("{}", "✗ broken".red()),
+                LinkStatus::Wrong(t) => println!("{} → {}", "✗ wrong".red(), t.dimmed()),
+                LinkStatus::Blocked => println!(
+                    "{} → {}",
+                    "✗ not linked".yellow(),
+                    contract_tilde(&commands_link).dimmed()
+                ),
+            }
+        }
     }
 
     println!("{}", "═".repeat(62));
@@ -136,6 +169,7 @@ pub fn status() -> anyhow::Result<()> {
         &expand_tilde(&config.central.source_dir),
         &central_skills,
         &central_agents,
+        &central_commands,
         &config.central.source_repos,
     );
     let installed_skills: usize = groups
@@ -147,6 +181,11 @@ pub fn status() -> anyhow::Result<()> {
         .iter()
         .flat_map(|g| &g.agents)
         .filter(|a| a.install_status == skills::SkillInstallStatus::Installed)
+        .count();
+    let installed_commands: usize = groups
+        .iter()
+        .flat_map(|g| &g.commands)
+        .filter(|c| c.install_status == skills::SkillInstallStatus::Installed)
         .count();
 
     println!("Central prompt : {}", contract_tilde(&central_prompt));
@@ -160,6 +199,11 @@ pub fn status() -> anyhow::Result<()> {
         "Central agents : {} ({} installed)",
         contract_tilde(&central_agents),
         installed_agents,
+    );
+    println!(
+        "Central commands: {} ({} installed)",
+        contract_tilde(&central_commands),
+        installed_commands,
     );
     let source_dir = expand_tilde(&config.central.source_dir);
     println!("Central source : {}", contract_tilde(&source_dir));

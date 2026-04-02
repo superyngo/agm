@@ -87,6 +87,7 @@ struct App {
     should_quit: bool,
     skills_dir: PathBuf,
     agents_dir: PathBuf,
+    commands_dir: PathBuf,
     source_dir: PathBuf,
     expanded_categories: HashSet<Category>,
     expanded_skills_sources: HashSet<usize>,
@@ -106,6 +107,7 @@ impl App {
         groups: Vec<SourceGroup>,
         skills_dir: PathBuf,
         agents_dir: PathBuf,
+        commands_dir: PathBuf,
         source_dir: PathBuf,
     ) -> Self {
         let rows = Vec::new();
@@ -122,6 +124,7 @@ impl App {
             should_quit: false,
             skills_dir,
             agents_dir,
+            commands_dir,
             source_dir,
             expanded_categories: HashSet::new(),
             expanded_skills_sources: HashSet::new(),
@@ -158,10 +161,12 @@ impl App {
     fn refresh(&mut self) {
         let _ = skills::prune_broken_skills(&self.skills_dir);
         let _ = skills::prune_broken_agents(&self.agents_dir);
+        let _ = skills::prune_broken_commands(&self.commands_dir);
         self.groups = skills::scan_all_sources(
             &self.source_dir,
             &self.skills_dir,
             &self.agents_dir,
+            &self.commands_dir,
             &self.config.central.source_repos,
         );
         self.rebuild_rows();
@@ -454,7 +459,7 @@ impl App {
 
     fn execute_delete(&mut self, group_index: usize) {
         let group = self.groups[group_index].clone();
-        match skills::delete_source(&group, &self.skills_dir, &self.agents_dir) {
+        match skills::delete_source(&group, &self.skills_dir, &self.agents_dir, &self.commands_dir) {
             Ok(()) => {
                 if let SourceKind::Repo { url: Some(ref url) } = group.kind {
                     self.config.remove_source_repo(url);
@@ -846,6 +851,7 @@ impl App {
         self.background_task = Some(super::background::spawn_update(
             self.skills_dir.clone(),
             self.agents_dir.clone(),
+            self.commands_dir.clone(),
             self.source_dir.clone(),
         ));
         self.log.push(super::log::LogLevel::Info, "Update started");
@@ -1740,17 +1746,20 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
 pub fn run(config: &mut Config) -> Result<()> {
     let skills_dir = expand_tilde(&config.central.skills_source);
     let agents_dir = expand_tilde(&config.central.agents_source);
+    let commands_dir = expand_tilde(&config.central.commands_source);
     let source_dir = expand_tilde(&config.central.source_dir);
 
     // Prune broken symlinks before loading
     let _ = skills::prune_broken_skills(&skills_dir);
     let _ = skills::prune_broken_agents(&agents_dir);
+    let _ = skills::prune_broken_commands(&commands_dir);
 
     // Load groups
     let groups = skills::scan_all_sources(
         &source_dir,
         &skills_dir,
         &agents_dir,
+        &commands_dir,
         &config.central.source_repos,
     );
 
@@ -1775,7 +1784,7 @@ pub fn run(config: &mut Config) -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
 
-    let mut app = App::new(config.clone(), groups, skills_dir, agents_dir, source_dir);
+    let mut app = App::new(config.clone(), groups, skills_dir, agents_dir, commands_dir, source_dir);
 
     // Start background update immediately (non-blocking)
     app.do_update();
@@ -1814,12 +1823,13 @@ pub fn run(config: &mut Config) -> Result<()> {
                         updated,
                         new_skills,
                         new_agents,
+                        new_commands,
                     } => {
                         app.log.push(
                             super::log::LogLevel::Success,
                             format!(
-                            "Update complete: {} repos, {} updated, {} new skills, {} new agents",
-                            total, updated, new_skills, new_agents
+                            "Update complete: {} repos, {} updated, {} new skills, {} new agents, {} new commands",
+                            total, updated, new_skills, new_agents, new_commands
                         ),
                         );
                         app.refresh();

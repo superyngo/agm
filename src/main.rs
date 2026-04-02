@@ -143,9 +143,7 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
                 Ok((_repo_path, found_skills)) => {
                     let mut count = 0;
                     for (name, skill_path) in &found_skills {
-                        if let Ok(()) =
-                            skills::install_skill(name, skill_path, &central_skills)
-                        {
+                        if let Ok(()) = skills::install_skill(name, skill_path, &central_skills) {
                             count += 1;
                         }
                     }
@@ -153,9 +151,7 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
                     let found_agents = skills::scan_agents(&_repo_path);
                     let mut agent_count = 0;
                     for (name, agent_path) in &found_agents {
-                        if let Ok(()) =
-                            skills::install_agent(name, agent_path, &central_agents)
-                        {
+                        if let Ok(()) = skills::install_agent(name, agent_path, &central_agents) {
                             agent_count += 1;
                         }
                     }
@@ -193,8 +189,7 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
                     .parent()
                     .map(|p: &std::path::Path| p.join(&actual_target))
                     .unwrap_or_else(|| actual_target.clone());
-                let resolved_actual =
-                    resolved_actual.canonicalize().unwrap_or(resolved_actual);
+                let resolved_actual = resolved_actual.canonicalize().unwrap_or(resolved_actual);
 
                 if resolved_actual != expected_target {
                     if yes
@@ -215,10 +210,11 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
                 if !skills_content.is_empty() {
                     if yes
                         || prompt_yes_no(&format!(
-                        "Found {} existing skill(s) in {}. Migrate to AGM and create link?",
-                        skills_content.len(),
-                        paths::contract_tilde(&skills_link)
-                    )) {
+                            "Found {} existing skill(s) in {}. Migrate to AGM and create link?",
+                            skills_content.len(),
+                            paths::contract_tilde(&skills_link)
+                        ))
+                    {
                         let tool_skills_target = source_dir.join("agm_tools").join(key);
                         let added = skills::migrate_tool_dir(
                             &skills_link,
@@ -255,8 +251,7 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
                     .parent()
                     .map(|p: &std::path::Path| p.join(&actual_target))
                     .unwrap_or_else(|| actual_target.clone());
-                let resolved_actual =
-                    resolved_actual.canonicalize().unwrap_or(resolved_actual);
+                let resolved_actual = resolved_actual.canonicalize().unwrap_or(resolved_actual);
 
                 if resolved_actual != expected_target {
                     if yes
@@ -314,8 +309,7 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
                         .parent()
                         .map(|p: &std::path::Path| p.join(&actual_target))
                         .unwrap_or_else(|| actual_target.clone());
-                    let resolved_actual =
-                        resolved_actual.canonicalize().unwrap_or(resolved_actual);
+                    let resolved_actual = resolved_actual.canonicalize().unwrap_or(resolved_actual);
 
                     if yes
                         || prompt_yes_no(&format!(
@@ -386,8 +380,7 @@ fn unlink_all(config: &config::Config) -> anyhow::Result<()> {
             let skills_link = tool_config
                 .resolved_config_dir()
                 .join(&tool_config.skills_dir);
-            if linker::remove_link(&skills_link, "skills", true)? && central_skills.is_dir()
-            {
+            if linker::remove_link(&skills_link, "skills", true)? && central_skills.is_dir() {
                 skills::copy_dir_all(&central_skills, &skills_link)?;
                 println!("  {} skills copied back", " ok ".green());
             }
@@ -398,8 +391,7 @@ fn unlink_all(config: &config::Config) -> anyhow::Result<()> {
             let agents_link = tool_config
                 .resolved_config_dir()
                 .join(&tool_config.agents_dir);
-            if linker::remove_link(&agents_link, "agents", true)? && central_agents.is_dir()
-            {
+            if linker::remove_link(&agents_link, "agents", true)? && central_agents.is_dir() {
                 skills::copy_dir_all(&central_agents, &agents_link)?;
                 println!("  {} agents copied back", " ok ".green());
             }
@@ -410,9 +402,7 @@ fn unlink_all(config: &config::Config) -> anyhow::Result<()> {
             let prompt_link = tool_config
                 .resolved_config_dir()
                 .join(&tool_config.prompt_filename);
-            if linker::remove_link(&prompt_link, "prompt", false)?
-                && central_prompt.exists()
-            {
+            if linker::remove_link(&prompt_link, "prompt", false)? && central_prompt.exists() {
                 fs::copy(&central_prompt, &prompt_link)?;
                 println!("  {} prompt copied back", " ok ".green());
             }
@@ -466,13 +456,17 @@ fn main() -> anyhow::Result<()> {
 
     match command {
         Commands::Init => init::run(cli.config.clone()),
-        Commands::Tool { link, unlink, status } => {
+        Commands::Tool {
+            link,
+            unlink,
+            status,
+        } => {
             // Enforce mutual exclusivity
             let flag_count = [link, unlink, status].iter().filter(|&&x| x).count();
             if flag_count > 1 {
                 anyhow::bail!("Only one of --link, --unlink, --status can be specified");
             }
-            
+
             if link {
                 // Reuse existing link-all logic
                 let config = config::Config::load_from(cli.config.clone())?;
@@ -497,6 +491,7 @@ fn main() -> anyhow::Result<()> {
             let mut config = config::Config::load_from(cli.config.clone())?;
             let skills_dir = paths::expand_tilde(&config.central.skills_source);
             let agents_dir = paths::expand_tilde(&config.central.agents_source);
+            let commands_dir = paths::expand_tilde(&config.central.commands_source);
             let source_dir = paths::expand_tilde(&config.central.source_dir);
 
             if let Some(source) = add {
@@ -595,10 +590,19 @@ fn main() -> anyhow::Result<()> {
                         pruned_agents
                     );
                 }
+                let pruned_commands = skills::prune_broken_commands(&commands_dir)?;
+                if pruned_commands > 0 {
+                    println!(
+                        "  {} Removed {} broken command link(s)",
+                        "warn".yellow(),
+                        pruned_commands
+                    );
+                }
                 let groups = skills::scan_all_sources(
                     &source_dir,
                     &skills_dir,
                     &agents_dir,
+                    &commands_dir,
                     &config.central.source_repos,
                 );
                 if groups.is_empty() {
