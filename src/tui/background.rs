@@ -18,6 +18,7 @@ pub enum TaskEvent {
         updated: usize,
         new_skills: usize,
         new_agents: usize,
+        new_commands: usize,
     },
     /// Generic operation result (for tool TUI link/unlink etc.)
     #[allow(dead_code)]
@@ -102,6 +103,7 @@ where
 pub fn spawn_update(
     skills_dir: PathBuf,
     agents_dir: PathBuf,
+    commands_dir: PathBuf,
     source_dir: PathBuf,
 ) -> BackgroundTask {
     let (tx, rx) = mpsc::channel();
@@ -109,6 +111,7 @@ pub fn spawn_update(
         crate::skills::update_all_with_progress(
             &skills_dir,
             &agents_dir,
+            &commands_dir,
             &source_dir,
             |progress| {
                 let event = match progress {
@@ -129,11 +132,13 @@ pub fn spawn_update(
                         updated,
                         new_skills,
                         new_agents,
+                        new_commands,
                     } => TaskEvent::UpdateAllDone {
                         total,
                         updated,
                         new_skills,
                         new_agents,
+                        new_commands,
                     },
                 };
                 let _ = tx.send(event);
@@ -211,6 +216,7 @@ mod tests {
             updated: 3,
             new_skills: 2,
             new_agents: 1,
+            new_commands: 0,
         })
         .unwrap();
 
