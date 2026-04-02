@@ -1302,25 +1302,46 @@ impl App {
                         group_index,
                         skill_index,
                     }) => {
-                        self.toggle_skill(group_index, skill_index);
+                        if self.config.central.is_disabled("skills") {
+                            self.set_status("Skills feature is disabled");
+                        } else {
+                            self.toggle_skill(group_index, skill_index);
+                        }
                     }
                     Some(ListRow::AgentItem {
                         group_index,
                         agent_index,
                     }) => {
-                        self.toggle_agent(group_index, agent_index);
+                        if self.config.central.is_disabled("agents") {
+                            self.set_status("Agents feature is disabled");
+                        } else {
+                            self.toggle_agent(group_index, agent_index);
+                        }
                     }
                     Some(ListRow::CommandItem {
                         group_index,
                         command_index,
                     }) => {
-                        self.toggle_command(group_index, command_index);
+                        if self.config.central.is_disabled("commands") {
+                            self.set_status("Commands feature is disabled");
+                        } else {
+                            self.toggle_command(group_index, command_index);
+                        }
                     }
                     Some(ListRow::SourceHeader {
                         group_index,
                         category,
                     }) => {
-                        self.start_bulk_toggle(group_index, category);
+                        let feature = match category {
+                            Category::Skills => "skills",
+                            Category::Agents => "agents",
+                            Category::Commands => "commands",
+                        };
+                        if self.config.central.is_disabled(feature) {
+                            self.set_status(format!("{} feature is disabled", feature));
+                        } else {
+                            self.start_bulk_toggle(group_index, category);
+                        }
                     }
                     _ => {}
                 }
@@ -1716,13 +1737,27 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                         )
                     }
                 };
+                let disabled = match category {
+                    Category::Skills => app.config.central.is_disabled("skills"),
+                    Category::Agents => app.config.central.is_disabled("agents"),
+                    Category::Commands => app.config.central.is_disabled("commands"),
+                };
+
                 let arrow = if expanded { "▼" } else { "▶" };
-                let text = format!("{arrow} {label}");
+                let text = if disabled {
+                    format!("{arrow} {label} (disabled)")
+                } else {
+                    format!("{arrow} {label}")
+                };
 
                 let style = if is_cursor {
                     Style::default()
                         .fg(Color::White)
                         .bg(Color::Blue)
+                        .add_modifier(Modifier::BOLD)
+                } else if disabled {
+                    Style::default()
+                        .fg(Color::DarkGray)
                         .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
@@ -1781,6 +1816,7 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                 skill_index,
             } => {
                 let skill = &app.groups[*group_index].skills[*skill_index];
+                let disabled = app.config.central.is_disabled("skills");
                 let indices = if app.filtered_rows.is_some() && !app.search_query.is_empty() {
                     app.matcher
                         .fuzzy_indices(&skill.name, &app.search_query)
@@ -1788,19 +1824,25 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                 } else {
                     None
                 };
-                render_item_line(
+                let line = render_item_line(
                     &skill.name,
                     &skill.install_status,
                     is_cursor,
                     ">",
                     indices.as_deref(),
-                )
+                );
+                if disabled && !is_cursor {
+                    line.style(Style::default().fg(Color::DarkGray))
+                } else {
+                    line
+                }
             }
             ListRow::AgentItem {
                 group_index,
                 agent_index,
             } => {
                 let agent = &app.groups[*group_index].agents[*agent_index];
+                let disabled = app.config.central.is_disabled("agents");
                 let indices = if app.filtered_rows.is_some() && !app.search_query.is_empty() {
                     app.matcher
                         .fuzzy_indices(&agent.name, &app.search_query)
@@ -1808,19 +1850,25 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                 } else {
                     None
                 };
-                render_item_line(
+                let line = render_item_line(
                     &agent.name,
                     &agent.install_status,
                     is_cursor,
                     ">",
                     indices.as_deref(),
-                )
+                );
+                if disabled && !is_cursor {
+                    line.style(Style::default().fg(Color::DarkGray))
+                } else {
+                    line
+                }
             }
             ListRow::CommandItem {
                 group_index,
                 command_index,
             } => {
                 let command = &app.groups[*group_index].commands[*command_index];
+                let disabled = app.config.central.is_disabled("commands");
                 let indices = if app.filtered_rows.is_some() && !app.search_query.is_empty() {
                     app.matcher
                         .fuzzy_indices(&command.name, &app.search_query)
@@ -1828,13 +1876,18 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                 } else {
                     None
                 };
-                render_item_line(
+                let line = render_item_line(
                     &command.name,
                     &command.install_status,
                     is_cursor,
                     ">",
                     indices.as_deref(),
-                )
+                );
+                if disabled && !is_cursor {
+                    line.style(Style::default().fg(Color::DarkGray))
+                } else {
+                    line
+                }
             }
         };
         lines.push(line);
