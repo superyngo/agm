@@ -1153,6 +1153,7 @@ fn link_status_spans(status: &LinkStatus, link_path: &std::path::Path) -> Vec<Sp
         ],
         LinkStatus::Missing => vec![
             Span::styled("✗ not linked", Style::default().fg(Color::Yellow)),
+            Span::raw(format!(" → {}", contract_tilde(link_path))),
         ],
         LinkStatus::Broken => vec![
             Span::styled("✗ broken", Style::default().fg(Color::Red)),
