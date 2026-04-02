@@ -58,6 +58,7 @@ enum ListRow {
 enum ConfirmState {
     Normal { group_index: usize },
     Migrated { group_index: usize, typed: String },
+    BulkToggle { group_index: usize, category: Category, install: bool },
 }
 
 // ---------------------------------------------------------------------------
@@ -443,6 +444,67 @@ impl App {
             }
         }
         self.confirm_state = None;
+    }
+
+    fn start_bulk_toggle(&mut self, group_index: usize, category: Category) {
+        let group = &self.groups[group_index];
+        let all_installed = match category {
+            Category::Skills => group.skills.iter()
+                .filter(|s| s.install_status != SkillInstallStatus::Conflict)
+                .all(|s| s.install_status == SkillInstallStatus::Installed),
+            Category::Agents => group.agents.iter()
+                .filter(|a| a.install_status != SkillInstallStatus::Conflict)
+                .all(|a| a.install_status == SkillInstallStatus::Installed),
+        };
+        self.confirm_state = Some(ConfirmState::BulkToggle {
+            group_index,
+            category,
+            install: !all_installed,
+        });
+    }
+
+    fn execute_bulk_toggle(&mut self, group_index: usize, category: Category, install: bool) {
+        let mut count = 0usize;
+        match category {
+            Category::Skills => {
+                let len = self.groups[group_index].skills.len();
+                for si in 0..len {
+                    let status = &self.groups[group_index].skills[si].install_status;
+                    if *status == SkillInstallStatus::Conflict { continue; }
+                    let should_act = if install {
+                        *status == SkillInstallStatus::NotInstalled
+                    } else {
+                        *status == SkillInstallStatus::Installed
+                    };
+                    if should_act {
+                        self.toggle_skill(group_index, si);
+                        count += 1;
+                    }
+                }
+            }
+            Category::Agents => {
+                let len = self.groups[group_index].agents.len();
+                for ai in 0..len {
+                    let status = &self.groups[group_index].agents[ai].install_status;
+                    if *status == SkillInstallStatus::Conflict { continue; }
+                    let should_act = if install {
+                        *status == SkillInstallStatus::NotInstalled
+                    } else {
+                        *status == SkillInstallStatus::Installed
+                    };
+                    if should_act {
+                        self.toggle_agent(group_index, ai);
+                        count += 1;
+                    }
+                }
+            }
+        }
+        let action = if install { "Installed" } else { "Uninstalled" };
+        let kind = match category {
+            Category::Skills => "skill(s)",
+            Category::Agents => "agent(s)",
+        };
+        self.set_status(format!("{action} {count} {kind}"));
     }
 
     fn open_editor(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) {
@@ -874,6 +936,16 @@ impl App {
                         self.set_status("Delete cancelled");
                     }
                 },
+                ConfirmState::BulkToggle { group_index, category, install } => match code {
+                    KeyCode::Char('y') | KeyCode::Char('Y') => {
+                        self.execute_bulk_toggle(group_index, category, install);
+                        self.confirm_state = None;
+                    }
+                    _ => {
+                        self.confirm_state = None;
+                        self.set_status("Cancelled");
+                    }
+                },
             }
             return;
         }
@@ -895,10 +967,6 @@ impl App {
                     self.search_query.pop();
                     self.apply_search_filter();
                     self.cursor = 0;
-                }
-                KeyCode::Char(' ') => {
-                    // Toggle current item even in search mode
-                    self.toggle_item();
                 }
                 KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
                     self.search_query.push(c);
@@ -939,10 +1007,32 @@ impl App {
                     self.cursor = vis.len() - 1;
                 }
             }
-            KeyCode::Char(' ') | KeyCode::Enter => self.toggle_item(),
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                let row = self.current_row().cloned();
+                match row {
+                    Some(ListRow::SkillItem { .. }) | Some(ListRow::AgentItem { .. }) => {
+                        self.show_info();
+                    }
+                    _ => self.toggle_item(),
+                }
+            }
             KeyCode::Char('e') => self.open_editor(terminal),
             KeyCode::Delete | KeyCode::Char('d') => self.start_delete(),
-            KeyCode::Char('i') => self.show_info(),
+            KeyCode::Char('i') => {
+                let row = self.current_row().cloned();
+                match row {
+                    Some(ListRow::SkillItem { group_index, skill_index }) => {
+                        self.toggle_skill(group_index, skill_index);
+                    }
+                    Some(ListRow::AgentItem { group_index, agent_index }) => {
+                        self.toggle_agent(group_index, agent_index);
+                    }
+                    Some(ListRow::SourceHeader { group_index, category }) => {
+                        self.start_bulk_toggle(group_index, category);
+                    }
+                    _ => {}
+                }
+            }
             KeyCode::Char('r') => {
                 self.refresh();
                 self.log.push(super::log::LogLevel::Info, "Refreshed");
@@ -1114,6 +1204,7 @@ fn render_item_line(
     status: &SkillInstallStatus,
     is_cursor: bool,
     prefix_char: &str,
+    match_indices: Option<&[usize]>,
 ) -> Line<'static> {
     let icon = status_icon(status);
     let color = status_color(status);
@@ -1154,7 +1245,37 @@ fn render_item_line(
     } else {
         Style::default().fg(color)
     };
-    spans.push(Span::styled(format!("{:<30}", name), name_style));
+
+    if let Some(indices) = match_indices {
+        let index_set: std::collections::HashSet<usize> = indices.iter().cloned().collect();
+        let highlight_style = if is_cursor {
+            Style::default().fg(Color::Yellow).bg(Color::DarkGray).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+        } else {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+        };
+
+        let mut current = String::new();
+        let mut current_hl = false;
+        for (i, ch) in name.chars().enumerate() {
+            let is_hl = index_set.contains(&i);
+            if i > 0 && is_hl != current_hl {
+                spans.push(Span::styled(current.clone(), if current_hl { highlight_style } else { name_style }));
+                current.clear();
+            }
+            current_hl = is_hl;
+            current.push(ch);
+        }
+        if !current.is_empty() {
+            spans.push(Span::styled(current, if current_hl { highlight_style } else { name_style }));
+        }
+        let pad_len = 30usize.saturating_sub(name.len());
+        if pad_len > 0 {
+            spans.push(Span::styled(" ".repeat(pad_len), name_style));
+        }
+    } else {
+        spans.push(Span::styled(format!("{:<30}", name), name_style));
+    }
+
     spans.push(Span::styled(label.to_string(), label_style));
 
     Line::from(spans)
@@ -1302,14 +1423,26 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                 skill_index,
             } => {
                 let skill = &app.groups[*group_index].skills[*skill_index];
-                render_item_line(&skill.name, &skill.install_status, is_cursor, ">")
+                let indices = if app.filtered_rows.is_some() && !app.search_query.is_empty() {
+                    app.matcher.fuzzy_indices(&skill.name, &app.search_query)
+                        .map(|(_, idx)| idx)
+                } else {
+                    None
+                };
+                render_item_line(&skill.name, &skill.install_status, is_cursor, ">", indices.as_deref())
             }
             ListRow::AgentItem {
                 group_index,
                 agent_index,
             } => {
                 let agent = &app.groups[*group_index].agents[*agent_index];
-                render_item_line(&agent.name, &agent.install_status, is_cursor, ">")
+                let indices = if app.filtered_rows.is_some() && !app.search_query.is_empty() {
+                    app.matcher.fuzzy_indices(&agent.name, &app.search_query)
+                        .map(|(_, idx)| idx)
+                } else {
+                    None
+                };
+                render_item_line(&agent.name, &agent.install_status, is_cursor, ">", indices.as_deref())
             }
         };
         lines.push(line);
@@ -1317,6 +1450,61 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
 
     let paragraph = Paragraph::new(lines);
     frame.render_widget(paragraph, inner);
+}
+
+fn hint_key(k: &str) -> Span<'static> {
+    Span::styled(k.to_string(), Style::default().fg(Color::Yellow))
+}
+
+fn hint_text(t: &str) -> Span<'static> {
+    Span::raw(t.to_string())
+}
+
+fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
+    let mut spans = Vec::new();
+    match row {
+        Some(ListRow::CategoryHeader { .. }) => {
+            spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
+            spans.extend([hint_key("a"), hint_text(" add  ")]);
+            spans.extend([hint_key("u"), hint_text(" update  ")]);
+            spans.extend([hint_key("/"), hint_text(" search  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+        Some(ListRow::SourceHeader { .. }) => {
+            spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
+            spans.extend([hint_key("i"), hint_text(" install all  ")]);
+            spans.extend([hint_key("d"), hint_text(" del  ")]);
+            spans.extend([hint_key("u"), hint_text(" update  ")]);
+            spans.extend([hint_key("/"), hint_text(" search  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+        Some(ListRow::SkillItem { .. }) => {
+            spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
+            spans.extend([hint_key("i"), hint_text(" install  ")]);
+            spans.extend([hint_key("e"), hint_text(" edit  ")]);
+            spans.extend([hint_key("d"), hint_text(" del  ")]);
+            spans.extend([hint_key("/"), hint_text(" search  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+        Some(ListRow::AgentItem { .. }) => {
+            spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
+            spans.extend([hint_key("i"), hint_text(" install  ")]);
+            spans.extend([hint_key("e"), hint_text(" edit  ")]);
+            spans.extend([hint_key("/"), hint_text(" search  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+        None => {
+            spans.extend([hint_key("a"), hint_text(" add  ")]);
+            spans.extend([hint_key("/"), hint_text(" search  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+    }
+    Line::from(spans)
 }
 
 fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
@@ -1341,6 +1529,29 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
                 let g = &app.groups[*group_index];
                 format!("⚠ PERMANENT: Delete \"{}\"? Type 'delete': {typed}", g.name,)
             }
+            ConfirmState::BulkToggle { group_index, category, install } => {
+                let g = &app.groups[*group_index];
+                let action = if *install { "Install" } else { "Uninstall" };
+                let (kind, count) = match category {
+                    Category::Skills => {
+                        let c = g.skills.iter().filter(|s| {
+                            s.install_status != SkillInstallStatus::Conflict &&
+                            if *install { s.install_status == SkillInstallStatus::NotInstalled }
+                            else { s.install_status == SkillInstallStatus::Installed }
+                        }).count();
+                        ("skill(s)", c)
+                    }
+                    Category::Agents => {
+                        let c = g.agents.iter().filter(|a| {
+                            a.install_status != SkillInstallStatus::Conflict &&
+                            if *install { a.install_status == SkillInstallStatus::NotInstalled }
+                            else { a.install_status == SkillInstallStatus::Installed }
+                        }).count();
+                        ("agent(s)", c)
+                    }
+                };
+                format!("{action} {count} {kind} from \"{}\"? [y/N]", g.name)
+            }
         };
         let p = Paragraph::new(Line::from(Span::styled(
             prompt,
@@ -1355,28 +1566,7 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
         )));
         frame.render_widget(p, inner);
     } else {
-        let hints = Line::from(vec![
-            Span::styled("␣", Style::default().fg(Color::Yellow)),
-            Span::raw(" toggle  "),
-            Span::styled("0", Style::default().fg(Color::Yellow)),
-            Span::raw("/"),
-            Span::styled("9", Style::default().fg(Color::Yellow)),
-            Span::raw(" fold/unfold  "),
-            Span::styled("a", Style::default().fg(Color::Yellow)),
-            Span::raw(" add  "),
-            Span::styled("u", Style::default().fg(Color::Yellow)),
-            Span::raw(" update  "),
-            Span::styled("d", Style::default().fg(Color::Yellow)),
-            Span::raw(" del  "),
-            Span::styled("i", Style::default().fg(Color::Yellow)),
-            Span::raw(" info  "),
-            Span::styled("/", Style::default().fg(Color::Yellow)),
-            Span::raw(" search  "),
-            Span::styled("l", Style::default().fg(Color::Yellow)),
-            Span::raw(" log  "),
-            Span::styled("q", Style::default().fg(Color::Yellow)),
-            Span::raw(" quit"),
-        ]);
+        let hints = build_source_hints(app.current_row());
 
         let status_line = if app.background_task.as_ref().map_or(false, |t| t.is_running) {
             let progress_text = app.background_task.as_ref()
