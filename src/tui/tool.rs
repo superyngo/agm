@@ -658,11 +658,22 @@ impl ToolApp {
             }
             KeyCode::Char('i') => {
                 if let Some(ctx) = link_ctx {
-                    let tk = ctx.tool_key.clone();
-                    let f = ctx.field.clone();
-                    self.popup = None;
-                    self.toggle_link(&tk, &f);
-                    self.show_link_info(&tk, &f);
+                    let feature = match &ctx.field {
+                        LinkField::Prompt => "prompt",
+                        LinkField::Skills => "skills",
+                        LinkField::Agents => "agents",
+                        LinkField::Commands => "commands",
+                    };
+                    if self.config.central.is_disabled(feature) {
+                        self.popup = None;
+                        self.set_status(format!("{} is globally disabled", feature));
+                    } else {
+                        let tk = ctx.tool_key.clone();
+                        let f = ctx.field.clone();
+                        self.popup = None;
+                        self.toggle_link(&tk, &f);
+                        self.show_link_info(&tk, &f);
+                    }
                 }
             }
             _ => {}
@@ -1851,25 +1862,39 @@ fn compute_tool_status(config: &Config, tool_key: &str) -> (u8, &'static str, Co
         return (0, "Not installed", Color::DarkGray);
     }
     let config_dir = expand_tilde(&tool.config_dir);
-    let mut linked = 0u8;
-    for (link_sub, target_src, is_dir) in [
-        (&tool.prompt_filename, &config.central.prompt_source, false),
-        (&tool.skills_dir, &config.central.skills_source, true),
-        (&tool.agents_dir, &config.central.agents_source, true),
-    ] {
+
+    let all_links: Vec<(&str, &String, &String, bool)> = vec![
+        ("prompt", &tool.prompt_filename, &config.central.prompt_source, false),
+        ("skills", &tool.skills_dir, &config.central.skills_source, true),
+        ("agents", &tool.agents_dir, &config.central.agents_source, true),
+        ("commands", &tool.commands_dir, &config.central.commands_source, true),
+    ];
+
+    let enabled_links: Vec<_> = all_links
+        .into_iter()
+        .filter(|(name, sub, _, _)| !sub.is_empty() && !config.central.is_disabled(name))
+        .collect();
+
+    let total = enabled_links.len();
+    if total == 0 {
+        return (0, "All disabled", Color::DarkGray);
+    }
+
+    let mut linked = 0usize;
+    for (_, link_sub, target_src, is_dir) in &enabled_links {
         let link_path = config_dir.join(link_sub);
         let target = expand_tilde(target_src);
         if matches!(
-            linker::check_link(&link_path, &target, is_dir),
+            linker::check_link(&link_path, &target, *is_dir),
             LinkStatus::Linked
         ) {
             linked += 1;
         }
     }
-    match linked {
-        3 => (3, "All linked", Color::Green),
-        0 => (0, "Not linked", Color::DarkGray),
-        _ => (linked, "Partially linked", Color::Yellow),
+    match (linked, total) {
+        (l, t) if l == t => (l as u8, "All linked", Color::Green),
+        (0, _) => (0, "Not linked", Color::DarkGray),
+        _ => (linked as u8, "Partially linked", Color::Yellow),
     }
 }
 

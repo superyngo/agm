@@ -8,7 +8,6 @@ use crate::skills;
 /// Display table with tool name, config dir, prompt/skills/agents link status and paths
 pub fn status() -> anyhow::Result<()> {
     let config = Config::load()?;
-    let disabled = &config.central.disabled;
     let central_skills = expand_tilde(&config.central.skills_source);
     let central_agents = expand_tilde(&config.central.agents_source);
     let central_commands = expand_tilde(&config.central.commands_source);
@@ -66,7 +65,7 @@ pub fn status() -> anyhow::Result<()> {
         if let Some(ls) = prompt_ls {
             let prompt_link = tool.resolved_config_dir().join(&tool.prompt_filename);
             print!("{}{:<8}", INDENT, "prompt");
-            if disabled.iter().any(|d| d == "prompt") {
+            if config.central.is_disabled("prompt") {
                 println!("{}", "disabled".dimmed());
             } else {
                 match ls {
@@ -95,7 +94,7 @@ pub fn status() -> anyhow::Result<()> {
         if let Some(ls) = skills_ls {
             let skills_link = tool.resolved_config_dir().join(&tool.skills_dir);
             print!("{}{:<8}", INDENT, "skills");
-            if disabled.iter().any(|d| d == "skills") {
+            if config.central.is_disabled("skills") {
                 println!("{}", "disabled".dimmed());
             } else {
                 match ls {
@@ -124,7 +123,7 @@ pub fn status() -> anyhow::Result<()> {
         if let Some(ls) = agents_ls {
             let agents_link = tool.resolved_config_dir().join(&tool.agents_dir);
             print!("{}{:<8}", INDENT, "agents");
-            if disabled.iter().any(|d| d == "agents") {
+            if config.central.is_disabled("agents") {
                 println!("{}", "disabled".dimmed());
             } else {
                 match ls {
@@ -153,7 +152,7 @@ pub fn status() -> anyhow::Result<()> {
         if let Some(ls) = commands_ls {
             let commands_link = tool.resolved_config_dir().join(&tool.commands_dir);
             print!("{}{:<8}", INDENT, "commands");
-            if disabled.iter().any(|d| d == "commands") {
+            if config.central.is_disabled("commands") {
                 println!("{}", "disabled".dimmed());
             } else {
                 match ls {
@@ -205,12 +204,12 @@ pub fn status() -> anyhow::Result<()> {
         .filter(|c| c.install_status == skills::SkillInstallStatus::Installed)
         .count();
 
-    if disabled.iter().any(|d| d == "prompt") {
+    if config.central.is_disabled("prompt") {
         println!("Central prompt : {} {}", contract_tilde(&central_prompt), "(disabled)".dimmed());
     } else {
         println!("Central prompt : {}", contract_tilde(&central_prompt));
     }
-    if disabled.iter().any(|d| d == "skills") {
+    if config.central.is_disabled("skills") {
         println!(
             "Central skills : {} ({} installed, {} sources) {}",
             contract_tilde(&central_skills),
@@ -226,7 +225,7 @@ pub fn status() -> anyhow::Result<()> {
             groups.len()
         );
     }
-    if disabled.iter().any(|d| d == "agents") {
+    if config.central.is_disabled("agents") {
         println!(
             "Central agents : {} ({} installed) {}",
             contract_tilde(&central_agents),
@@ -240,7 +239,7 @@ pub fn status() -> anyhow::Result<()> {
             installed_agents,
         );
     }
-    if disabled.iter().any(|d| d == "commands") {
+    if config.central.is_disabled("commands") {
         println!(
             "Central commands: {} ({} installed) {}",
             contract_tilde(&central_commands),
