@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.7.1] - 2026-04-02
+
+### Fixed
+- Fix Windows CI: use `platform::same_file` instead of `fs::read_link` in agent migration tests (hard links on Windows don't support `read_link`)
+
 ## [v0.7.0] - 2026-04-02
 
 ### Breaking Changes
