@@ -88,16 +88,19 @@ chmod +x ~/.local/bin/agm
 agm init
 
 # Show status of all tools
-agm status
+agm tool --status
 
 # Create links for all installed tools
-agm link
+agm tool --link
 
 # Add a source from a git repo
 agm source -a https://github.com/anthropics/claude-code-skills
 
 # Open interactive TUI to manage skills & agents
 agm source
+
+# Open interactive TUI to manage tools, links, and config
+agm tool
 
 # List all sources
 agm source -l
@@ -108,17 +111,19 @@ agm source -u
 
 ## Commands
 
-### Status & Info
+### Tool Management
 
-- `agm status` - Show link status for all tools (prompts, skills, agents)
+- `agm tool` - Open interactive TUI to manage tools, links, and configuration
+- `agm tool --status` / `agm tool -s` - Show link status for all tools
+- `agm tool --link` / `agm tool -l` - Create/repair all links (prompts + skills + agents)
+- `agm tool --unlink` / `agm tool -u` - Remove all links
 
-### Link Management
-
-- `agm link` - Create/repair all links (prompts + skills + agents)
-- `agm link skills` - Only handle skills links
-- `agm link prompts` - Only handle prompt links
-- `agm link agents` - Only handle agents links
-- `agm unlink <tool>` - Remove links for a specific tool
+The TUI provides:
+- View and toggle link status for each tool (prompt, skills, agents)
+- Edit config, prompt, settings, auth, and MCP files with `e` key
+- Edit central paths (skills, agents, source) inline
+- File picker popup for multi-file fields
+- Log popup (`l` key) for operation history
 
 ### Source Management
 
@@ -127,35 +132,17 @@ agm source -u
 - `agm source -u` / `agm source --update` - Update all source repos
 - `agm source -l` / `agm source --list` - List all sources with skills & agents
 
-### Editing Shortcuts
-
-- `agm edit prompt` - Edit shared prompt master file (MASTER.md)
-- `agm edit prompt <tool>` - Edit tool-specific prompt file
-- `agm edit config` - Edit agm's own config.toml
-- `agm edit config <tool>` - Open tool settings file(s)
-- `agm edit auth` - Interactively select tool and open auth file(s)
-- `agm edit auth <tool>` - Open tool auth file(s)
-- `agm edit mcp` - Interactively select tool and open MCP config
-- `agm edit mcp <tool>` - Open tool MCP config
-
 **Examples:**
 ```bash
-# Edit master files
-agm edit prompt           # Opens shared MASTER.md
-agm edit config           # Opens agm config.toml
+# Non-interactive operations
+agm tool --status         # Show link status table
+agm tool --link           # Link all installed tools
+agm tool --unlink         # Remove all links
 
-# Edit tool-specific files
-agm edit prompt claude    # Opens ~/.claude/PROMPT.md
-agm edit config gemini    # Opens gemini settings
-agm edit auth claude      # Opens claude auth files
-agm edit mcp copilot      # Opens copilot MCP config
-
-# Interactive selection
-agm edit auth             # Shows menu to pick tool
-agm edit mcp              # Shows menu to pick tool
+# Interactive TUIs
+agm tool                  # Tool management TUI
+agm source                # Source management TUI
 ```
-
-**Breaking Change (v0.1.1):** Command syntax changed from `agm edit <tool> <file_type>` to `agm edit <file_type> [tool]`.
 
 ## Configuration
 

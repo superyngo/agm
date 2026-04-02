@@ -58,6 +58,7 @@ enum ListRow {
 enum ConfirmState {
     Normal { group_index: usize },
     Migrated { group_index: usize, typed: String },
+    BulkToggle { group_index: usize, category: Category, install: bool },
 }
 
 // ---------------------------------------------------------------------------
@@ -83,6 +84,11 @@ struct App {
     expanded_agents_sources: HashSet<usize>,
     confirm_state: Option<ConfirmState>,
     matcher: SkimMatcherV2,
+    log: super::log::LogBuffer,
+    show_log: bool,
+    log_popup: Option<super::popup::ScrollablePopup>,
+    background_task: Option<super::background::BackgroundTask>,
+    info_popup: Option<super::popup::ScrollablePopup>,
 }
 
 impl App {
@@ -113,6 +119,11 @@ impl App {
             expanded_agents_sources: HashSet::new(),
             confirm_state: None,
             matcher: SkimMatcherV2::default(),
+            log: super::log::LogBuffer::new(500),
+            show_log: false,
+            log_popup: None,
+            background_task: None,
+            info_popup: None,
         };
         app.rebuild_rows();
         app
@@ -202,38 +213,30 @@ impl App {
             return;
         }
         let query = &self.search_query;
-        let mut matching_groups_skills = HashSet::new();
-        let mut matching_groups_agents = HashSet::new();
-        let mut visible_items = Vec::new();
 
-        // Find matching items
-        for (i, row) in self.rows.iter().enumerate() {
-            match row {
-                ListRow::SkillItem {
-                    group_index,
-                    skill_index,
-                } => {
-                    let skill = &self.groups[*group_index].skills[*skill_index];
-                    if self.matcher.fuzzy_match(&skill.name, query).is_some() {
-                        matching_groups_skills.insert(*group_index);
-                        visible_items.push(i);
-                    }
+        // Phase 1: Determine matching groups from self.groups directly
+        // (decoupled from expansion state of rows)
+        let mut matching_groups_skills: HashSet<usize> = HashSet::new();
+        let mut matching_groups_agents: HashSet<usize> = HashSet::new();
+        let mut matching_skills: HashSet<(usize, usize)> = HashSet::new();
+        let mut matching_agents: HashSet<(usize, usize)> = HashSet::new();
+
+        for (gi, group) in self.groups.iter().enumerate() {
+            for (si, skill) in group.skills.iter().enumerate() {
+                if self.matcher.fuzzy_match(&skill.name, query).is_some() {
+                    matching_groups_skills.insert(gi);
+                    matching_skills.insert((gi, si));
                 }
-                ListRow::AgentItem {
-                    group_index,
-                    agent_index,
-                } => {
-                    let agent = &self.groups[*group_index].agents[*agent_index];
-                    if self.matcher.fuzzy_match(&agent.name, query).is_some() {
-                        matching_groups_agents.insert(*group_index);
-                        visible_items.push(i);
-                    }
+            }
+            for (ai, agent) in group.agents.iter().enumerate() {
+                if self.matcher.fuzzy_match(&agent.name, query).is_some() {
+                    matching_groups_agents.insert(gi);
+                    matching_agents.insert((gi, ai));
                 }
-                _ => {}
             }
         }
 
-        // Build filtered list: include headers for matching groups
+        // Phase 2: Build filtered row indices from self.rows
         let mut result = Vec::new();
         for (i, row) in self.rows.iter().enumerate() {
             match row {
@@ -246,10 +249,7 @@ impl App {
                         result.push(i);
                     }
                 }
-                ListRow::SourceHeader {
-                    category,
-                    group_index,
-                } => {
+                ListRow::SourceHeader { category, group_index } => {
                     let is_match = match category {
                         Category::Skills => matching_groups_skills.contains(group_index),
                         Category::Agents => matching_groups_agents.contains(group_index),
@@ -258,8 +258,13 @@ impl App {
                         result.push(i);
                     }
                 }
-                ListRow::SkillItem { .. } | ListRow::AgentItem { .. } => {
-                    if visible_items.contains(&i) {
+                ListRow::SkillItem { group_index, skill_index } => {
+                    if matching_skills.contains(&(*group_index, *skill_index)) {
+                        result.push(i);
+                    }
+                }
+                ListRow::AgentItem { group_index, agent_index } => {
+                    if matching_agents.contains(&(*group_index, *agent_index)) {
                         result.push(i);
                     }
                 }
@@ -324,9 +329,13 @@ impl App {
                     Ok(()) => {
                         self.groups[group_index].skills[skill_index].install_status =
                             SkillInstallStatus::NotInstalled;
+                        self.log.push(super::log::LogLevel::Success, format!("Uninstalled {name}"));
                         self.set_status(format!("Uninstalled {name}"));
                     }
-                    Err(e) => self.set_status(format!("Error: {e}")),
+                    Err(e) => {
+                        self.log.push(super::log::LogLevel::Error, format!("Uninstall error: {e}"));
+                        self.set_status(format!("Error: {e}"));
+                    }
                 }
             }
             SkillInstallStatus::NotInstalled => {
@@ -334,12 +343,17 @@ impl App {
                     Ok(()) => {
                         self.groups[group_index].skills[skill_index].install_status =
                             SkillInstallStatus::Installed;
+                        self.log.push(super::log::LogLevel::Success, format!("Installed {name}"));
                         self.set_status(format!("Installed {name}"));
                     }
-                    Err(e) => self.set_status(format!("Error: {e}")),
+                    Err(e) => {
+                        self.log.push(super::log::LogLevel::Error, format!("Install error: {e}"));
+                        self.set_status(format!("Error: {e}"));
+                    }
                 }
             }
             SkillInstallStatus::Conflict => {
+                self.log.push(super::log::LogLevel::Warning, format!("Conflict: {name} installed from another source"));
                 self.set_status(format!("Conflict: {name} installed from another source"));
             }
         }
@@ -355,9 +369,13 @@ impl App {
                     Ok(()) => {
                         self.groups[group_index].agents[agent_index].install_status =
                             SkillInstallStatus::NotInstalled;
+                        self.log.push(super::log::LogLevel::Success, format!("Uninstalled {name}"));
                         self.set_status(format!("Uninstalled agent {name}"));
                     }
-                    Err(e) => self.set_status(format!("Error: {e}")),
+                    Err(e) => {
+                        self.log.push(super::log::LogLevel::Error, format!("Uninstall error: {e}"));
+                        self.set_status(format!("Error: {e}"));
+                    }
                 }
             }
             SkillInstallStatus::NotInstalled => {
@@ -365,12 +383,17 @@ impl App {
                     Ok(()) => {
                         self.groups[group_index].agents[agent_index].install_status =
                             SkillInstallStatus::Installed;
+                        self.log.push(super::log::LogLevel::Success, format!("Installed {name}"));
                         self.set_status(format!("Installed agent {name}"));
                     }
-                    Err(e) => self.set_status(format!("Error: {e}")),
+                    Err(e) => {
+                        self.log.push(super::log::LogLevel::Error, format!("Install error: {e}"));
+                        self.set_status(format!("Error: {e}"));
+                    }
                 }
             }
             SkillInstallStatus::Conflict => {
+                self.log.push(super::log::LogLevel::Warning, format!("Conflict: agent {name} from another source"));
                 self.set_status(format!("Conflict: agent {name} from another source"));
             }
         }
@@ -405,12 +428,77 @@ impl App {
                     self.config.remove_source_repo(url);
                     let _ = self.config.save();
                 }
+                self.log.push(super::log::LogLevel::Success, format!("Deleted source: {}", group.name));
                 self.set_status(format!("Deleted source: {}", group.name));
                 self.refresh();
             }
-            Err(e) => self.set_status(format!("Error deleting: {e}")),
+            Err(e) => {
+                self.log.push(super::log::LogLevel::Error, format!("Delete error: {e}"));
+                self.set_status(format!("Error deleting: {e}"));
+            }
         }
         self.confirm_state = None;
+    }
+
+    fn start_bulk_toggle(&mut self, group_index: usize, category: Category) {
+        let group = &self.groups[group_index];
+        let all_installed = match category {
+            Category::Skills => group.skills.iter()
+                .filter(|s| s.install_status != SkillInstallStatus::Conflict)
+                .all(|s| s.install_status == SkillInstallStatus::Installed),
+            Category::Agents => group.agents.iter()
+                .filter(|a| a.install_status != SkillInstallStatus::Conflict)
+                .all(|a| a.install_status == SkillInstallStatus::Installed),
+        };
+        self.confirm_state = Some(ConfirmState::BulkToggle {
+            group_index,
+            category,
+            install: !all_installed,
+        });
+    }
+
+    fn execute_bulk_toggle(&mut self, group_index: usize, category: Category, install: bool) {
+        let mut count = 0usize;
+        match category {
+            Category::Skills => {
+                let len = self.groups[group_index].skills.len();
+                for si in 0..len {
+                    let status = &self.groups[group_index].skills[si].install_status;
+                    if *status == SkillInstallStatus::Conflict { continue; }
+                    let should_act = if install {
+                        *status == SkillInstallStatus::NotInstalled
+                    } else {
+                        *status == SkillInstallStatus::Installed
+                    };
+                    if should_act {
+                        self.toggle_skill(group_index, si);
+                        count += 1;
+                    }
+                }
+            }
+            Category::Agents => {
+                let len = self.groups[group_index].agents.len();
+                for ai in 0..len {
+                    let status = &self.groups[group_index].agents[ai].install_status;
+                    if *status == SkillInstallStatus::Conflict { continue; }
+                    let should_act = if install {
+                        *status == SkillInstallStatus::NotInstalled
+                    } else {
+                        *status == SkillInstallStatus::Installed
+                    };
+                    if should_act {
+                        self.toggle_agent(group_index, ai);
+                        count += 1;
+                    }
+                }
+            }
+        }
+        let action = if install { "Installed" } else { "Uninstalled" };
+        let kind = match category {
+            Category::Skills => "skill(s)",
+            Category::Agents => "agent(s)",
+        };
+        self.set_status(format!("{action} {count} {kind}"));
     }
 
     fn open_editor(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) {
@@ -461,37 +549,202 @@ impl App {
             Some(r) => r.clone(),
             None => return,
         };
-        match row {
-            ListRow::SkillItem {
-                group_index,
-                skill_index,
-            } => {
-                let skill = &self.groups[group_index].skills[skill_index];
-                self.set_status(format!("Path: {}", contract_tilde(&skill.source_path)));
+
+        let lines = match row {
+            ListRow::SkillItem { group_index, skill_index } => {
+                self.build_skill_info_lines(group_index, skill_index)
             }
-            ListRow::AgentItem {
-                group_index,
-                agent_index,
-            } => {
-                let agent = &self.groups[group_index].agents[agent_index];
-                self.set_status(format!("Path: {}", contract_tilde(&agent.source_path)));
+            ListRow::AgentItem { group_index, agent_index } => {
+                self.build_agent_info_lines(group_index, agent_index)
             }
             ListRow::SourceHeader { group_index, .. } => {
-                let group = &self.groups[group_index];
-                let info = match &group.kind {
-                    SourceKind::Repo { url: Some(url) } => format!("Repo: {url}"),
-                    SourceKind::Repo { url: None } => {
-                        format!("Repo: {}", contract_tilde(&group.path))
-                    }
-                    SourceKind::Local => format!("Local: {}", contract_tilde(&group.path)),
-                    SourceKind::Migrated { tool } => {
-                        format!("Migrated from {tool}: {}", contract_tilde(&group.path))
-                    }
-                };
-                self.set_status(info);
+                self.build_source_info_lines(group_index)
             }
-            _ => {}
+            ListRow::CategoryHeader { .. } => {
+                return; // No info for category headers
+            }
+        };
+
+        self.info_popup = Some(
+            super::popup::ScrollablePopup::new("Info", lines)
+                .with_close_hint("Esc:close")
+        );
+    }
+
+    fn build_skill_info_lines(&self, group_index: usize, skill_index: usize) -> Vec<Line<'static>> {
+        let group = &self.groups[group_index];
+        let skill = &group.skills[skill_index];
+        let mut lines = Vec::new();
+
+        // Header info
+        lines.push(Line::from(vec![
+            Span::styled("Name: ", Style::default().fg(Color::Yellow)),
+            Span::raw(skill.name.clone()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Source: ", Style::default().fg(Color::Yellow)),
+            Span::raw(group.name.clone()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Path: ", Style::default().fg(Color::Yellow)),
+            Span::raw(contract_tilde(&skill.source_path).to_string()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Status: ", Style::default().fg(Color::Yellow)),
+            Span::raw(format!("{:?}", skill.install_status)),
+        ]));
+        lines.push(Line::default()); // blank line
+
+        // Directory listing
+        lines.push(Line::from(Span::styled("Files:", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))));
+        if let Ok(mut entries) = std::fs::read_dir(&skill.source_path) {
+            let mut file_names: Vec<String> = Vec::new();
+            while let Some(Ok(entry)) = entries.next() {
+                if let Some(name) = entry.file_name().to_str() {
+                    let suffix = if entry.path().is_dir() { "/" } else { "" };
+                    file_names.push(format!("  {}{}", name, suffix));
+                }
+            }
+            file_names.sort();
+            for name in file_names {
+                lines.push(Line::from(name));
+            }
+        } else {
+            lines.push(Line::from("  (unable to read directory)"));
         }
+        lines.push(Line::default()); // blank line
+
+        // SKILL.md content
+        let skill_md_path = skill.source_path.join("SKILL.md");
+        if skill_md_path.exists() {
+            lines.push(Line::from(Span::styled(
+                "─── SKILL.md ───",
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )));
+            match std::fs::read_to_string(&skill_md_path) {
+                Ok(content) => {
+                    for line in content.lines().take(5000) {
+                        lines.push(Line::from(line.to_string()));
+                    }
+                }
+                Err(e) => {
+                    lines.push(Line::from(format!("(error reading SKILL.md: {})", e)));
+                }
+            }
+        }
+
+        lines
+    }
+
+    fn build_agent_info_lines(&self, group_index: usize, agent_index: usize) -> Vec<Line<'static>> {
+        let group = &self.groups[group_index];
+        let agent = &group.agents[agent_index];
+        let mut lines = Vec::new();
+
+        lines.push(Line::from(vec![
+            Span::styled("Name: ", Style::default().fg(Color::Yellow)),
+            Span::raw(agent.name.clone()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Source: ", Style::default().fg(Color::Yellow)),
+            Span::raw(group.name.clone()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Path: ", Style::default().fg(Color::Yellow)),
+            Span::raw(contract_tilde(&agent.source_path).to_string()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Status: ", Style::default().fg(Color::Yellow)),
+            Span::raw(format!("{:?}", agent.install_status)),
+        ]));
+        lines.push(Line::default());
+
+        // Agent .md content
+        if agent.source_path.exists() {
+            lines.push(Line::from(Span::styled(
+                format!("─── {} ───", agent.source_path.file_name().and_then(|n| n.to_str()).unwrap_or("agent.md")),
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )));
+            match std::fs::read_to_string(&agent.source_path) {
+                Ok(content) => {
+                    for line in content.lines().take(5000) {
+                        lines.push(Line::from(line.to_string()));
+                    }
+                }
+                Err(e) => {
+                    lines.push(Line::from(format!("(error reading agent file: {})", e)));
+                }
+            }
+        }
+
+        lines
+    }
+
+    fn build_source_info_lines(&self, group_index: usize) -> Vec<Line<'static>> {
+        let group = &self.groups[group_index];
+        let mut lines = Vec::new();
+
+        lines.push(Line::from(vec![
+            Span::styled("Name: ", Style::default().fg(Color::Yellow)),
+            Span::raw(group.name.clone()),
+        ]));
+
+        let kind_str = match &group.kind {
+            SourceKind::Repo { url: Some(url) } => format!("Repo ({})", url),
+            SourceKind::Repo { url: None } => "Repo (no URL)".to_string(),
+            SourceKind::Local => "Local".to_string(),
+            SourceKind::Migrated { tool } => format!("Migrated from {}", tool),
+        };
+        lines.push(Line::from(vec![
+            Span::styled("Type: ", Style::default().fg(Color::Yellow)),
+            Span::raw(kind_str),
+        ]));
+
+        lines.push(Line::from(vec![
+            Span::styled("Path: ", Style::default().fg(Color::Yellow)),
+            Span::raw(contract_tilde(&group.path).to_string()),
+        ]));
+
+        lines.push(Line::from(vec![
+            Span::styled("Skills: ", Style::default().fg(Color::Yellow)),
+            Span::raw(format!("{}", group.skills.len())),
+        ]));
+
+        lines.push(Line::from(vec![
+            Span::styled("Agents: ", Style::default().fg(Color::Yellow)),
+            Span::raw(format!("{}", group.agents.len())),
+        ]));
+
+        lines.push(Line::default());
+
+        // List skills
+        if !group.skills.is_empty() {
+            lines.push(Line::from(Span::styled("Skills:", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))));
+            for skill in &group.skills {
+                let status_icon = match skill.install_status {
+                    SkillInstallStatus::Installed => "✓",
+                    SkillInstallStatus::NotInstalled => "○",
+                    SkillInstallStatus::Conflict => "⚠",
+                };
+                lines.push(Line::from(format!("  {} {}", status_icon, skill.name)));
+            }
+            lines.push(Line::default());
+        }
+
+        // List agents
+        if !group.agents.is_empty() {
+            lines.push(Line::from(Span::styled("Agents:", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))));
+            for agent in &group.agents {
+                let status_icon = match agent.install_status {
+                    SkillInstallStatus::Installed => "✓",
+                    SkillInstallStatus::NotInstalled => "○",
+                    SkillInstallStatus::Conflict => "⚠",
+                };
+                lines.push(Line::from(format!("  {} {}", status_icon, agent.name)));
+            }
+        }
+
+        lines
     }
 
     fn expand_all(&mut self) {
@@ -518,10 +771,17 @@ impl App {
     }
 
     fn do_update(&mut self) {
-        self.set_status("Updating repos...");
-        let _ = skills::update_all(&self.skills_dir, &self.agents_dir, &self.source_dir);
-        self.refresh();
-        self.set_status("Update complete");
+        if self.background_task.as_ref().map_or(false, |t| t.is_running) {
+            self.set_status("Update already in progress");
+            return;
+        }
+        self.background_task = Some(super::background::spawn_update(
+            self.skills_dir.clone(),
+            self.agents_dir.clone(),
+            self.source_dir.clone(),
+        ));
+        self.log.push(super::log::LogLevel::Info, "Update started");
+        self.set_status("⟳ Updating...");
     }
 
     fn do_add(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) {
@@ -562,9 +822,13 @@ impl App {
                         }
                     }
                     let _ = self.config.add_source_repo(&source);
+                    self.log.push(super::log::LogLevel::Success, format!("Added from URL: {count} skill(s), {agent_count} agent(s)"));
                     self.set_status(format!("Added: {count} skill(s), {agent_count} agent(s)"));
                 }
-                Err(e) => self.set_status(format!("Error: {e}")),
+                Err(e) => {
+                    self.log.push(super::log::LogLevel::Error, format!("Add error: {e}"));
+                    self.set_status(format!("Error: {e}"));
+                }
             }
         } else {
             let source_path = expand_tilde(&source);
@@ -576,9 +840,13 @@ impl App {
                             count += 1;
                         }
                     }
+                    self.log.push(super::log::LogLevel::Success, format!("Added local: {count} skill(s)"));
                     self.set_status(format!("Added: {count} skill(s)"));
                 }
-                Err(e) => self.set_status(format!("Error: {e}")),
+                Err(e) => {
+                    self.log.push(super::log::LogLevel::Error, format!("Add error: {e}"));
+                    self.set_status(format!("Error: {e}"));
+                }
             }
         }
         self.refresh();
@@ -591,6 +859,38 @@ impl App {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         area_height: u16,
     ) {
+        // Log popup intercepts all keys when visible
+        if self.show_log {
+            match code {
+                KeyCode::Char('l') | KeyCode::Esc => {
+                    self.show_log = false;
+                    self.log_popup = None;
+                }
+                _ => {
+                    if let Some(ref mut popup) = self.log_popup {
+                        let _ = popup.handle_key(code);
+                    }
+                }
+            }
+            return;
+        }
+
+        // Info popup intercepts all keys when visible
+        if let Some(ref mut popup) = self.info_popup {
+            match code {
+                KeyCode::Char('i') | KeyCode::Esc => {
+                    self.info_popup = None;
+                }
+                _ => {
+                    match popup.handle_key(code) {
+                        super::popup::PopupAction::Close => { self.info_popup = None; }
+                        _ => {}
+                    }
+                }
+            }
+            return;
+        }
+
         // Confirmation mode
         if let Some(state) = self.confirm_state.clone() {
             match state {
@@ -630,6 +930,16 @@ impl App {
                         self.set_status("Delete cancelled");
                     }
                 },
+                ConfirmState::BulkToggle { group_index, category, install } => match code {
+                    KeyCode::Char('y') | KeyCode::Char('Y') => {
+                        self.execute_bulk_toggle(group_index, category, install);
+                        self.confirm_state = None;
+                    }
+                    _ => {
+                        self.confirm_state = None;
+                        self.set_status("Cancelled");
+                    }
+                },
             }
             return;
         }
@@ -651,10 +961,6 @@ impl App {
                     self.search_query.pop();
                     self.apply_search_filter();
                     self.cursor = 0;
-                }
-                KeyCode::Char(' ') => {
-                    // Toggle current item even in search mode
-                    self.toggle_item();
                 }
                 KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
                     self.search_query.push(c);
@@ -695,12 +1001,35 @@ impl App {
                     self.cursor = vis.len() - 1;
                 }
             }
-            KeyCode::Char(' ') | KeyCode::Enter => self.toggle_item(),
+            KeyCode::Char(' ') | KeyCode::Enter => {
+                let row = self.current_row().cloned();
+                match row {
+                    Some(ListRow::SkillItem { .. }) | Some(ListRow::AgentItem { .. }) => {
+                        self.show_info();
+                    }
+                    _ => self.toggle_item(),
+                }
+            }
             KeyCode::Char('e') => self.open_editor(terminal),
             KeyCode::Delete | KeyCode::Char('d') => self.start_delete(),
-            KeyCode::Char('i') => self.show_info(),
+            KeyCode::Char('i') => {
+                let row = self.current_row().cloned();
+                match row {
+                    Some(ListRow::SkillItem { group_index, skill_index }) => {
+                        self.toggle_skill(group_index, skill_index);
+                    }
+                    Some(ListRow::AgentItem { group_index, agent_index }) => {
+                        self.toggle_agent(group_index, agent_index);
+                    }
+                    Some(ListRow::SourceHeader { group_index, category }) => {
+                        self.start_bulk_toggle(group_index, category);
+                    }
+                    _ => {}
+                }
+            }
             KeyCode::Char('r') => {
                 self.refresh();
+                self.log.push(super::log::LogLevel::Info, "Refreshed");
                 self.set_status("Refreshed");
             }
             KeyCode::Char('u') => self.do_update(),
@@ -715,10 +1044,18 @@ impl App {
             }
             KeyCode::Char('/') => {
                 self.search_mode = true;
-                self.search_query.clear();
-                self.filtered_rows = None;
-                // Expand all for search visibility
+                // Preserve existing search_query and filtered_rows
+                // so user can continue editing their previous search
                 self.expand_all();
+            }
+            KeyCode::Char('l') => {
+                self.show_log = true;
+                let lines = self.log.to_lines();
+                let mut popup = super::popup::ScrollablePopup::new("Log", lines)
+                    .with_close_hint("l:close");
+                // Auto-scroll to end
+                popup.scroll_offset = popup.lines.len().saturating_sub(1);
+                self.log_popup = Some(popup);
             }
             KeyCode::Esc => {
                 if self.filtered_rows.is_some() {
@@ -860,6 +1197,7 @@ fn render_item_line(
     status: &SkillInstallStatus,
     is_cursor: bool,
     prefix_char: &str,
+    match_indices: Option<&[usize]>,
 ) -> Line<'static> {
     let icon = status_icon(status);
     let color = status_color(status);
@@ -900,7 +1238,37 @@ fn render_item_line(
     } else {
         Style::default().fg(color)
     };
-    spans.push(Span::styled(format!("{:<30}", name), name_style));
+
+    if let Some(indices) = match_indices {
+        let index_set: std::collections::HashSet<usize> = indices.iter().cloned().collect();
+        let highlight_style = if is_cursor {
+            Style::default().fg(Color::Yellow).bg(Color::DarkGray).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+        } else {
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+        };
+
+        let mut current = String::new();
+        let mut current_hl = false;
+        for (i, ch) in name.chars().enumerate() {
+            let is_hl = index_set.contains(&i);
+            if i > 0 && is_hl != current_hl {
+                spans.push(Span::styled(current.clone(), if current_hl { highlight_style } else { name_style }));
+                current.clear();
+            }
+            current_hl = is_hl;
+            current.push(ch);
+        }
+        if !current.is_empty() {
+            spans.push(Span::styled(current, if current_hl { highlight_style } else { name_style }));
+        }
+        let pad_len = 30usize.saturating_sub(name.len());
+        if pad_len > 0 {
+            spans.push(Span::styled(" ".repeat(pad_len), name_style));
+        }
+    } else {
+        spans.push(Span::styled(format!("{:<30}", name), name_style));
+    }
+
     spans.push(Span::styled(label.to_string(), label_style));
 
     Line::from(spans)
@@ -910,7 +1278,7 @@ fn render_item_line(
 // Rendering
 // ---------------------------------------------------------------------------
 
-fn render(app: &App, frame: &mut Frame) {
+fn render(app: &mut App, frame: &mut Frame) {
     let area = frame.area();
 
     let chunks = Layout::default()
@@ -920,6 +1288,14 @@ fn render(app: &App, frame: &mut Frame) {
 
     render_list(app, frame, chunks[0]);
     render_footer(app, frame, chunks[1]);
+
+    // Popups (only one should be visible at a time)
+    if let Some(ref mut popup) = app.log_popup {
+        popup.render(frame, frame.area());
+    }
+    if let Some(ref mut popup) = app.info_popup {
+        popup.render(frame, frame.area());
+    }
 }
 
 fn render_list(app: &App, frame: &mut Frame, area: Rect) {
@@ -1040,14 +1416,26 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                 skill_index,
             } => {
                 let skill = &app.groups[*group_index].skills[*skill_index];
-                render_item_line(&skill.name, &skill.install_status, is_cursor, ">")
+                let indices = if app.filtered_rows.is_some() && !app.search_query.is_empty() {
+                    app.matcher.fuzzy_indices(&skill.name, &app.search_query)
+                        .map(|(_, idx)| idx)
+                } else {
+                    None
+                };
+                render_item_line(&skill.name, &skill.install_status, is_cursor, ">", indices.as_deref())
             }
             ListRow::AgentItem {
                 group_index,
                 agent_index,
             } => {
                 let agent = &app.groups[*group_index].agents[*agent_index];
-                render_item_line(&agent.name, &agent.install_status, is_cursor, ">")
+                let indices = if app.filtered_rows.is_some() && !app.search_query.is_empty() {
+                    app.matcher.fuzzy_indices(&agent.name, &app.search_query)
+                        .map(|(_, idx)| idx)
+                } else {
+                    None
+                };
+                render_item_line(&agent.name, &agent.install_status, is_cursor, ">", indices.as_deref())
             }
         };
         lines.push(line);
@@ -1055,6 +1443,61 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
 
     let paragraph = Paragraph::new(lines);
     frame.render_widget(paragraph, inner);
+}
+
+fn hint_key(k: &str) -> Span<'static> {
+    Span::styled(k.to_string(), Style::default().fg(Color::Yellow))
+}
+
+fn hint_text(t: &str) -> Span<'static> {
+    Span::raw(t.to_string())
+}
+
+fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
+    let mut spans = Vec::new();
+    match row {
+        Some(ListRow::CategoryHeader { .. }) => {
+            spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
+            spans.extend([hint_key("a"), hint_text(" add  ")]);
+            spans.extend([hint_key("u"), hint_text(" update  ")]);
+            spans.extend([hint_key("/"), hint_text(" search  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+        Some(ListRow::SourceHeader { .. }) => {
+            spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
+            spans.extend([hint_key("i"), hint_text(" install all  ")]);
+            spans.extend([hint_key("d"), hint_text(" del  ")]);
+            spans.extend([hint_key("u"), hint_text(" update  ")]);
+            spans.extend([hint_key("/"), hint_text(" search  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+        Some(ListRow::SkillItem { .. }) => {
+            spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
+            spans.extend([hint_key("i"), hint_text(" install  ")]);
+            spans.extend([hint_key("e"), hint_text(" edit  ")]);
+            spans.extend([hint_key("d"), hint_text(" del  ")]);
+            spans.extend([hint_key("/"), hint_text(" search  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+        Some(ListRow::AgentItem { .. }) => {
+            spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
+            spans.extend([hint_key("i"), hint_text(" install  ")]);
+            spans.extend([hint_key("e"), hint_text(" edit  ")]);
+            spans.extend([hint_key("/"), hint_text(" search  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+        None => {
+            spans.extend([hint_key("a"), hint_text(" add  ")]);
+            spans.extend([hint_key("/"), hint_text(" search  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+    }
+    Line::from(spans)
 }
 
 fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
@@ -1079,6 +1522,29 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
                 let g = &app.groups[*group_index];
                 format!("⚠ PERMANENT: Delete \"{}\"? Type 'delete': {typed}", g.name,)
             }
+            ConfirmState::BulkToggle { group_index, category, install } => {
+                let g = &app.groups[*group_index];
+                let action = if *install { "Install" } else { "Uninstall" };
+                let (kind, count) = match category {
+                    Category::Skills => {
+                        let c = g.skills.iter().filter(|s| {
+                            s.install_status != SkillInstallStatus::Conflict &&
+                            if *install { s.install_status == SkillInstallStatus::NotInstalled }
+                            else { s.install_status == SkillInstallStatus::Installed }
+                        }).count();
+                        ("skill(s)", c)
+                    }
+                    Category::Agents => {
+                        let c = g.agents.iter().filter(|a| {
+                            a.install_status != SkillInstallStatus::Conflict &&
+                            if *install { a.install_status == SkillInstallStatus::NotInstalled }
+                            else { a.install_status == SkillInstallStatus::Installed }
+                        }).count();
+                        ("agent(s)", c)
+                    }
+                };
+                format!("{action} {count} {kind} from \"{}\"? [y/N]", g.name)
+            }
         };
         let p = Paragraph::new(Line::from(Span::styled(
             prompt,
@@ -1093,26 +1559,15 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
         )));
         frame.render_widget(p, inner);
     } else {
-        let hints = Line::from(vec![
-            Span::styled("␣", Style::default().fg(Color::Yellow)),
-            Span::raw(" toggle  "),
-            Span::styled("0", Style::default().fg(Color::Yellow)),
-            Span::raw("/"),
-            Span::styled("9", Style::default().fg(Color::Yellow)),
-            Span::raw(" fold/unfold  "),
-            Span::styled("a", Style::default().fg(Color::Yellow)),
-            Span::raw(" add  "),
-            Span::styled("u", Style::default().fg(Color::Yellow)),
-            Span::raw(" update  "),
-            Span::styled("d", Style::default().fg(Color::Yellow)),
-            Span::raw(" del  "),
-            Span::styled("/", Style::default().fg(Color::Yellow)),
-            Span::raw(" search  "),
-            Span::styled("q", Style::default().fg(Color::Yellow)),
-            Span::raw(" quit"),
-        ]);
+        let hints = build_source_hints(app.current_row());
 
-        let status_line = if let Some((ref msg, _)) = app.status_message {
+        let status_line = if app.background_task.as_ref().map_or(false, |t| t.is_running) {
+            let progress_text = app.background_task.as_ref()
+                .and_then(|t| t.progress.as_ref())
+                .map(|p| format!("⟳ {}", p))
+                .unwrap_or_else(|| "⟳ Updating...".to_string());
+            Line::from(Span::styled(progress_text, Style::default().fg(Color::Yellow)))
+        } else if let Some((ref msg, _)) = app.status_message {
             Line::from(Span::styled(msg.clone(), Style::default().fg(Color::Green)))
         } else {
             Line::default()
@@ -1143,11 +1598,7 @@ pub fn run(config: &mut Config) -> Result<()> {
     let agents_dir = expand_tilde(&config.central.agents_source);
     let source_dir = expand_tilde(&config.central.source_dir);
 
-    // Auto-update on launch
-    println!("Updating source repos...");
-    let _ = skills::update_all(&skills_dir, &agents_dir, &source_dir);
-
-    // Prune broken symlinks
+    // Prune broken symlinks before loading
     let _ = skills::prune_broken_skills(&skills_dir);
     let _ = skills::prune_broken_agents(&agents_dir);
 
@@ -1181,14 +1632,45 @@ pub fn run(config: &mut Config) -> Result<()> {
     terminal.clear()?;
 
     let mut app = App::new(config.clone(), groups, skills_dir, agents_dir, source_dir);
+    
+    // Start background update immediately (non-blocking)
+    app.do_update();
 
     // Event loop
     loop {
         let area_height = terminal.size()?.height;
         app.ensure_visible(area_height);
-        terminal.draw(|frame| render(&app, frame))?;
+        terminal.draw(|frame| render(&mut app, frame))?;
 
         app.clear_expired_status();
+
+        // Poll background task for events
+        if let Some(ref mut task) = app.background_task {
+            for event in task.poll() {
+                use super::background::TaskEvent;
+                match event {
+                    TaskEvent::UpdateRepoStart { name } => {
+                        app.log.push(super::log::LogLevel::Info, format!("Updating {}...", name));
+                    }
+                    TaskEvent::UpdateRepoComplete { name, success, message } => {
+                        let level = if success { super::log::LogLevel::Success } else { super::log::LogLevel::Error };
+                        app.log.push(level, format!("{}: {}", name, message));
+                    }
+                    TaskEvent::UpdateAllDone { total, updated, new_skills, new_agents } => {
+                        app.log.push(super::log::LogLevel::Success, format!(
+                            "Update complete: {} repos, {} updated, {} new skills, {} new agents",
+                            total, updated, new_skills, new_agents
+                        ));
+                        app.refresh();
+                        app.set_status("Update complete");
+                    }
+                    TaskEvent::OperationResult { message, success } => {
+                        let level = if success { super::log::LogLevel::Success } else { super::log::LogLevel::Error };
+                        app.log.push(level, message);
+                    }
+                }
+            }
+        }
 
         if event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {

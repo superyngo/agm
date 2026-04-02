@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AGM TUI Layout Mockups</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&display=swap');
+
+  :root {
+    --bg: #0f0f1a;
+    --surface: #1a1a2e;
+    --surface-alt: #16213e;
+    --border: #0f3460;
+    --cyan: #00d4ff;
+    --green: #00e676;
+    --red: #ff5252;
+    --yellow: #ffd740;
+    --orange: #ffab40;
+    --gray: #6b7280;
+    --text: #e0e0e0;
+    --text-dim: #8892a0;
+    --cursor-bg: #2a2a3e;
+    --tab-active: #0f3460;
+    --tab-hover: #162040;
+    --popup-bg: #12122a;
+    --accent-blue: #4fc3f7;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Fira Code', 'SF Mono', 'Cascadia Code', 'JetBrains Mono', monospace;
+    font-size: 13px;
+    line-height: 1.6;
+    padding: 20px;
+    min-height: 100vh;
+  }
+
+  h1 {
+    color: var(--cyan);
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    letter-spacing: 1px;
+  }
+
+  .subtitle {
+    color: var(--text-dim);
+    font-size: 12px;
+    margin-bottom: 24px;
+  }
+
+  /* Tab navigation */
+  .tabs {
+    display: flex;
+    gap: 2px;
+    margin-bottom: 0;
+    flex-wrap: wrap;
+    border-bottom: 2px solid var(--border);
+  }
+
+  .tab {
+    padding: 10px 18px;
+    background: transparent;
+    color: var(--text-dim);
+    border: none;
+    font-family: inherit;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    border-radius: 6px 6px 0 0;
+    position: relative;
+    white-space: nowrap;
+  }
+
+  .tab:hover {
+    background: var(--tab-hover);
+    color: var(--text);
+  }
+
+  .tab.active {
+    background: var(--tab-active);
+    color: var(--cyan);
+    font-weight: 600;
+  }
+
+  .tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: var(--cyan);
+  }
+
+  .tab-num {
+    color: var(--yellow);
+    margin-right: 6px;
+    font-weight: 700;
+  }
+
+  /* Tab content */
+  .tab-content {
+    display: none;
+    padding: 24px 0;
+    animation: fadeIn 0.2s ease;
+  }
+
+  .tab-content.active { display: block; }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Description blocks */
+  .description {
+    background: var(--surface);
+    border-left: 3px solid var(--cyan);
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    border-radius: 0 6px 6px 0;
+    font-size: 12px;
+    color: var(--text-dim);
+    line-height: 1.7;
+  }
+
+  .description strong {
+    color: var(--text);
+  }
+
+  .description kbd {
+    display: inline-block;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 6px;
+    font-family: inherit;
+    font-size: 11px;
+    color: var(--yellow);
+    margin: 0 2px;
+  }
+
+  .mockup-label {
+    color: var(--accent-blue);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 8px;
+    margin-top: 20px;
+  }
+
+  /* Terminal mockup frame */
+  .terminal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 28px;
+    max-width: 720px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+  }
+
+  .terminal pre {
+    padding: 0;
+    margin: 0;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.45;
+  }
+
+  .terminal .frame {
+    padding: 12px 16px;
+  }
+
+  /* Syntax coloring inside mockups */
+  .c  { color: var(--cyan); }       /* borders, structural */
+  .g  { color: var(--green); }      /* success / installed */
+  .r  { color: var(--red); }        /* error / missing */
+  .y  { color: var(--yellow); }     /* cursor / highlight */
+  .o  { color: var(--orange); }     /* warnings / in-progress */
+  .d  { color: var(--text-dim); }   /* dim / comments */
+  .w  { color: var(--text); }       /* normal text */
+  .b  { color: var(--accent-blue); }/* info accents */
+
+  /* Highlighted cursor line */
+  .cursor-line {
+    display: inline-block;
+    width: 100%;
+    background: #2a2a40;
+    border-radius: 2px;
+    padding: 0 4px;
+    margin: 0 -4px;
+  }
+
+  /* Popup overlay effect (visual only) */
+  .popup-line {
+    color: var(--text);
+  }
+
+  .popup-border {
+    color: var(--cyan);
+  }
+
+  /* Status bar area */
+  .status-sep {
+    color: var(--border);
+  }
+
+  /* Key binding annotations */
+  .keybinds {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    margin-top: 12px;
+    padding: 12px 16px;
+    background: var(--surface);
+    border-radius: 6px;
+    border: 1px solid #1e2a4a;
+  }
+
+  .keybind {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .keybind kbd {
+    display: inline-block;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 1px 6px;
+    font-family: inherit;
+    font-size: 11px;
+    color: var(--yellow);
+    margin-right: 4px;
+  }
+
+  .section-divider {
+    border: none;
+    border-top: 1px dashed #1e2a4a;
+    margin: 28px 0;
+  }
+
+  /* Responsive */
+  @media (max-width: 780px) {
+    body { padding: 12px; font-size: 11px; }
+    .terminal pre { font-size: 11px; }
+    .terminal .frame { padding: 8px 10px; }
+    .tab { padding: 8px 12px; font-size: 11px; }
+  }
+
+  @media (max-width: 520px) {
+    .terminal pre { font-size: 9.5px; }
+    .tab { padding: 6px 8px; font-size: 10px; }
+  }
+</style>
+</head>
+<body>
+
+<h1>AGM TUI Layout Mockups</h1>
+<p class="subtitle">Interactive mockups for the AGM project redesign — Source &amp; Tool TUI views</p>
+
+<div class="tabs" role="tablist">
+  <button class="tab active" onclick="showTab(0)" role="tab" aria-selected="true">
+    <span class="tab-num">1</span>Source — Log Overlay
+  </button>
+  <button class="tab" onclick="showTab(1)" role="tab" aria-selected="false">
+    <span class="tab-num">2</span>Source — Info Popup
+  </button>
+  <button class="tab" onclick="showTab(2)" role="tab" aria-selected="false">
+    <span class="tab-num">3</span>Tool — Main View
+  </button>
+  <button class="tab" onclick="showTab(3)" role="tab" aria-selected="false">
+    <span class="tab-num">4</span>Tool — File Picker
+  </button>
+  <button class="tab" onclick="showTab(4)" role="tab" aria-selected="false">
+    <span class="tab-num">5</span>Tool — Path Editor
+  </button>
+</div>
+
+<!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<!-- TAB 1: Source TUI — Log Overlay                              -->
+<!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<div class="tab-content active" id="tab-0">
+
+  <div class="description">
+    <strong>Source TUI — Normal Mode</strong><br>
+    The tree view lists skill repos and their individual skills. The status bar at the bottom
+    shows a <strong style="color:var(--yellow)">yellow progress indicator</strong> while a
+    background update is running. Press <kbd>l</kbd> to open the log overlay.
+  </div>
+
+  <div class="mockup-label">Normal mode (background update in progress)</div>
+  <div class="terminal"><div class="frame"><pre>
+<span class="c">┌─</span> <span class="b">AGM Source Manager</span> <span class="c">──────────────────────────────────────────┐</span>
+<span class="c">│</span> <span class="w">▼ 🧩 Skills (143 installed)</span>                                    <span class="c">│</span>
+<span class="c">│</span> <span class="w">  ▼ 📦 skill-repo-1 (12 skills)</span>                                <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="g">✓</span> <span class="w">skill-name-1</span>         <span class="g">installed</span>                        <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="g">✓</span> <span class="w">skill-name-2</span>         <span class="g">installed</span>                        <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="g">✓</span> <span class="w">skill-name-3</span>         <span class="g">installed</span>                        <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">○ skill-name-4</span>         <span class="d">available</span>                       <span class="c">│</span>
+<span class="c">│</span> <span class="w">  ▼ 📦 skill-repo-2 (8 skills)</span>                                 <span class="c">│</span>
+<span class="c">│</span><span class="cursor-line"> <span class="y">&gt;</span>   <span class="g">✓</span> <span class="y">another-skill</span>        <span class="g">installed</span>                       </span><span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="g">✓</span> <span class="w">data-pipeline</span>        <span class="g">installed</span>                       <span class="c">│</span>
+<span class="c">│</span> <span class="w">  ▶ 📦 skill-repo-3 (5 skills)</span>                                 <span class="c">│</span>
+<span class="c">│</span> <span class="w">  ▼ 📁 local-skills (3 skills)</span>                                 <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="g">✓</span> <span class="w">my-custom-skill</span>      <span class="g">installed</span>                       <span class="c">│</span>
+<span class="c">│</span>                                                                  <span class="c">│</span>
+<span class="c">│</span>                                                                  <span class="c">│</span>
+<span class="c">│</span>                                                                  <span class="c">│</span>
+<span class="c">│</span>                                                                  <span class="c">│</span>
+<span class="c">│</span>                                                                  <span class="c">│</span>
+<span class="c">├──────────────────────────────────────────────────────────────────┤</span>
+<span class="c">│</span> <span class="o">⟳ Updating 3/5 repos...</span>  <span class="d">␣:toggle 0/9:all e:edit l:log q:quit</span> <span class="c">│</span>
+<span class="c">│</span> <span class="w">another-skill: </span><span class="g">installed</span>                                        <span class="c">│</span>
+<span class="c">└──────────────────────────────────────────────────────────────────┘</span></pre></div></div>
+
+  <hr class="section-divider">
+
+  <div class="description">
+    <strong>Source TUI — Log Overlay</strong><br>
+    Pressing <kbd>l</kbd> opens a floating log panel over the tree view. The log shows
+    timestamped entries from background operations (repo updates, skill installs). The
+    overlay is scrollable and dismissible with <kbd>l</kbd> or <kbd>Esc</kbd>.
+  </div>
+
+  <div class="mockup-label">Log overlay (press <kbd>l</kbd> to toggle)</div>
+  <div class="terminal"><div class="frame"><pre>
+<span class="c">┌─</span> <span class="b">AGM Source Manager</span> <span class="c">──────────────────────────────────────────┐</span>
+<span class="c">│</span> <span class="w">▼ 🧩 Skills (143 installed)</span>                                    <span class="c">│</span>
+<span class="c">│</span> <span class="w">  ▼ 📦 skill-repo-1 (12 skills)</span>                                <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="g">✓</span> <span class="w">skill-name-1</span>         <span class="g">installed</span>                        <span class="c">│</span>
+<span class="c">│</span>  <span class="c">┌─</span> <span class="b">Log</span> <span class="c">──────────────────────────────────────────</span> <span class="d">l:close</span> <span class="c">─┐</span><span class="c">│</span>
+<span class="c">│</span>  <span class="c">│</span> <span class="d">[08:01:23]</span> Updating skill-repo-1... <span class="g">✓ Already up-to-date</span>  <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span>  <span class="c">│</span> <span class="d">[08:01:24]</span> Updating skill-repo-2... <span class="g">✓ 3 new commits</span>       <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span>  <span class="c">│</span> <span class="d">[08:01:25]</span> Installed: <span class="g">new-skill-x</span>                        <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span>  <span class="c">│</span> <span class="d">[08:01:25]</span> Installed: <span class="g">new-skill-y</span>                        <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span>  <span class="c">│</span> <span class="d">[08:01:26]</span> Updating local-skills... <span class="o">skipped (local)</span>      <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span>  <span class="c">│</span> <span class="d">[08:01:27]</span> Update complete: <span class="g">5 repos, 2 new skills</span>      <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span>  <span class="c">│</span>                                                          <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span>  <span class="c">│</span> <span class="d">↑↓/PgUp/PgDn/Home/End to scroll</span>            <span class="d">[12 entries]</span> <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span>  <span class="c">└──────────────────────────────────────────────────────────┘</span><span class="c">│</span>
+<span class="c">│</span>                                                                  <span class="c">│</span>
+<span class="c">│</span>                                                                  <span class="c">│</span>
+<span class="c">│</span>                                                                  <span class="c">│</span>
+<span class="c">├──────────────────────────────────────────────────────────────────┤</span>
+<span class="c">│</span> <span class="o">⟳ Updating 3/5 repos...</span>  <span class="d">␣:toggle 0/9:all e:edit l:log q:quit</span> <span class="c">│</span>
+<span class="c">│</span> <span class="w">skill-name-1: </span><span class="g">installed</span>                                        <span class="c">│</span>
+<span class="c">└──────────────────────────────────────────────────────────────────┘</span></pre></div></div>
+
+  <div class="keybinds">
+    <span class="keybind"><kbd>␣</kbd> toggle install/remove selected skill</span>
+    <span class="keybind"><kbd>0</kbd>–<kbd>9</kbd> toggle all skills in repo</span>
+    <span class="keybind"><kbd>e</kbd> edit SKILL.md</span>
+    <span class="keybind"><kbd>l</kbd> toggle log overlay</span>
+    <span class="keybind"><kbd>i</kbd> show skill info popup</span>
+    <span class="keybind"><kbd>q</kbd> quit</span>
+    <span class="keybind"><kbd>↑</kbd><kbd>↓</kbd> navigate tree</span>
+    <span class="keybind"><kbd>←</kbd><kbd>→</kbd> collapse/expand</span>
+  </div>
+</div>
+
+<!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<!-- TAB 2: Source TUI — Info Popup                               -->
+<!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<div class="tab-content" id="tab-1">
+
+  <div class="description">
+    <strong>Source TUI — Info Popup</strong><br>
+    Pressing <kbd>i</kbd> on a selected skill opens a large info popup (~80% of the
+    screen). It shows skill metadata, file listing, and renders the full
+    <strong>SKILL.md</strong> content. The popup is scrollable and closes with
+    <kbd>Esc</kbd> or <kbd>i</kbd>.
+  </div>
+
+  <div class="mockup-label">Info popup (press <kbd>i</kbd> on a skill)</div>
+  <div class="terminal"><div class="frame"><pre>
+<span class="c">┌─</span> <span class="b">AGM Source Manager</span> <span class="c">──────────────────────────────────────────┐</span>
+<span class="c">│</span> <span class="c">┌─</span> <span class="b">Info: skill-name-1</span> <span class="c">──────────────────────</span> <span class="d">Esc/i:close</span> <span class="c">───┐</span><span class="c">│</span>
+<span class="c">│</span> <span class="c">│</span>                                                           <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span> <span class="c">│</span> <span class="d">Name:</span>    <span class="w">skill-name-1</span>                                    <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span> <span class="c">│</span> <span class="d">Source:</span>  <span class="w">skill-repo-1</span>                                    <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span> <span class="c">│</span> <span class="d">Path:</span>    <span class="d">~/.local/share/agm/source/skill-repo-1/sk...</span>    <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span> <span class="c">│</span> <span class="d">Status:</span>  <span class="g">✓ installed</span>                                     <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span> <span class="c">│</span>                                                           <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span> <span class="c">│</span> <span class="d">Files:</span>                                                   <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span> <span class="c">│</span>   <span class="w">SKILL.md</span>                                                <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span> <span class="c">│</span>   <span class="w">prompt.md</span>                                               <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span> <span class="c">│</span>   <span class="b">tools/</span>                                                  <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span> <span class="c">│</span>                                                           <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span> <span class="c">│</span> <span class="c">─── SKILL.md ───────────────────────────────────────────</span>  <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span> <span class="c">│</span> <span class="y"># Skill Name</span>                                              <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span> <span class="c">│</span> <span class="w">Description of what this skill does and how</span>               <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span> <span class="c">│</span> <span class="w">it integrates with the AGM workflow...</span>                    <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span> <span class="c">│</span> <span class="y">## Usage</span>                                                  <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span> <span class="c">│</span> <span class="w">Invoke this skill when you need to...</span>                     <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span> <span class="c">│</span>                                                           <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span> <span class="c">│</span> <span class="d">↑↓/PgUp/PgDn/Home/End to scroll</span>              <span class="d">[line 1/42]</span> <span class="c">│</span><span class="c">│</span>
+<span class="c">│</span> <span class="c">└───────────────────────────────────────────────────────────┘</span><span class="c">│</span>
+<span class="c">├──────────────────────────────────────────────────────────────────┤</span>
+<span class="c">│</span> <span class="d">␣:toggle 0/9:all e:edit i:info l:log q:quit</span>                   <span class="c">│</span>
+<span class="c">│</span> <span class="w">skill-name-1: </span><span class="g">installed</span>                                        <span class="c">│</span>
+<span class="c">└──────────────────────────────────────────────────────────────────┘</span></pre></div></div>
+
+  <div class="keybinds">
+    <span class="keybind"><kbd>i</kbd> / <kbd>Esc</kbd> close info popup</span>
+    <span class="keybind"><kbd>↑</kbd><kbd>↓</kbd> scroll content</span>
+    <span class="keybind"><kbd>PgUp</kbd><kbd>PgDn</kbd> page scroll</span>
+    <span class="keybind"><kbd>Home</kbd><kbd>End</kbd> jump to top/bottom</span>
+  </div>
+</div>
+
+<!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<!-- TAB 3: Tool TUI — Main View                                  -->
+<!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<div class="tab-content" id="tab-2">
+
+  <div class="description">
+    <strong>Tool TUI — Main View</strong><br>
+    Displays the central AGM configuration and all registered tools in a tree. Each tool
+    shows its link status for prompt, skills, agents, plus config files (settings, auth, mcp).
+    Tools are collapsible. The <strong style="color:var(--yellow)">highlighted cursor line</strong>
+    (yellow on dark gray) indicates the currently selected row.
+    <strong style="color:var(--red)">✗ not installed</strong> tools are collapsed and dimmed.
+  </div>
+
+  <div class="mockup-label">Main view with cursor on claude &gt; prompt</div>
+  <div class="terminal"><div class="frame"><pre>
+<span class="c">┌─</span> <span class="b">AGM Tool Manager</span> <span class="c">────────────────────────────────────────────┐</span>
+<span class="c">│</span> <span class="w">▼ central</span>                                                      <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">config :</span> <span class="w">~/.config/agm/config.toml</span>                           <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">prompt :</span> <span class="w">~/.local/share/agm/prompts/MASTER.md</span>               <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">skills :</span> <span class="w">~/.local/share/agm/skills</span> <span class="g">(143 installed, 11)</span>      <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">agents :</span> <span class="w">~/.local/share/agm/agents</span> <span class="g">(1 installed)</span>           <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">source :</span> <span class="w">~/.local/share/agm/source</span>                          <span class="c">│</span>
+<span class="c">│</span>                                                                  <span class="c">│</span>
+<span class="c">│</span> <span class="w">▼ claude</span> <span class="d">(Claude Code)</span> <span class="g">✓ installed</span>                              <span class="c">│</span>
+<span class="c">│</span><span class="cursor-line"> <span class="y">&gt;</span> <span class="y">  prompt :</span> <span class="g">✓ linked</span> <span class="d">→ ~/.claude/CLAUDE.md</span>                      </span><span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">skills :</span> <span class="g">✓ linked</span> <span class="d">→ ~/.claude/skills</span>                        <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">agents :</span> <span class="g">✓ linked</span> <span class="d">→ ~/.claude/agents</span>                        <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">settings:</span> <span class="w">~/.claude.json</span>                                    <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">auth   :</span> <span class="w">~/.claude/.credentials.json</span>                       <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">mcp    :</span> <span class="w">~/.claude/settings.json</span>                            <span class="c">│</span>
+<span class="c">│</span>                                                                  <span class="c">│</span>
+<span class="c">│</span> <span class="d">▶ codex (Codex)</span> <span class="r">✗ not installed</span>                                  <span class="c">│</span>
+<span class="c">│</span> <span class="w">▼ copilot</span> <span class="d">(Copilot CLI)</span> <span class="g">✓ installed</span>                             <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">prompt :</span> <span class="r">✗ missing</span>                                         <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">skills :</span> <span class="g">✓ linked</span> <span class="d">→ ~/.config/github-copilot/skills</span>         <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">agents :</span> <span class="g">✓ linked</span> <span class="d">→ ~/.config/github-copilot/agents</span>         <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">settings:</span> <span class="w">~/.copilot/config.json</span>                            <span class="c">│</span>
+<span class="c">├──────────────────────────────────────────────────────────────────┤</span>
+<span class="c">│</span> <span class="d">␣/⏎:toggle e:edit 0/9:all l:log q:quit</span>                        <span class="c">│</span>
+<span class="c">│</span> <span class="w">claude &gt; prompt: </span><span class="g">✓ linked</span>                                       <span class="c">│</span>
+<span class="c">└──────────────────────────────────────────────────────────────────┘</span></pre></div></div>
+
+  <div class="keybinds">
+    <span class="keybind"><kbd>␣</kbd> / <kbd>⏎</kbd> toggle link (create/remove symlink)</span>
+    <span class="keybind"><kbd>e</kbd> open file in editor</span>
+    <span class="keybind"><kbd>0</kbd>–<kbd>9</kbd> link/unlink all for a tool</span>
+    <span class="keybind"><kbd>l</kbd> toggle log overlay</span>
+    <span class="keybind"><kbd>q</kbd> quit</span>
+    <span class="keybind"><kbd>↑</kbd><kbd>↓</kbd> navigate rows</span>
+    <span class="keybind"><kbd>←</kbd><kbd>→</kbd> collapse/expand tool section</span>
+  </div>
+</div>
+
+<!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<!-- TAB 4: Tool TUI — File Picker Popup                          -->
+<!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<div class="tab-content" id="tab-3">
+
+  <div class="description">
+    <strong>Tool TUI — File Picker Popup</strong><br>
+    When pressing <kbd>e</kbd> on a row that maps to multiple files (e.g. a tool's
+    <strong>settings</strong> or <strong>mcp</strong> config with multiple paths), a small
+    centered popup lets you choose which file to open. Use <kbd>↑</kbd><kbd>↓</kbd> to
+    navigate, <kbd>⏎</kbd> to open, or <kbd>Esc</kbd> to cancel.
+  </div>
+
+  <div class="mockup-label">File picker popup (press <kbd>e</kbd> on multi-file row)</div>
+  <div class="terminal"><div class="frame"><pre>
+<span class="c">┌─</span> <span class="b">AGM Tool Manager</span> <span class="c">────────────────────────────────────────────┐</span>
+<span class="c">│</span> <span class="w">▼ central</span>                                                      <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">config :</span> <span class="w">~/.config/agm/config.toml</span>                           <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">prompt :</span> <span class="w">~/.local/share/agm/prompts/MASTER.md</span>               <span class="c">│</span>
+<span class="c">│</span>                                                                  <span class="c">│</span>
+<span class="c">│</span>    <span class="c">┌─</span> <span class="b">Select file to edit</span> <span class="c">─────────────</span> <span class="d">Esc:cancel</span> <span class="c">─┐</span>          <span class="c">│</span>
+<span class="c">│</span>    <span class="c">│</span>                                             <span class="c">│</span>          <span class="c">│</span>
+<span class="c">│</span>    <span class="c">│</span><span class="cursor-line">  <span class="y">&gt; ~/.claude.json</span>                            </span><span class="c">│</span>          <span class="c">│</span>
+<span class="c">│</span>    <span class="c">│</span>    <span class="w">~/.claude/settings.json</span>                  <span class="c">│</span>          <span class="c">│</span>
+<span class="c">│</span>    <span class="c">│</span>    <span class="w">~/.claude/mcp.json</span>                       <span class="c">│</span>          <span class="c">│</span>
+<span class="c">│</span>    <span class="c">│</span>                                             <span class="c">│</span>          <span class="c">│</span>
+<span class="c">│</span>    <span class="c">└─────────────────────────────────────────────┘</span>          <span class="c">│</span>
+<span class="c">│</span>                                                                  <span class="c">│</span>
+<span class="c">│</span> <span class="d">▶ codex (Codex)</span> <span class="r">✗ not installed</span>                                  <span class="c">│</span>
+<span class="c">│</span> <span class="w">▼ copilot</span> <span class="d">(Copilot CLI)</span> <span class="g">✓ installed</span>                             <span class="c">│</span>
+<span class="c">│</span>                                                                  <span class="c">│</span>
+<span class="c">│</span>                                                                  <span class="c">│</span>
+<span class="c">│</span>                                                                  <span class="c">│</span>
+<span class="c">├──────────────────────────────────────────────────────────────────┤</span>
+<span class="c">│</span> <span class="d">␣/⏎:toggle e:edit 0/9:all l:log q:quit</span>                        <span class="c">│</span>
+<span class="c">│</span> <span class="w">claude &gt; settings: </span><span class="w">~/.claude.json</span>                                <span class="c">│</span>
+<span class="c">└──────────────────────────────────────────────────────────────────┘</span></pre></div></div>
+
+  <div class="keybinds">
+    <span class="keybind"><kbd>↑</kbd><kbd>↓</kbd> select file</span>
+    <span class="keybind"><kbd>⏎</kbd> open selected file in editor</span>
+    <span class="keybind"><kbd>Esc</kbd> cancel and close popup</span>
+  </div>
+</div>
+
+<!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<!-- TAB 5: Tool TUI — Path Editor                                -->
+<!-- ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ -->
+<div class="tab-content" id="tab-4">
+
+  <div class="description">
+    <strong>Tool TUI — Inline Path Editor</strong><br>
+    When pressing <kbd>e</kbd> on a central path row (skills, agents, prompt, source), an
+    inline text-editing popup appears pre-filled with the current path. Edit the path and
+    press <kbd>⏎</kbd> to save, or <kbd>Esc</kbd> to cancel. The blinking cursor
+    (<span style="color:var(--cyan)">█</span>) shows the edit position.
+  </div>
+
+  <div class="mockup-label">Inline path editor (press <kbd>e</kbd> on central path row)</div>
+  <div class="terminal"><div class="frame"><pre>
+<span class="c">┌─</span> <span class="b">AGM Tool Manager</span> <span class="c">────────────────────────────────────────────┐</span>
+<span class="c">│</span> <span class="w">▼ central</span>                                                      <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">config :</span> <span class="w">~/.config/agm/config.toml</span>                           <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">prompt :</span> <span class="w">~/.local/share/agm/prompts/MASTER.md</span>               <span class="c">│</span>
+<span class="c">│</span>                                                                  <span class="c">│</span>
+<span class="c">│</span>    <span class="c">┌─</span> <span class="b">Edit skills path</span> <span class="c">──────────────</span> <span class="d">Esc:cancel</span> <span class="c">─┐</span>          <span class="c">│</span>
+<span class="c">│</span>    <span class="c">│</span>                                             <span class="c">│</span>          <span class="c">│</span>
+<span class="c">│</span>    <span class="c">│</span>  <span class="w">~/.local/share/agm/skills</span><span class="c blink">█</span>                 <span class="c">│</span>          <span class="c">│</span>
+<span class="c">│</span>    <span class="c">│</span>                                             <span class="c">│</span>          <span class="c">│</span>
+<span class="c">│</span>    <span class="c">│</span>  <span class="d">Enter: save  Esc: cancel</span>                   <span class="c">│</span>          <span class="c">│</span>
+<span class="c">│</span>    <span class="c">└─────────────────────────────────────────────┘</span>          <span class="c">│</span>
+<span class="c">│</span>                                                                  <span class="c">│</span>
+<span class="c">│</span> <span class="w">▼ claude</span> <span class="d">(Claude Code)</span> <span class="g">✓ installed</span>                              <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">prompt :</span> <span class="g">✓ linked</span> <span class="d">→ ~/.claude/CLAUDE.md</span>                      <span class="c">│</span>
+<span class="c">│</span> <span class="w">    </span><span class="d">skills :</span> <span class="g">✓ linked</span> <span class="d">→ ~/.claude/skills</span>                        <span class="c">│</span>
+<span class="c">│</span>                                                                  <span class="c">│</span>
+<span class="c">│</span>                                                                  <span class="c">│</span>
+<span class="c">│</span>                                                                  <span class="c">│</span>
+<span class="c">├──────────────────────────────────────────────────────────────────┤</span>
+<span class="c">│</span> <span class="d">␣/⏎:toggle e:edit 0/9:all l:log q:quit</span>                        <span class="c">│</span>
+<span class="c">│</span> <span class="w">central &gt; skills: </span><span class="w">~/.local/share/agm/skills</span>                      <span class="c">│</span>
+<span class="c">└──────────────────────────────────────────────────────────────────┘</span></pre></div></div>
+
+  <div class="keybinds">
+    <span class="keybind"><kbd>⏎</kbd> save edited path to config</span>
+    <span class="keybind"><kbd>Esc</kbd> cancel and discard changes</span>
+    <span class="keybind"><kbd>←</kbd><kbd>→</kbd> move cursor in text</span>
+    <span class="keybind"><kbd>Home</kbd><kbd>End</kbd> jump to start/end of path</span>
+    <span class="keybind"><kbd>Ctrl+U</kbd> clear line</span>
+  </div>
+</div>
+
+<script>
+  // Tab switching
+  function showTab(index) {
+    document.querySelectorAll('.tab-content').forEach((el, i) => {
+      el.classList.toggle('active', i === index);
+    });
+    document.querySelectorAll('.tab').forEach((el, i) => {
+      el.classList.toggle('active', i === index);
+      el.setAttribute('aria-selected', i === index ? 'true' : 'false');
+    });
+  }
+
+  // Keyboard navigation (1-5 keys to switch tabs)
+  document.addEventListener('keydown', (e) => {
+    const num = parseInt(e.key);
+    if (num >= 1 && num <= 5) {
+      showTab(num - 1);
+    } else if (e.key === 'ArrowRight') {
+      const current = [...document.querySelectorAll('.tab')].findIndex(t => t.classList.contains('active'));
+      if (current < 4) showTab(current + 1);
+    } else if (e.key === 'ArrowLeft') {
+      const current = [...document.querySelectorAll('.tab')].findIndex(t => t.classList.contains('active'));
+      if (current > 0) showTab(current - 1);
+    }
+  });
+
+  // Blinking cursor animation
+  const style = document.createElement('style');
+  style.textContent = `
+    .blink {
+      animation: blink-cursor 1s step-end infinite;
+    }
+    @keyframes blink-cursor {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+  `;
+  document.head.appendChild(style);
+</script>
+
+</body>
+</html>
