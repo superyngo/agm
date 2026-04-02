@@ -66,7 +66,7 @@ impl ScrollablePopup {
                 self.scroll_to_end();
                 PopupAction::Consumed
             }
-            KeyCode::Esc => PopupAction::Close,
+            KeyCode::Esc | KeyCode::Enter | KeyCode::Char(' ') => PopupAction::Close,
             _ => PopupAction::Ignored,
         }
     }
@@ -103,11 +103,9 @@ impl ScrollablePopup {
 
         frame.render_widget(paragraph, inner_area);
 
-        // Render position indicator at bottom-right
+        // Render page indicator at bottom-right
         if !self.lines.is_empty() {
-            let current_line = self.scroll_offset + 1;
-            let total_lines = self.lines.len();
-            let position_text = format!("[{}/{}]", current_line, total_lines);
+            let position_text = format!("[{}/{}]", self.current_page(), self.total_pages());
             let position_span = Span::styled(position_text, Style::default().fg(Color::Gray));
 
             // Calculate position for bottom-right alignment
@@ -121,6 +119,21 @@ impl ScrollablePopup {
                 frame.render_widget(indicator_paragraph, indicator_area);
             }
         }
+    }
+
+    pub fn current_page(&self) -> usize {
+        if self.visible_height == 0 || self.lines.is_empty() {
+            return 1;
+        }
+        let page = self.scroll_offset / self.visible_height + 1;
+        page.min(self.total_pages())
+    }
+
+    pub fn total_pages(&self) -> usize {
+        if self.visible_height == 0 || self.lines.is_empty() {
+            return 1;
+        }
+        (self.lines.len() + self.visible_height - 1) / self.visible_height
     }
 
     fn scroll_up(&mut self, amount: usize) {
@@ -240,12 +253,27 @@ mod tests {
     }
 
     #[test]
+    fn test_handle_key_enter_close() {
+        let lines = vec![Line::from("test line")];
+        let mut popup = ScrollablePopup::new("Test", lines);
+
+        assert_eq!(popup.handle_key(KeyCode::Enter), PopupAction::Close);
+    }
+
+    #[test]
+    fn test_handle_key_space_close() {
+        let lines = vec![Line::from("test line")];
+        let mut popup = ScrollablePopup::new("Test", lines);
+
+        assert_eq!(popup.handle_key(KeyCode::Char(' ')), PopupAction::Close);
+    }
+
+    #[test]
     fn test_handle_key_unknown() {
         let lines = vec![Line::from("test line")];
         let mut popup = ScrollablePopup::new("Test", lines);
 
         assert_eq!(popup.handle_key(KeyCode::Char('x')), PopupAction::Ignored);
-        assert_eq!(popup.handle_key(KeyCode::Enter), PopupAction::Ignored);
         assert_eq!(popup.handle_key(KeyCode::Tab), PopupAction::Ignored);
     }
 
@@ -297,5 +325,41 @@ mod tests {
         // Test 'k' (up)
         assert_eq!(popup.handle_key(KeyCode::Char('k')), PopupAction::Consumed);
         assert_eq!(popup.scroll_offset, 0);
+    }
+
+    #[test]
+    fn test_page_indicator_values() {
+        let lines = (1..=20).map(|i| Line::from(format!("line {}", i))).collect();
+        let mut popup = ScrollablePopup::new("Test", lines);
+        popup.visible_height = 5;
+
+        assert_eq!(popup.current_page(), 1);
+        assert_eq!(popup.total_pages(), 4);
+
+        popup.scroll_offset = 5;
+        assert_eq!(popup.current_page(), 2);
+
+        popup.scroll_offset = 15;
+        assert_eq!(popup.current_page(), 4);
+
+        popup.scroll_offset = 18;
+        assert_eq!(popup.current_page(), 4);
+    }
+
+    #[test]
+    fn test_page_indicator_single_page() {
+        let lines = vec![Line::from("line 1"), Line::from("line 2")];
+        let mut popup = ScrollablePopup::new("Test", lines);
+        popup.visible_height = 10;
+
+        assert_eq!(popup.current_page(), 1);
+        assert_eq!(popup.total_pages(), 1);
+    }
+
+    #[test]
+    fn test_page_indicator_empty() {
+        let popup = ScrollablePopup::new("Test", vec![]);
+        assert_eq!(popup.current_page(), 1);
+        assert_eq!(popup.total_pages(), 1);
     }
 }
