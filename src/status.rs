@@ -72,7 +72,7 @@ pub fn status() -> anyhow::Result<()> {
                 LinkStatus::Wrong(t) => println!("{} → {}", "✗ wrong".red(), t.dimmed()),
                 LinkStatus::Blocked => println!(
                     "{} → {}",
-                    "✗ blocked".red(),
+                    "✗ not linked".yellow(),
                     contract_tilde(&prompt_link).dimmed()
                 ),
             }
@@ -97,7 +97,7 @@ pub fn status() -> anyhow::Result<()> {
                 LinkStatus::Wrong(t) => println!("{} → {}", "✗ wrong".red(), t.dimmed()),
                 LinkStatus::Blocked => println!(
                     "{} → {}",
-                    "✗ blocked".red(),
+                    "✗ not linked".yellow(),
                     contract_tilde(&skills_link).dimmed()
                 ),
             }
@@ -122,7 +122,7 @@ pub fn status() -> anyhow::Result<()> {
                 LinkStatus::Wrong(t) => println!("{} → {}", "✗ wrong".red(), t.dimmed()),
                 LinkStatus::Blocked => println!(
                     "{} → {}",
-                    "✗ blocked".red(),
+                    "✗ not linked".yellow(),
                     contract_tilde(&agents_link).dimmed()
                 ),
             }

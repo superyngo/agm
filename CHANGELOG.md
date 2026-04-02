@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.7.0] - 2026-04-02
+
 ### Breaking Changes
 - **CLI consolidation:** Removed subcommands `link`, `unlink`, `status`, `config`, `prompt`, `auth`, `mcp`. All tool management is now under `agm tool`:
   - `agm tool` — Interactive TUI for managing tools, links, and configuration

@@ -1,14 +1,19 @@
-use std::collections::VecDeque;
 use chrono::Local;
-use ratatui::text::{Line, Span};
 use ratatui::style::{Color, Style};
+use ratatui::text::{Line, Span};
+use std::collections::VecDeque;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum LogLevel { Info, Success, Warning, Error }
+pub enum LogLevel {
+    Info,
+    Success,
+    Warning,
+    Error,
+}
 
 #[derive(Debug, Clone)]
 pub struct LogEntry {
-    pub timestamp: String,     // "HH:MM:SS"
+    pub timestamp: String, // "HH:MM:SS"
     pub message: String,
     pub level: LogLevel,
 }
@@ -16,6 +21,7 @@ pub struct LogEntry {
 pub struct LogBuffer {
     entries: VecDeque<LogEntry>,
     max_entries: usize,
+    #[allow(dead_code)]
     pub auto_scroll: bool,
 }
 
@@ -41,23 +47,35 @@ impl LogBuffer {
         }
     }
 
-    pub fn len(&self) -> usize { self.entries.len() }
-    pub fn is_empty(&self) -> bool { self.entries.is_empty() }
+    #[allow(dead_code)]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+    #[allow(dead_code)]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 
     /// Convert entries to styled ratatui Lines for rendering
     pub fn to_lines(&self) -> Vec<Line<'static>> {
-        self.entries.iter().map(|e| {
-            let color = match e.level {
-                LogLevel::Info => Color::White,
-                LogLevel::Success => Color::Green,
-                LogLevel::Warning => Color::Yellow,
-                LogLevel::Error => Color::Red,
-            };
-            Line::from(vec![
-                Span::styled(format!("[{}] ", e.timestamp), Style::default().fg(Color::DarkGray)),
-                Span::styled(e.message.clone(), Style::default().fg(color)),
-            ])
-        }).collect()
+        self.entries
+            .iter()
+            .map(|e| {
+                let color = match e.level {
+                    LogLevel::Info => Color::White,
+                    LogLevel::Success => Color::Green,
+                    LogLevel::Warning => Color::Yellow,
+                    LogLevel::Error => Color::Red,
+                };
+                Line::from(vec![
+                    Span::styled(
+                        format!("[{}] ", e.timestamp),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled(e.message.clone(), Style::default().fg(color)),
+                ])
+            })
+            .collect()
     }
 }
 
@@ -69,13 +87,13 @@ mod tests {
     fn test_push_and_len() {
         let mut buffer = LogBuffer::new(10);
         assert_eq!(buffer.len(), 0);
-        
+
         buffer.push(LogLevel::Info, "First message");
         assert_eq!(buffer.len(), 1);
-        
+
         buffer.push(LogLevel::Success, "Second message");
         assert_eq!(buffer.len(), 2);
-        
+
         buffer.push(LogLevel::Warning, "Third message");
         assert_eq!(buffer.len(), 3);
     }
@@ -83,15 +101,15 @@ mod tests {
     #[test]
     fn test_max_entries_eviction() {
         let mut buffer = LogBuffer::new(2);
-        
+
         buffer.push(LogLevel::Info, "First message");
         buffer.push(LogLevel::Success, "Second message");
         assert_eq!(buffer.len(), 2);
-        
+
         // This should evict the first entry
         buffer.push(LogLevel::Warning, "Third message");
         assert_eq!(buffer.len(), 2);
-        
+
         // Check that the first entry is now "Second message"
         assert_eq!(buffer.entries[0].message, "Second message");
         assert_eq!(buffer.entries[1].message, "Third message");
@@ -104,26 +122,26 @@ mod tests {
         buffer.push(LogLevel::Success, "Success message");
         buffer.push(LogLevel::Warning, "Warning message");
         buffer.push(LogLevel::Error, "Error message");
-        
+
         let lines = buffer.to_lines();
         assert_eq!(lines.len(), 4);
-        
+
         // Check color for each level
         // Info message (line 0, span 1)
         if let Some(style) = lines[0].spans[1].style.fg {
             assert_eq!(style, Color::White);
         }
-        
-        // Success message (line 1, span 1) 
+
+        // Success message (line 1, span 1)
         if let Some(style) = lines[1].spans[1].style.fg {
             assert_eq!(style, Color::Green);
         }
-        
+
         // Warning message (line 2, span 1)
         if let Some(style) = lines[2].spans[1].style.fg {
             assert_eq!(style, Color::Yellow);
         }
-        
+
         // Error message (line 3, span 1)
         if let Some(style) = lines[3].spans[1].style.fg {
             assert_eq!(style, Color::Red);
@@ -140,7 +158,7 @@ mod tests {
     fn test_is_empty() {
         let mut buffer = LogBuffer::new(10);
         assert_eq!(buffer.is_empty(), true);
-        
+
         buffer.push(LogLevel::Info, "Test message");
         assert_eq!(buffer.is_empty(), false);
     }

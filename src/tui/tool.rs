@@ -122,12 +122,23 @@ pub fn build_rows(config: &Config, expanded: &HashSet<String>) -> Vec<ToolRow> {
         });
         if expanded.contains(key) {
             // Status sub-group (links)
-            rows.push(ToolRow::StatusHeader { tool_key: key.clone() });
+            rows.push(ToolRow::StatusHeader {
+                tool_key: key.clone(),
+            });
             let status_key = format!("{}:status", key);
             if expanded.contains(&status_key) {
-                rows.push(ToolRow::LinkItem { tool_key: key.clone(), field: LinkField::Prompt });
-                rows.push(ToolRow::LinkItem { tool_key: key.clone(), field: LinkField::Skills });
-                rows.push(ToolRow::LinkItem { tool_key: key.clone(), field: LinkField::Agents });
+                rows.push(ToolRow::LinkItem {
+                    tool_key: key.clone(),
+                    field: LinkField::Prompt,
+                });
+                rows.push(ToolRow::LinkItem {
+                    tool_key: key.clone(),
+                    field: LinkField::Skills,
+                });
+                rows.push(ToolRow::LinkItem {
+                    tool_key: key.clone(),
+                    field: LinkField::Agents,
+                });
             }
             // File groups
             for (files, group) in [
@@ -136,7 +147,10 @@ pub fn build_rows(config: &Config, expanded: &HashSet<String>) -> Vec<ToolRow> {
                 (&tool.mcp, FileGroup::Mcp),
             ] {
                 if !files.is_empty() {
-                    rows.push(ToolRow::FileGroupHeader { tool_key: key.clone(), group: group.clone() });
+                    rows.push(ToolRow::FileGroupHeader {
+                        tool_key: key.clone(),
+                        group: group.clone(),
+                    });
                     if files.len() > 1 {
                         let gk = format!("{}:{}", key, group_key_suffix(&group));
                         if expanded.contains(&gk) {
@@ -167,8 +181,8 @@ fn extract_tool_section(config_text: &str, tool_key: &str) -> Option<(Vec<String
 
     let sub_prefix = format!("[tools.{}.", tool_key);
     let mut end = lines.len();
-    for i in (start + 1)..lines.len() {
-        let trimmed = lines[i].trim();
+    for (i, line) in lines.iter().enumerate().skip(start + 1) {
+        let trimmed = line.trim();
         if trimmed.starts_with('[') && !trimmed.starts_with(&sub_prefix) {
             end = i;
             break;
@@ -188,8 +202,8 @@ fn replace_tool_section(config_text: &str, tool_key: &str, new_section: &str) ->
 
     let sub_prefix = format!("[tools.{}.", tool_key);
     let mut end = lines.len();
-    for i in (start + 1)..lines.len() {
-        let trimmed = lines[i].trim();
+    for (i, line) in lines.iter().enumerate().skip(start + 1) {
+        let trimmed = line.trim();
         if trimmed.starts_with('[') && !trimmed.starts_with(&sub_prefix) {
             end = i;
             break;
@@ -211,7 +225,7 @@ fn replace_tool_section(config_text: &str, tool_key: &str, new_section: &str) ->
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
-struct LinkContext {
+pub(crate) struct LinkContext {
     tool_key: String,
     field: LinkField,
 }
@@ -295,7 +309,9 @@ impl ToolApp {
     }
 
     fn move_cursor(&mut self, delta: isize) {
-        if self.rows.is_empty() { return; }
+        if self.rows.is_empty() {
+            return;
+        }
         let new = (self.cursor as isize + delta).clamp(0, self.rows.len() as isize - 1);
         self.cursor = new as usize;
     }
@@ -386,7 +402,11 @@ impl ToolApp {
                             let sk = format!("{}:status", tool_key);
                             self.toggle_expanded(&sk);
                         }
-                        ToolRow::CentralItem(ref cf @ (CentralField::Skills | CentralField::Agents | CentralField::Source)) => {
+                        ToolRow::CentralItem(
+                            ref cf @ (CentralField::Skills
+                            | CentralField::Agents
+                            | CentralField::Source),
+                        ) => {
                             let current_value = match cf {
                                 CentralField::Skills => self.config.central.skills_source.clone(),
                                 CentralField::Agents => self.config.central.agents_source.clone(),
@@ -410,15 +430,19 @@ impl ToolApp {
                             self.show_link_info(&tool_key.clone(), &field.clone());
                         }
                         ToolRow::FileGroupHeader { tool_key, group } => {
-                            let files = self.get_group_files(&tool_key, &group);
+                            let files = self.get_group_files(tool_key, group);
                             if files.len() <= 1 {
                                 self.show_file_info(&tool_key.clone(), &group.clone(), 0);
                             } else {
-                                let gk = format!("{}:{}", tool_key, group_key_suffix(&group));
+                                let gk = format!("{}:{}", tool_key, group_key_suffix(group));
                                 self.toggle_expanded(&gk);
                             }
                         }
-                        ToolRow::FileItem { tool_key, group, index } => {
+                        ToolRow::FileItem {
+                            tool_key,
+                            group,
+                            index,
+                        } => {
                             self.show_file_info(&tool_key.clone(), &group.clone(), *index);
                         }
                     }
@@ -450,8 +474,8 @@ impl ToolApp {
             // Log popup
             KeyCode::Char('l') => {
                 let lines = self.log.to_lines();
-                let mut popup = super::popup::ScrollablePopup::new("Log", lines)
-                    .with_close_hint("l:close");
+                let mut popup =
+                    super::popup::ScrollablePopup::new("Log", lines).with_close_hint("l:close");
                 popup.scroll_offset = popup.lines.len().saturating_sub(1);
                 self.popup = Some(PopupState::Log(popup));
             }
@@ -466,7 +490,7 @@ impl ToolApp {
     fn handle_popup_key(
         &mut self,
         code: KeyCode,
-        _terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+        terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
     ) {
         // Determine popup type first
         let is_log = matches!(&self.popup, Some(PopupState::Log(_)));
@@ -478,20 +502,35 @@ impl ToolApp {
             if let Some(PopupState::Log(ref mut popup)) = self.popup {
                 match code {
                     KeyCode::Char('l') | KeyCode::Esc => self.popup = None,
-                    _ => { popup.handle_key(code); }
+                    _ => {
+                        popup.handle_key(code);
+                    }
                 }
             }
         } else if is_info {
             self.handle_info_popup_key(code);
         } else if is_path {
-            if let Some(PopupState::PathEditor { ref field, ref mut value, ref mut cursor_pos }) = self.popup {
+            if let Some(PopupState::PathEditor {
+                ref field,
+                ref mut value,
+                ref mut cursor_pos,
+            }) = self.popup
+            {
                 match code {
-                    KeyCode::Char(c) => { value.insert(*cursor_pos, c); *cursor_pos += 1; }
+                    KeyCode::Char(c) => {
+                        value.insert(*cursor_pos, c);
+                        *cursor_pos += 1;
+                    }
                     KeyCode::Backspace => {
-                        if *cursor_pos > 0 { value.remove(*cursor_pos - 1); *cursor_pos -= 1; }
+                        if *cursor_pos > 0 {
+                            value.remove(*cursor_pos - 1);
+                            *cursor_pos -= 1;
+                        }
                     }
                     KeyCode::Delete => {
-                        if *cursor_pos < value.len() { value.remove(*cursor_pos); }
+                        if *cursor_pos < value.len() {
+                            value.remove(*cursor_pos);
+                        }
                     }
                     KeyCode::Left => *cursor_pos = cursor_pos.saturating_sub(1),
                     KeyCode::Right => *cursor_pos = (*cursor_pos + 1).min(value.len()),
@@ -519,7 +558,7 @@ impl ToolApp {
                         if let Err(e) = std::fs::write(&path_clone, "") {
                             self.set_status(format!("Failed to create file: {}", e));
                         } else {
-                            self.set_status(format!("Created: {}", contract_tilde(&path_clone)));
+                            self.open_in_editor(terminal, &[path_clone]);
                         }
                     }
                 }
@@ -535,7 +574,10 @@ impl ToolApp {
         // Let ScrollablePopup handle scrolling first
         if let Some(PopupState::Info { ref mut popup, .. }) = self.popup {
             match popup.handle_key(code) {
-                super::popup::PopupAction::Close => { self.popup = None; return; }
+                super::popup::PopupAction::Close => {
+                    self.popup = None;
+                    return;
+                }
                 super::popup::PopupAction::Consumed => return,
                 super::popup::PopupAction::Ignored => {} // fall through
             }
@@ -543,9 +585,11 @@ impl ToolApp {
 
         // Extract context for action keys
         let (editor_path, link_ctx) = match &self.popup {
-            Some(PopupState::Info { editor_path, link_context, .. }) => {
-                (editor_path.clone(), link_context.clone())
-            }
+            Some(PopupState::Info {
+                editor_path,
+                link_context,
+                ..
+            }) => (editor_path.clone(), link_context.clone()),
             _ => return,
         };
 
@@ -573,9 +617,15 @@ impl ToolApp {
     // Link operations
     // ------------------------------------------------------------------
 
-    fn get_link_paths(&self, tool_key: &str, field: &LinkField) -> Option<(PathBuf, PathBuf, bool, &'static str)> {
+    fn get_link_paths(
+        &self,
+        tool_key: &str,
+        field: &LinkField,
+    ) -> Option<(PathBuf, PathBuf, bool, &'static str)> {
         let tool = self.config.tools.get(tool_key)?;
-        if !tool.is_installed() { return None; }
+        if !tool.is_installed() {
+            return None;
+        }
         let config_dir = expand_tilde(&tool.config_dir);
         Some(match field {
             LinkField::Prompt => {
@@ -616,47 +666,62 @@ impl ToolApp {
 
         let status = linker::check_link(&link_path, &target, is_dir);
         match status {
-            LinkStatus::Linked => {
-                match linker::remove_link_quiet(&link_path, label, is_dir) {
-                    Ok((true, msg)) => {
-                        self.log.push(LogLevel::Success, format!("[{}] {}", tool_key, msg));
-                        self.recover_after_unlink(tool_key, field, &link_path);
-                        self.set_status(format!("✓ {} {} unlinked", tool_key, label));
-                    }
-                    Ok((false, msg)) => self.set_status(msg),
-                    Err(e) => {
-                        self.log.push(LogLevel::Error, format!("[{}] Unlink {} failed: {}", tool_key, label, e));
-                        self.set_status(format!("✗ {}", e));
-                    }
+            LinkStatus::Linked => match linker::remove_link_quiet(&link_path, label, is_dir) {
+                Ok((true, msg)) => {
+                    self.log
+                        .push(LogLevel::Success, format!("[{}] {}", tool_key, msg));
+                    self.recover_after_unlink(tool_key, field, &link_path);
+                    self.set_status(format!("✓ {} {} unlinked", tool_key, label));
                 }
-            }
+                Ok((false, msg)) => self.set_status(msg),
+                Err(e) => {
+                    self.log.push(
+                        LogLevel::Error,
+                        format!("[{}] Unlink {} failed: {}", tool_key, label, e),
+                    );
+                    self.set_status(format!("✗ {}", e));
+                }
+            },
             LinkStatus::Missing | LinkStatus::Broken => {
                 match linker::create_link_quiet(&link_path, &target, label, is_dir) {
                     Ok((true, msg)) => {
-                        self.log.push(LogLevel::Success, format!("[{}] {}", tool_key, msg));
+                        self.log
+                            .push(LogLevel::Success, format!("[{}] {}", tool_key, msg));
                         self.set_status(format!("✓ {} {} linked", tool_key, label));
                     }
                     Ok((false, msg)) => self.set_status(msg),
                     Err(e) => {
-                        self.log.push(LogLevel::Error, format!("[{}] Link {} failed: {}", tool_key, label, e));
+                        self.log.push(
+                            LogLevel::Error,
+                            format!("[{}] Link {} failed: {}", tool_key, label, e),
+                        );
                         self.set_status(format!("✗ {}", e));
                     }
                 }
             }
             LinkStatus::Wrong(_) => {
                 if let Err(e) = crate::platform::remove_link(&link_path) {
-                    self.log.push(LogLevel::Error, format!("[{}] Failed to remove wrong link: {}", tool_key, e));
+                    self.log.push(
+                        LogLevel::Error,
+                        format!("[{}] Failed to remove wrong link: {}", tool_key, e),
+                    );
                     self.set_status(format!("✗ Failed to remove wrong link: {}", e));
                     return;
                 }
                 match linker::create_link_quiet(&link_path, &target, label, is_dir) {
                     Ok((true, msg)) => {
-                        self.log.push(LogLevel::Success, format!("[{}] Repaired: {}", tool_key, msg));
+                        self.log.push(
+                            LogLevel::Success,
+                            format!("[{}] Repaired: {}", tool_key, msg),
+                        );
                         self.set_status(format!("✓ {} {} repaired", tool_key, label));
                     }
                     Ok((false, msg)) => self.set_status(msg),
                     Err(e) => {
-                        self.log.push(LogLevel::Error, format!("[{}] Repair failed: {}", tool_key, e));
+                        self.log.push(
+                            LogLevel::Error,
+                            format!("[{}] Repair failed: {}", tool_key, e),
+                        );
                         self.set_status(format!("✗ {}", e));
                     }
                 }
@@ -670,7 +735,7 @@ impl ToolApp {
     fn handle_blocked_link(
         &mut self,
         tool_key: &str,
-        _field: &LinkField,
+        field: &LinkField,
         link_path: &std::path::Path,
         target: &std::path::Path,
         is_dir: bool,
@@ -683,25 +748,55 @@ impl ToolApp {
             let source_dir = expand_tilde(&self.config.central.source_dir);
             let tool_target = source_dir.join("agm_tools").join(tool_key);
             let central_dir = target;
-            match skills::migrate_tool_dir(link_path, &tool_target, central_dir, tool_key) {
-                Ok(count) => {
+
+            let result = match field {
+                LinkField::Agents => {
+                    let agents_target = tool_target.join("agents");
+                    skills::migrate_agents_dir_quiet(
+                        link_path,
+                        &agents_target,
+                        central_dir,
+                        tool_key,
+                    )
+                }
+                _ => skills::migrate_tool_dir_quiet(link_path, &tool_target, central_dir, tool_key),
+            };
+
+            match result {
+                Ok((count, msgs)) => {
+                    for m in &msgs {
+                        self.log
+                            .push(LogLevel::Info, format!("[{}] {}", tool_key, m.trim()));
+                    }
                     match linker::create_link_quiet(link_path, target, label, true) {
                         Ok((true, msg)) => {
-                            self.log.push(LogLevel::Success,
-                                format!("[{}] Migrated {} items, {}", tool_key, count, msg));
-                            self.set_status(format!("✓ {} {} migrated and linked", tool_key, label));
+                            self.log.push(
+                                LogLevel::Success,
+                                format!("[{}] Migrated {} items, {}", tool_key, count, msg),
+                            );
+                            self.set_status(format!(
+                                "✓ {} {} migrated and linked",
+                                tool_key, label
+                            ));
                         }
                         Ok((false, msg)) => self.set_status(msg),
                         Err(e) => {
-                            self.log.push(LogLevel::Error,
-                                format!("[{}] Migration succeeded but link failed: {}", tool_key, e));
+                            self.log.push(
+                                LogLevel::Error,
+                                format!(
+                                    "[{}] Migration succeeded but link failed: {}",
+                                    tool_key, e
+                                ),
+                            );
                             self.set_status(format!("✗ Link failed after migration: {}", e));
                         }
                     }
                 }
                 Err(e) => {
-                    self.log.push(LogLevel::Error,
-                        format!("[{}] Migration failed: {}", tool_key, e));
+                    self.log.push(
+                        LogLevel::Error,
+                        format!("[{}] Migration failed: {}", tool_key, e),
+                    );
                     self.set_status(format!("✗ Migration failed: {}", e));
                 }
             }
@@ -710,24 +805,40 @@ impl ToolApp {
             let backup = link_path.with_extension(format!("{}.bak", timestamp));
             match std::fs::rename(link_path, &backup) {
                 Ok(()) => {
-                    self.log.push(LogLevel::Info,
-                        format!("[{}] Backed up {} to {}", tool_key, label, contract_tilde(&backup)));
+                    self.log.push(
+                        LogLevel::Info,
+                        format!(
+                            "[{}] Backed up {} to {}",
+                            tool_key,
+                            label,
+                            contract_tilde(&backup)
+                        ),
+                    );
                     match linker::create_link_quiet(link_path, target, label, false) {
                         Ok((true, msg)) => {
-                            self.log.push(LogLevel::Success, format!("[{}] {}", tool_key, msg));
-                            self.set_status(format!("✓ {} {} backed up and linked", tool_key, label));
+                            self.log
+                                .push(LogLevel::Success, format!("[{}] {}", tool_key, msg));
+                            self.set_status(format!(
+                                "✓ {} {} backed up and linked",
+                                tool_key, label
+                            ));
                         }
                         Ok((false, msg)) => self.set_status(msg),
                         Err(e) => {
                             let _ = std::fs::rename(&backup, link_path);
-                            self.log.push(LogLevel::Error,
-                                format!("[{}] Link failed, restored backup: {}", tool_key, e));
+                            self.log.push(
+                                LogLevel::Error,
+                                format!("[{}] Link failed, restored backup: {}", tool_key, e),
+                            );
                             self.set_status(format!("✗ Link failed: {}", e));
                         }
                     }
                 }
                 Err(e) => {
-                    self.log.push(LogLevel::Error, format!("[{}] Backup failed: {}", tool_key, e));
+                    self.log.push(
+                        LogLevel::Error,
+                        format!("[{}] Backup failed: {}", tool_key, e),
+                    );
                     self.set_status(format!("✗ Backup failed: {}", e));
                 }
             }
@@ -735,7 +846,9 @@ impl ToolApp {
     }
 
     fn cleanup_empty_tool_store(&self, tool_store: &std::path::Path) {
-        if !tool_store.exists() { return; }
+        if !tool_store.exists() {
+            return;
+        }
         if let Ok(mut entries) = std::fs::read_dir(tool_store) {
             if entries.next().is_none() {
                 let _ = std::fs::remove_dir(tool_store);
@@ -743,7 +856,12 @@ impl ToolApp {
         }
     }
 
-    fn recover_after_unlink(&mut self, tool_key: &str, field: &LinkField, link_path: &std::path::Path) {
+    fn recover_after_unlink(
+        &mut self,
+        tool_key: &str,
+        field: &LinkField,
+        link_path: &std::path::Path,
+    ) {
         use super::log::LogLevel;
         let source_dir = expand_tilde(&self.config.central.source_dir);
         let tool_store = source_dir.join("agm_tools").join(tool_key);
@@ -756,8 +874,10 @@ impl ToolApp {
                 }
                 // Create the tool's skills directory
                 if let Err(e) = std::fs::create_dir_all(link_path) {
-                    self.log.push(LogLevel::Warning,
-                        format!("[{}] Failed to create skills dir: {}", tool_key, e));
+                    self.log.push(
+                        LogLevel::Warning,
+                        format!("[{}] Failed to create skills dir: {}", tool_key, e),
+                    );
                     return;
                 }
                 // Move skill directories: any dir in tool_store that
@@ -766,43 +886,114 @@ impl ToolApp {
                 if let Ok(entries) = std::fs::read_dir(&tool_store) {
                     for entry in entries.flatten() {
                         let name = entry.file_name().to_string_lossy().to_string();
-                        if name == "agents" { continue; }
+                        if name == "agents" {
+                            continue;
+                        }
                         let path = entry.path();
-                        if !path.is_dir() { continue; }
-                        if !path.join("SKILL.md").exists() { continue; }
+                        if !path.is_dir() {
+                            continue;
+                        }
+                        if !path.join("SKILL.md").exists() {
+                            continue;
+                        }
                         let dest = link_path.join(&name);
-                        if dest.exists() { continue; }
+                        if dest.exists() {
+                            continue;
+                        }
                         if std::fs::rename(&path, &dest).is_ok() {
                             count += 1;
                         }
                     }
                 }
                 if count > 0 {
-                    self.log.push(LogLevel::Info,
-                        format!("[{}] Restored {} skill(s)", tool_key, count));
+                    self.log.push(
+                        LogLevel::Info,
+                        format!("[{}] Restored {} skill(s)", tool_key, count),
+                    );
                 }
                 self.cleanup_empty_tool_store(&tool_store);
             }
             LinkField::Agents => {
                 let agents_store = tool_store.join("agents");
-                if !agents_store.exists() {
-                    return;
-                }
-                // Move entire agents directory to tool's agents path
-                match std::fs::rename(&agents_store, link_path) {
-                    Ok(()) => {
-                        self.log.push(LogLevel::Info,
-                            format!("[{}] Restored agents directory", tool_key));
+                if agents_store.exists() {
+                    // Restore from agm_tools store
+                    match std::fs::rename(&agents_store, link_path) {
+                        Ok(()) => {
+                            self.log.push(
+                                LogLevel::Info,
+                                format!("[{}] Restored agents directory", tool_key),
+                            );
+                        }
+                        Err(e) => {
+                            self.log.push(
+                                LogLevel::Warning,
+                                format!("[{}] Failed to restore agents: {}", tool_key, e),
+                            );
+                        }
                     }
-                    Err(e) => {
-                        self.log.push(LogLevel::Warning,
-                            format!("[{}] Failed to restore agents: {}", tool_key, e));
+                    self.cleanup_empty_tool_store(&tool_store);
+                } else {
+                    // No store — create empty dir so tool can use it individually
+                    match std::fs::create_dir_all(link_path) {
+                        Ok(()) => {
+                            self.log.push(
+                                LogLevel::Info,
+                                format!("[{}] Created empty agents directory", tool_key),
+                            );
+                        }
+                        Err(e) => {
+                            self.log.push(
+                                LogLevel::Warning,
+                                format!("[{}] Failed to create agents directory: {}", tool_key, e),
+                            );
+                        }
                     }
                 }
-                self.cleanup_empty_tool_store(&tool_store);
             }
             LinkField::Prompt => {
-                // No recovery needed for prompt files
+                // Find and restore the most recent .bak backup.
+                // Backup naming: link_path.with_extension("{timestamp}.bak")
+                // e.g., AGENTS.md → AGENTS.20240101_120000.bak
+                if let Some(parent) = link_path.parent() {
+                    if let Some(stem) = link_path.file_stem().and_then(|f| f.to_str()) {
+                        let prefix = format!("{}.", stem);
+                        let mut backups: Vec<_> = std::fs::read_dir(parent)
+                            .into_iter()
+                            .flatten()
+                            .flatten()
+                            .filter(|e| {
+                                let n = e.file_name().to_string_lossy().to_string();
+                                n.starts_with(&prefix)
+                                    && n.ends_with(".bak")
+                                    && e.path() != *link_path
+                            })
+                            .collect();
+                        // Sort by name descending → most recent timestamp first
+                        backups.sort_by_key(|b| std::cmp::Reverse(b.file_name()));
+                        if let Some(latest) = backups.first() {
+                            let bak_path = latest.path();
+                            match std::fs::rename(&bak_path, link_path) {
+                                Ok(()) => {
+                                    self.log.push(
+                                        LogLevel::Info,
+                                        format!("[{}] Restored prompt from backup", tool_key),
+                                    );
+                                }
+                                Err(e) => {
+                                    self.log.push(
+                                        LogLevel::Warning,
+                                        format!("[{}] Failed to restore prompt: {}", tool_key, e),
+                                    );
+                                }
+                            }
+                        } else {
+                            self.log.push(
+                                LogLevel::Info,
+                                format!("[{}] No prompt backup found to restore", tool_key),
+                            );
+                        }
+                    }
+                }
             }
         }
     }
@@ -822,7 +1013,10 @@ impl ToolApp {
         let mut linked_count = 0;
         for f in &fields {
             if let Some((link_path, target, is_dir, _)) = self.get_link_paths(tool_key, f) {
-                if matches!(linker::check_link(&link_path, &target, is_dir), LinkStatus::Linked) {
+                if matches!(
+                    linker::check_link(&link_path, &target, is_dir),
+                    LinkStatus::Linked
+                ) {
                     linked_count += 1;
                 }
             }
@@ -833,7 +1027,10 @@ impl ToolApp {
             // All linked → unlink all
             for f in &fields {
                 if let Some((link_path, target, is_dir, _)) = self.get_link_paths(&tk, f) {
-                    if matches!(linker::check_link(&link_path, &target, is_dir), LinkStatus::Linked) {
+                    if matches!(
+                        linker::check_link(&link_path, &target, is_dir),
+                        LinkStatus::Linked
+                    ) {
                         self.toggle_link(&tk, f);
                     }
                 }
@@ -842,7 +1039,10 @@ impl ToolApp {
             // Partially or none linked → link all
             for f in &fields {
                 if let Some((link_path, target, is_dir, _)) = self.get_link_paths(&tk, f) {
-                    if !matches!(linker::check_link(&link_path, &target, is_dir), LinkStatus::Linked) {
+                    if !matches!(
+                        linker::check_link(&link_path, &target, is_dir),
+                        LinkStatus::Linked
+                    ) {
                         self.toggle_link(&tk, f);
                     }
                 }
@@ -857,7 +1057,9 @@ impl ToolApp {
     fn show_central_info(&mut self, field: &CentralField) {
         let (title, path) = match field {
             CentralField::Config => {
-                let p = self.config_path.clone()
+                let p = self
+                    .config_path
+                    .clone()
                     .unwrap_or_else(|| expand_tilde("~/.config/agm/config.toml"));
                 ("Config".to_string(), p)
             }
@@ -892,15 +1094,19 @@ impl ToolApp {
             }
         } else {
             content_lines.push(Line::from(Span::styled(
-                "File not found", Style::default().fg(Color::Yellow),
+                "File not found",
+                Style::default().fg(Color::Yellow),
             )));
         }
 
         let editor_path = if path.exists() { Some(path) } else { None };
-        let hint = if editor_path.is_some() { "Esc:close  e:edit" } else { "Esc:close" };
+        let hint = if editor_path.is_some() {
+            "Esc:close  e:edit"
+        } else {
+            "Esc:close"
+        };
         self.popup = Some(PopupState::Info {
-            popup: super::popup::ScrollablePopup::new(&title, content_lines)
-                .with_close_hint(hint),
+            popup: super::popup::ScrollablePopup::new(&title, content_lines).with_close_hint(hint),
             editor_path,
             link_context: None,
         });
@@ -911,7 +1117,7 @@ impl ToolApp {
             Some(t) => t,
             None => return,
         };
-        let config_dir = expand_tilde(&tool.config_dir);
+        let _config_dir = expand_tilde(&tool.config_dir);
         let (link_path, target, is_dir, label) = match self.get_link_paths(tool_key, field) {
             Some(v) => v,
             None => return,
@@ -923,11 +1129,11 @@ impl ToolApp {
             LinkStatus::Missing => "✗ Not linked",
             LinkStatus::Broken => "✗ Broken link",
             LinkStatus::Wrong(_) => "✗ Wrong target",
-            LinkStatus::Blocked => "⚠ Blocked",
+            LinkStatus::Blocked => "✗ Not linked",
         };
         let status_color = match &status {
             LinkStatus::Linked => Color::Green,
-            LinkStatus::Missing => Color::Yellow,
+            LinkStatus::Missing | LinkStatus::Blocked => Color::Yellow,
             _ => Color::Red,
         };
 
@@ -953,7 +1159,11 @@ impl ToolApp {
 
         if is_dir {
             // Directory: show stats
-            let dir_path = if matches!(status, LinkStatus::Linked) { &target } else { &link_path };
+            let dir_path = if matches!(status, LinkStatus::Linked) {
+                &target
+            } else {
+                &link_path
+            };
             if dir_path.exists() {
                 let mut entries = Vec::new();
                 if let Ok(rd) = std::fs::read_dir(dir_path) {
@@ -971,26 +1181,40 @@ impl ToolApp {
                 }
             } else {
                 lines.push(Line::from(Span::styled(
-                    "Directory not found", Style::default().fg(Color::Yellow),
+                    "Directory not found",
+                    Style::default().fg(Color::Yellow),
                 )));
             }
         } else {
             // File: show content
-            let file_path = if matches!(status, LinkStatus::Linked) { &target } else { &link_path };
+            let file_path = if matches!(status, LinkStatus::Linked) {
+                &target
+            } else {
+                &link_path
+            };
             if file_path.exists() {
                 match std::fs::read_to_string(file_path) {
                     Ok(content) => {
-                        lines.push(Line::from(Span::styled("Content:", Style::default().fg(Color::DarkGray))));
+                        lines.push(Line::from(Span::styled(
+                            "Content:",
+                            Style::default().fg(Color::DarkGray),
+                        )));
                         for line in content.lines().take(super::popup::MAX_CONTENT_LINES) {
                             lines.push(Line::from(line.to_string()));
                         }
                     }
                     Err(e) => {
                         lines.push(Line::from(Span::styled(
-                            format!("Error reading: {}", e), Style::default().fg(Color::Red),
+                            format!("Error reading: {}", e),
+                            Style::default().fg(Color::Red),
                         )));
                     }
                 }
+            } else {
+                lines.push(Line::from(Span::styled(
+                    "File not found",
+                    Style::default().fg(Color::Yellow),
+                )));
             }
         }
 
@@ -1030,22 +1254,27 @@ impl ToolApp {
                 }
                 Err(e) => {
                     lines.push(Line::from(Span::styled(
-                        format!("Error reading: {}", e), Style::default().fg(Color::Red),
+                        format!("Error reading: {}", e),
+                        Style::default().fg(Color::Red),
                     )));
                 }
             }
         } else {
             lines.push(Line::from(Span::styled(
-                "File not found", Style::default().fg(Color::Yellow),
+                "File not found",
+                Style::default().fg(Color::Yellow),
             )));
         }
 
         let title = format!("{} — {}", tool_key, group_label(group));
         let editor_path = if path.exists() { Some(path) } else { None };
-        let hint = if editor_path.is_some() { "Esc:close  e:edit" } else { "Esc:close" };
+        let hint = if editor_path.is_some() {
+            "Esc:close  e:edit"
+        } else {
+            "Esc:close"
+        };
         self.popup = Some(PopupState::Info {
-            popup: super::popup::ScrollablePopup::new(&title, lines)
-                .with_close_hint(hint),
+            popup: super::popup::ScrollablePopup::new(&title, lines).with_close_hint(hint),
             editor_path,
             link_context: None,
         });
@@ -1062,20 +1291,27 @@ impl ToolApp {
             FileGroup::Auth => &tool.auth,
             FileGroup::Mcp => &tool.mcp,
         };
-        file_list.iter().map(|f| {
-            if std::path::Path::new(f).is_absolute() || f.starts_with('~') {
-                expand_tilde(f)
-            } else {
-                config_dir.join(f)
-            }
-        }).collect()
+        file_list
+            .iter()
+            .map(|f| {
+                if std::path::Path::new(f).is_absolute() || f.starts_with('~') {
+                    expand_tilde(f)
+                } else {
+                    config_dir.join(f)
+                }
+            })
+            .collect()
     }
 
     // ------------------------------------------------------------------
     // Edit
     // ------------------------------------------------------------------
 
-    fn open_in_editor(&self, terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, paths: &[PathBuf]) {
+    fn open_in_editor(
+        &self,
+        terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+        paths: &[PathBuf],
+    ) {
         let _ = disable_raw_mode();
         let _ = stdout().execute(LeaveAlternateScreen);
         let ed = editor::get_editor(&self.config);
@@ -1086,11 +1322,17 @@ impl ToolApp {
         let _ = terminal.clear();
     }
 
-    fn handle_edit(&mut self, row: &ToolRow, terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) {
+    fn handle_edit(
+        &mut self,
+        row: &ToolRow,
+        terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    ) {
         match row {
             ToolRow::ToolHeader { key, .. } => {
                 use super::log::LogLevel;
-                let config_path = self.config_path.clone()
+                let config_path = self
+                    .config_path
+                    .clone()
                     .unwrap_or_else(|| expand_tilde("~/.config/agm/config.toml"));
                 let config_text = match std::fs::read_to_string(&config_path) {
                     Ok(t) => t,
@@ -1114,7 +1356,7 @@ impl ToolApp {
                     return;
                 }
 
-                self.open_in_editor(terminal, &[tmp_path.clone()]);
+                self.open_in_editor(terminal, std::slice::from_ref(&tmp_path));
 
                 let new_section = match std::fs::read_to_string(&tmp_path) {
                     Ok(t) => t,
@@ -1127,7 +1369,10 @@ impl ToolApp {
 
                 // Validate TOML syntax
                 if new_section.parse::<toml::Value>().is_err() {
-                    self.log.push(LogLevel::Error, format!("[{}] Invalid TOML syntax, changes discarded", key));
+                    self.log.push(
+                        LogLevel::Error,
+                        format!("[{}] Invalid TOML syntax, changes discarded", key),
+                    );
                     self.set_status("✗ Invalid TOML, changes discarded");
                     return;
                 }
@@ -1141,13 +1386,17 @@ impl ToolApp {
                     }
                 };
 
-                let new_config_text = match replace_tool_section(&config_text, key, new_section.trim_end()) {
-                    Some(t) => t,
-                    None => {
-                        self.set_status(format!("✗ Section [tools.{}] not found for replacement", key));
-                        return;
-                    }
-                };
+                let new_config_text =
+                    match replace_tool_section(&config_text, key, new_section.trim_end()) {
+                        Some(t) => t,
+                        None => {
+                            self.set_status(format!(
+                                "✗ Section [tools.{}] not found for replacement",
+                                key
+                            ));
+                            return;
+                        }
+                    };
 
                 if let Err(e) = std::fs::write(&config_path, &new_config_text) {
                     self.set_status(format!("✗ Failed to write config: {}", e));
@@ -1158,15 +1407,21 @@ impl ToolApp {
                 if let Ok(new_config) = Config::load_from(self.config_path.clone()) {
                     self.config = new_config;
                     self.rebuild_rows();
-                    self.log.push(LogLevel::Success, format!("[{}] Config updated", key));
+                    self.log
+                        .push(LogLevel::Success, format!("[{}] Config updated", key));
                     self.set_status(format!("✓ {} config updated", key));
                 } else {
-                    self.log.push(LogLevel::Error, format!("[{}] Config reload failed after edit", key));
+                    self.log.push(
+                        LogLevel::Error,
+                        format!("[{}] Config reload failed after edit", key),
+                    );
                     self.set_status("✗ Config reload failed");
                 }
             }
             ToolRow::CentralItem(CentralField::Config) => {
-                let path = self.config_path.clone()
+                let path = self
+                    .config_path
+                    .clone()
                     .unwrap_or_else(|| expand_tilde("~/.config/agm/config.toml"));
                 if path.exists() {
                     self.open_in_editor(terminal, &[path]);
@@ -1190,24 +1445,33 @@ impl ToolApp {
                 let files = self.get_group_files(tool_key, group);
                 if let Some(path) = files.first() {
                     if path.exists() {
-                        self.open_in_editor(terminal, &[path.clone()]);
+                        self.open_in_editor(terminal, std::slice::from_ref(path));
                     } else {
                         self.set_status(format!("File not found: {}", contract_tilde(path)));
                     }
                 }
             }
-            ToolRow::FileItem { tool_key, group, index } => {
+            ToolRow::FileItem {
+                tool_key,
+                group,
+                index,
+            } => {
                 let files = self.get_group_files(tool_key, group);
                 if let Some(path) = files.get(*index) {
                     if path.exists() {
-                        self.open_in_editor(terminal, &[path.clone()]);
+                        self.open_in_editor(terminal, std::slice::from_ref(path));
                     } else {
                         self.set_status(format!("File not found: {}", contract_tilde(path)));
                     }
                 }
             }
-            ToolRow::LinkItem { tool_key, field: LinkField::Prompt } => {
-                if let Some((link_path, target, _, _)) = self.get_link_paths(tool_key, &LinkField::Prompt) {
+            ToolRow::LinkItem {
+                tool_key,
+                field: LinkField::Prompt,
+            } => {
+                if let Some((link_path, target, _, _)) =
+                    self.get_link_paths(tool_key, &LinkField::Prompt)
+                {
                     let status = linker::check_link(&link_path, &target, false);
                     let path = match status {
                         LinkStatus::Linked => target,
@@ -1242,15 +1506,20 @@ impl ToolApp {
             Ok(()) => {
                 let expanded_path = expand_tilde(&contracted);
                 if expanded_path.exists() {
-                    self.log.push(LogLevel::Success, format!("Updated path: {}", contracted));
+                    self.log
+                        .push(LogLevel::Success, format!("Updated path: {}", contracted));
                     self.set_status(format!("✓ Path updated: {}", contracted));
                 } else {
-                    self.log.push(LogLevel::Warning, format!("Updated path (not found): {}", contracted));
+                    self.log.push(
+                        LogLevel::Warning,
+                        format!("Updated path (not found): {}", contracted),
+                    );
                     self.set_status(format!("⚠ Path updated but does not exist: {}", contracted));
                 }
             }
             Err(e) => {
-                self.log.push(LogLevel::Error, format!("Failed to save config: {}", e));
+                self.log
+                    .push(LogLevel::Error, format!("Failed to save config: {}", e));
                 self.set_status(format!("✗ Save failed: {}", e));
             }
         }
@@ -1290,8 +1559,8 @@ fn link_status_spans(status: &LinkStatus, link_path: &std::path::Path) -> Vec<Sp
             Span::raw(format!(" → {}", actual)),
         ],
         LinkStatus::Blocked => vec![
-            Span::styled("⚠ blocked", Style::default().fg(Color::Red)),
-            Span::raw(" (exists, not a link)"),
+            Span::styled("✗ not linked", Style::default().fg(Color::Yellow)),
+            Span::raw(format!(" → {}", contract_tilde(link_path))),
         ],
     }
 }
@@ -1313,7 +1582,10 @@ fn compute_tool_status(config: &Config, tool_key: &str) -> (u8, &'static str, Co
     ] {
         let link_path = config_dir.join(link_sub);
         let target = expand_tilde(target_src);
-        if matches!(linker::check_link(&link_path, &target, is_dir), LinkStatus::Linked) {
+        if matches!(
+            linker::check_link(&link_path, &target, is_dir),
+            LinkStatus::Linked
+        ) {
             linked += 1;
         }
     }
@@ -1346,7 +1618,8 @@ fn build_tool_hints(row: Option<&ToolRow>, config: &Config) -> Line<'static> {
             spans.extend([hint_key("l"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
-        Some(ToolRow::CentralItem(CentralField::Config)) | Some(ToolRow::CentralItem(CentralField::Prompt)) => {
+        Some(ToolRow::CentralItem(CentralField::Config))
+        | Some(ToolRow::CentralItem(CentralField::Prompt)) => {
             spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
             spans.extend([hint_key("l"), hint_text(" log  ")]);
@@ -1363,9 +1636,18 @@ fn build_tool_hints(row: Option<&ToolRow>, config: &Config) -> Line<'static> {
             spans.extend([hint_key("l"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
-        Some(ToolRow::LinkItem { .. }) => {
+        Some(ToolRow::LinkItem {
+            field: LinkField::Prompt,
+            ..
+        }) => {
             spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
+            spans.extend([hint_key("i"), hint_text(" link  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+        Some(ToolRow::LinkItem { .. }) => {
+            spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
             spans.extend([hint_key("i"), hint_text(" link  ")]);
             spans.extend([hint_key("l"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
@@ -1435,8 +1717,7 @@ fn render_list(app: &ToolApp, frame: &mut Frame, area: Rect) {
     frame.render_widget(block, area);
 
     if app.rows.is_empty() {
-        let p = Paragraph::new("No tools configured.")
-            .style(Style::default().fg(Color::DarkGray));
+        let p = Paragraph::new("No tools configured.").style(Style::default().fg(Color::DarkGray));
         frame.render_widget(p, inner);
         return;
     }
@@ -1457,27 +1738,58 @@ fn render_list(app: &ToolApp, frame: &mut Frame, area: Rect) {
     frame.render_widget(paragraph, inner);
 }
 
-fn render_row(row: &ToolRow, is_cursor: bool, config: &Config, expanded: &HashSet<String>) -> Line<'static> {
+fn render_row(
+    row: &ToolRow,
+    is_cursor: bool,
+    config: &Config,
+    expanded: &HashSet<String>,
+) -> Line<'static> {
     let cursor_prefix = if is_cursor { "▸ " } else { "  " };
 
     match row {
         ToolRow::CentralHeader => {
-            let arrow = if expanded.contains("central") { "▼" } else { "▶" };
-            let style = if is_cursor {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            let arrow = if expanded.contains("central") {
+                "▼"
             } else {
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                "▶"
             };
-            Line::from(Span::styled(format!("{}{} central", cursor_prefix, arrow), style))
+            let style = if is_cursor {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
+            };
+            Line::from(Span::styled(
+                format!("{}{} central", cursor_prefix, arrow),
+                style,
+            ))
         }
 
         ToolRow::CentralItem(field) => {
             let (label, value) = match field {
-                CentralField::Config => ("config".to_string(), "~/.config/agm/config.toml".to_string()),
-                CentralField::Prompt => ("prompt".to_string(), contract_tilde(&expand_tilde(&config.central.prompt_source))),
-                CentralField::Skills => ("skills".to_string(), contract_tilde(&expand_tilde(&config.central.skills_source))),
-                CentralField::Agents => ("agents".to_string(), contract_tilde(&expand_tilde(&config.central.agents_source))),
-                CentralField::Source => ("source".to_string(), contract_tilde(&expand_tilde(&config.central.source_dir))),
+                CentralField::Config => (
+                    "config".to_string(),
+                    "~/.config/agm/config.toml".to_string(),
+                ),
+                CentralField::Prompt => (
+                    "prompt".to_string(),
+                    contract_tilde(&expand_tilde(&config.central.prompt_source)),
+                ),
+                CentralField::Skills => (
+                    "skills".to_string(),
+                    contract_tilde(&expand_tilde(&config.central.skills_source)),
+                ),
+                CentralField::Agents => (
+                    "agents".to_string(),
+                    contract_tilde(&expand_tilde(&config.central.agents_source)),
+                ),
+                CentralField::Source => (
+                    "source".to_string(),
+                    contract_tilde(&expand_tilde(&config.central.source_dir)),
+                ),
             };
             let style = if is_cursor {
                 Style::default().fg(Color::Yellow)
@@ -1486,20 +1798,33 @@ fn render_row(row: &ToolRow, is_cursor: bool, config: &Config, expanded: &HashSe
             };
             Line::from(vec![
                 Span::raw(format!("{}    ", cursor_prefix)),
-                Span::styled(format!("{:<8}", label), Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!("{:<8}", label),
+                    Style::default().fg(Color::DarkGray),
+                ),
                 Span::styled(value, style),
             ])
         }
 
-        ToolRow::ToolHeader { key, name, installed } => {
+        ToolRow::ToolHeader {
+            key,
+            name,
+            installed,
+        } => {
             let arrow = if expanded.contains(key) { "▼" } else { "▶" };
             let status = if *installed { "" } else { " (not installed)" };
             let style = if is_cursor {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
             } else if !installed {
-                Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
             };
             Line::from(Span::styled(
                 format!("{}{} {} ({}){}", cursor_prefix, arrow, key, name, status),
@@ -1509,9 +1834,13 @@ fn render_row(row: &ToolRow, is_cursor: bool, config: &Config, expanded: &HashSe
 
         ToolRow::StatusHeader { tool_key } => {
             let status_key = format!("{}:status", tool_key);
-            let arrow = if expanded.contains(&status_key) { "▼" } else { "▶" };
+            let arrow = if expanded.contains(&status_key) {
+                "▼"
+            } else {
+                "▶"
+            };
             let (_, status_text, status_color) = compute_tool_status(config, tool_key);
-            let mut spans = vec![
+            let spans = vec![
                 Span::raw(format!("{}    {} ", cursor_prefix, arrow)),
                 Span::styled("status", Style::default().fg(Color::DarkGray)),
                 Span::raw("   "),
@@ -1551,7 +1880,10 @@ fn render_row(row: &ToolRow, is_cursor: bool, config: &Config, expanded: &HashSe
             let status_spans = link_status_spans(&status, &link_path);
             let mut spans = vec![
                 Span::raw(format!("{}      ", cursor_prefix)),
-                Span::styled(format!("{:<8} ", label), Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!("{:<8} ", label),
+                    Style::default().fg(Color::DarkGray),
+                ),
             ];
             spans.extend(status_spans);
             if is_cursor {
@@ -1575,20 +1907,32 @@ fn render_row(row: &ToolRow, is_cursor: bool, config: &Config, expanded: &HashSe
 
             if files.len() <= 1 {
                 // Single file: inline display
-                let display = files.first()
+                let display = files
+                    .first()
                     .map(|f| resolve_display(tool, f))
                     .unwrap_or_default();
-                let style = if is_cursor { Style::default().fg(Color::Yellow) } else { Style::default() };
+                let style = if is_cursor {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                };
                 Line::from(vec![
                     Span::raw(format!("{}    ", cursor_prefix)),
-                    Span::styled(format!("{:<8} ", label), Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        format!("{:<8} ", label),
+                        Style::default().fg(Color::DarkGray),
+                    ),
                     Span::styled(display, style),
                 ])
             } else {
                 // Multi file: expandable
                 let gk = format!("{}:{}", tool_key, group_key_suffix(group));
                 let arrow = if expanded.contains(&gk) { "▼" } else { "▶" };
-                let style = if is_cursor { Style::default().fg(Color::Yellow) } else { Style::default() };
+                let style = if is_cursor {
+                    Style::default().fg(Color::Yellow)
+                } else {
+                    Style::default()
+                };
                 Line::from(vec![
                     Span::raw(format!("{}    {} ", cursor_prefix, arrow)),
                     Span::styled(label.to_string(), style),
@@ -1596,7 +1940,11 @@ fn render_row(row: &ToolRow, is_cursor: bool, config: &Config, expanded: &HashSe
             }
         }
 
-        ToolRow::FileItem { tool_key, group, index } => {
+        ToolRow::FileItem {
+            tool_key,
+            group,
+            index,
+        } => {
             let tool = match config.tools.get(tool_key) {
                 Some(t) => t,
                 None => return Line::from(""),
@@ -1606,10 +1954,15 @@ fn render_row(row: &ToolRow, is_cursor: bool, config: &Config, expanded: &HashSe
                 FileGroup::Auth => &tool.auth,
                 FileGroup::Mcp => &tool.mcp,
             };
-            let display = files.get(*index)
+            let display = files
+                .get(*index)
                 .map(|f| resolve_display(tool, f))
                 .unwrap_or_default();
-            let style = if is_cursor { Style::default().fg(Color::Yellow) } else { Style::default() };
+            let style = if is_cursor {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            };
             Line::from(vec![
                 Span::raw(format!("{}      ", cursor_prefix)),
                 Span::styled(display, style),
@@ -1648,7 +2001,12 @@ fn render_footer(app: &ToolApp, frame: &mut Frame, area: Rect) {
 }
 
 fn render_path_editor(app: &ToolApp, frame: &mut Frame, area: Rect) {
-    if let Some(PopupState::PathEditor { ref field, ref value, cursor_pos }) = app.popup {
+    if let Some(PopupState::PathEditor {
+        ref field,
+        ref value,
+        cursor_pos,
+    }) = app.popup
+    {
         let popup_area = super::dialog_area(area, 3);
         frame.render_widget(Clear, popup_area);
         let label = match field {
@@ -1677,7 +2035,10 @@ fn render_path_editor(app: &ToolApp, frame: &mut Frame, area: Rect) {
             }
         }
         if cursor_pos >= value.len() {
-            spans.push(Span::styled(" ", Style::default().fg(Color::Black).bg(Color::White)));
+            spans.push(Span::styled(
+                " ",
+                Style::default().fg(Color::Black).bg(Color::White),
+            ));
         }
         frame.render_widget(Paragraph::new(Line::from(spans)), inner);
     }
@@ -1687,7 +2048,7 @@ fn render_confirm_create(app: &ToolApp, frame: &mut Frame, area: Rect) {
     if let Some(PopupState::ConfirmCreate { ref path }) = app.popup {
         let popup_area = super::dialog_area(area, 3);
         frame.render_widget(Clear, popup_area);
-        
+
         let block = Block::default()
             .title(" Create File ")
             .title_bottom(" y:create  n/Esc:cancel ")
@@ -1695,7 +2056,7 @@ fn render_confirm_create(app: &ToolApp, frame: &mut Frame, area: Rect) {
             .border_style(Style::default().fg(Color::Yellow));
         let inner = block.inner(popup_area);
         frame.render_widget(block, popup_area);
-        
+
         let text = format!("Create file: {}", contract_tilde(path));
         let paragraph = Paragraph::new(text).wrap(Wrap { trim: true });
         frame.render_widget(paragraph, inner);
@@ -1787,20 +2148,38 @@ mod tests {
         ToolConfig {
             name: name.to_string(),
             config_dir: config_dir.to_string(),
-            settings: if with_optional { vec!["settings.json".to_string()] } else { vec![] },
-            auth: if with_optional { vec!["auth.json".to_string()] } else { vec![] },
+            settings: if with_optional {
+                vec!["settings.json".to_string()]
+            } else {
+                vec![]
+            },
+            auth: if with_optional {
+                vec!["auth.json".to_string()]
+            } else {
+                vec![]
+            },
             prompt_filename: "PROMPT.md".to_string(),
             skills_dir: "skills".to_string(),
             agents_dir: "agents".to_string(),
-            mcp: if with_optional { vec!["mcp.json".to_string()] } else { vec![] },
+            mcp: if with_optional {
+                vec!["mcp.json".to_string()]
+            } else {
+                vec![]
+            },
         }
     }
 
     #[test]
     fn test_build_rows_all_collapsed() {
         let config = test_config_with_tools(vec![
-            ("claude", test_tool_config("Claude Code", "/nonexistent/claude", true)),
-            ("copilot", test_tool_config("Copilot CLI", "/nonexistent/copilot", true)),
+            (
+                "claude",
+                test_tool_config("Claude Code", "/nonexistent/claude", true),
+            ),
+            (
+                "copilot",
+                test_tool_config("Copilot CLI", "/nonexistent/copilot", true),
+            ),
         ]);
         let expanded = HashSet::new();
         let rows = build_rows(&config, &expanded);
@@ -1813,20 +2192,36 @@ mod tests {
 
     #[test]
     fn test_build_rows_central_expanded() {
-        let config = test_config_with_tools(vec![
-            ("claude", test_tool_config("Claude Code", "/nonexistent/claude", true)),
-        ]);
+        let config = test_config_with_tools(vec![(
+            "claude",
+            test_tool_config("Claude Code", "/nonexistent/claude", true),
+        )]);
         let mut expanded = HashSet::new();
         expanded.insert("central".to_string());
         let rows = build_rows(&config, &expanded);
 
         assert_eq!(rows.len(), 7);
         assert!(matches!(rows[0], ToolRow::CentralHeader));
-        assert!(matches!(rows[1], ToolRow::CentralItem(CentralField::Config)));
-        assert!(matches!(rows[2], ToolRow::CentralItem(CentralField::Prompt)));
-        assert!(matches!(rows[3], ToolRow::CentralItem(CentralField::Skills)));
-        assert!(matches!(rows[4], ToolRow::CentralItem(CentralField::Agents)));
-        assert!(matches!(rows[5], ToolRow::CentralItem(CentralField::Source)));
+        assert!(matches!(
+            rows[1],
+            ToolRow::CentralItem(CentralField::Config)
+        ));
+        assert!(matches!(
+            rows[2],
+            ToolRow::CentralItem(CentralField::Prompt)
+        ));
+        assert!(matches!(
+            rows[3],
+            ToolRow::CentralItem(CentralField::Skills)
+        ));
+        assert!(matches!(
+            rows[4],
+            ToolRow::CentralItem(CentralField::Agents)
+        ));
+        assert!(matches!(
+            rows[5],
+            ToolRow::CentralItem(CentralField::Source)
+        ));
         assert!(matches!(rows[6], ToolRow::ToolHeader { ref key, .. } if key == "claude"));
     }
 
@@ -1836,9 +2231,10 @@ mod tests {
         let tool_dir = _tmp.path().join("claude");
         std::fs::create_dir_all(&tool_dir).unwrap();
 
-        let config = test_config_with_tools(vec![
-            ("claude", test_tool_config("Claude Code", &tool_dir.to_string_lossy(), true)),
-        ]);
+        let config = test_config_with_tools(vec![(
+            "claude",
+            test_tool_config("Claude Code", &tool_dir.to_string_lossy(), true),
+        )]);
         let mut expanded = HashSet::new();
         expanded.insert("claude".to_string());
         let rows = build_rows(&config, &expanded);
@@ -1847,11 +2243,19 @@ mod tests {
         // StatusHeader is collapsed so no LinkItems
         assert_eq!(rows.len(), 6);
         assert!(matches!(rows[0], ToolRow::CentralHeader));
-        assert!(matches!(rows[1], ToolRow::ToolHeader { ref key, installed: true, .. } if key == "claude"));
+        assert!(
+            matches!(rows[1], ToolRow::ToolHeader { ref key, installed: true, .. } if key == "claude")
+        );
         assert!(matches!(rows[2], ToolRow::StatusHeader { ref tool_key } if tool_key == "claude"));
-        assert!(matches!(rows[3], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Settings));
-        assert!(matches!(rows[4], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Auth));
-        assert!(matches!(rows[5], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Mcp));
+        assert!(
+            matches!(rows[3], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Settings)
+        );
+        assert!(
+            matches!(rows[4], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Auth)
+        );
+        assert!(
+            matches!(rows[5], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Mcp)
+        );
     }
 
     #[test]
@@ -1860,9 +2264,10 @@ mod tests {
         let tool_dir = _tmp.path().join("claude");
         std::fs::create_dir_all(&tool_dir).unwrap();
 
-        let config = test_config_with_tools(vec![
-            ("claude", test_tool_config("Claude Code", &tool_dir.to_string_lossy(), true)),
-        ]);
+        let config = test_config_with_tools(vec![(
+            "claude",
+            test_tool_config("Claude Code", &tool_dir.to_string_lossy(), true),
+        )]);
         let mut expanded = HashSet::new();
         expanded.insert("claude".to_string());
         expanded.insert("claude:status".to_string());
@@ -1873,12 +2278,24 @@ mod tests {
         assert!(matches!(rows[0], ToolRow::CentralHeader));
         assert!(matches!(rows[1], ToolRow::ToolHeader { .. }));
         assert!(matches!(rows[2], ToolRow::StatusHeader { .. }));
-        assert!(matches!(rows[3], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Prompt));
-        assert!(matches!(rows[4], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Skills));
-        assert!(matches!(rows[5], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Agents));
-        assert!(matches!(rows[6], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Settings));
-        assert!(matches!(rows[7], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Auth));
-        assert!(matches!(rows[8], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Mcp));
+        assert!(
+            matches!(rows[3], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Prompt)
+        );
+        assert!(
+            matches!(rows[4], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Skills)
+        );
+        assert!(
+            matches!(rows[5], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Agents)
+        );
+        assert!(
+            matches!(rows[6], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Settings)
+        );
+        assert!(
+            matches!(rows[7], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Auth)
+        );
+        assert!(
+            matches!(rows[8], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Mcp)
+        );
     }
 
     #[test]
@@ -1887,9 +2304,10 @@ mod tests {
         let tool_dir = _tmp.path().join("minimal");
         std::fs::create_dir_all(&tool_dir).unwrap();
 
-        let config = test_config_with_tools(vec![
-            ("minimal", test_tool_config("Minimal Tool", &tool_dir.to_string_lossy(), false)),
-        ]);
+        let config = test_config_with_tools(vec![(
+            "minimal",
+            test_tool_config("Minimal Tool", &tool_dir.to_string_lossy(), false),
+        )]);
         let mut expanded = HashSet::new();
         expanded.insert("minimal".to_string());
         expanded.insert("minimal:status".to_string());
@@ -1900,9 +2318,15 @@ mod tests {
         assert!(matches!(rows[0], ToolRow::CentralHeader));
         assert!(matches!(rows[1], ToolRow::ToolHeader { ref key, .. } if key == "minimal"));
         assert!(matches!(rows[2], ToolRow::StatusHeader { .. }));
-        assert!(matches!(rows[3], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Prompt));
-        assert!(matches!(rows[4], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Skills));
-        assert!(matches!(rows[5], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Agents));
+        assert!(
+            matches!(rows[3], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Prompt)
+        );
+        assert!(
+            matches!(rows[4], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Skills)
+        );
+        assert!(
+            matches!(rows[5], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Agents)
+        );
 
         // No FileGroupHeader rows
         for row in &rows {
@@ -1913,8 +2337,14 @@ mod tests {
     #[test]
     fn test_build_rows_alphabetical() {
         let config = test_config_with_tools(vec![
-            ("zed", test_tool_config("Zed Editor", "/nonexistent/zed", true)),
-            ("alpha", test_tool_config("Alpha Tool", "/nonexistent/alpha", true)),
+            (
+                "zed",
+                test_tool_config("Zed Editor", "/nonexistent/zed", true),
+            ),
+            (
+                "alpha",
+                test_tool_config("Alpha Tool", "/nonexistent/alpha", true),
+            ),
         ]);
         let expanded = HashSet::new();
         let rows = build_rows(&config, &expanded);
@@ -1934,7 +2364,11 @@ mod tests {
         let tool = ToolConfig {
             name: "Claude".to_string(),
             config_dir: tool_dir.to_string_lossy().to_string(),
-            settings: vec!["a.json".to_string(), "b.json".to_string(), "c.json".to_string()],
+            settings: vec![
+                "a.json".to_string(),
+                "b.json".to_string(),
+                "c.json".to_string(),
+            ],
             auth: vec!["cred.json".to_string()],
             prompt_filename: "PROMPT.md".to_string(),
             skills_dir: "skills".to_string(),
@@ -1949,12 +2383,24 @@ mod tests {
 
         // CentralHeader + ToolHeader + StatusHeader + FileGroupHeader(settings) + 3 FileItems + FileGroupHeader(auth) + FileGroupHeader(mcp)
         assert_eq!(rows.len(), 9);
-        assert!(matches!(rows[3], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Settings));
-        assert!(matches!(rows[4], ToolRow::FileItem { ref group, index: 0, .. } if *group == FileGroup::Settings));
-        assert!(matches!(rows[5], ToolRow::FileItem { ref group, index: 1, .. } if *group == FileGroup::Settings));
-        assert!(matches!(rows[6], ToolRow::FileItem { ref group, index: 2, .. } if *group == FileGroup::Settings));
-        assert!(matches!(rows[7], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Auth));
-        assert!(matches!(rows[8], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Mcp));
+        assert!(
+            matches!(rows[3], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Settings)
+        );
+        assert!(
+            matches!(rows[4], ToolRow::FileItem { ref group, index: 0, .. } if *group == FileGroup::Settings)
+        );
+        assert!(
+            matches!(rows[5], ToolRow::FileItem { ref group, index: 1, .. } if *group == FileGroup::Settings)
+        );
+        assert!(
+            matches!(rows[6], ToolRow::FileItem { ref group, index: 2, .. } if *group == FileGroup::Settings)
+        );
+        assert!(
+            matches!(rows[7], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Auth)
+        );
+        assert!(
+            matches!(rows[8], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Mcp)
+        );
     }
 
     const SAMPLE_CONFIG: &str = r#"[central]

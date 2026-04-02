@@ -133,7 +133,7 @@ impl ScrollablePopup {
         if self.visible_height == 0 || self.lines.is_empty() {
             return 1;
         }
-        (self.lines.len() + self.visible_height - 1) / self.visible_height
+        self.lines.len().div_ceil(self.visible_height)
     }
 
     fn scroll_up(&mut self, amount: usize) {
@@ -156,9 +156,9 @@ impl ScrollablePopup {
 
 #[derive(Debug, PartialEq)]
 pub enum PopupAction {
-    Consumed,  // key was handled, popup stays open
-    Close,     // popup should close
-    Ignored,   // key not relevant to popup
+    Consumed, // key was handled, popup stays open
+    Close,    // popup should close
+    Ignored,  // key not relevant to popup
 }
 
 #[cfg(test)]
@@ -212,7 +212,9 @@ mod tests {
 
     #[test]
     fn test_page_up_down() {
-        let lines = (1..=20).map(|i| Line::from(format!("line {}", i))).collect();
+        let lines = (1..=20)
+            .map(|i| Line::from(format!("line {}", i)))
+            .collect();
         let mut popup = ScrollablePopup::new("Test", lines);
         popup.visible_height = 5;
 
@@ -227,7 +229,9 @@ mod tests {
 
     #[test]
     fn test_home_end() {
-        let lines = (1..=10).map(|i| Line::from(format!("line {}", i))).collect();
+        let lines = (1..=10)
+            .map(|i| Line::from(format!("line {}", i)))
+            .collect();
         let mut popup = ScrollablePopup::new("Test", lines);
         popup.visible_height = 3;
 
@@ -314,7 +318,9 @@ mod tests {
 
     #[test]
     fn test_vi_keys() {
-        let lines = (1..=10).map(|i| Line::from(format!("line {}", i))).collect();
+        let lines = (1..=10)
+            .map(|i| Line::from(format!("line {}", i)))
+            .collect();
         let mut popup = ScrollablePopup::new("Test", lines);
         popup.visible_height = 3;
 
@@ -329,7 +335,9 @@ mod tests {
 
     #[test]
     fn test_page_indicator_values() {
-        let lines = (1..=20).map(|i| Line::from(format!("line {}", i))).collect();
+        let lines = (1..=20)
+            .map(|i| Line::from(format!("line {}", i)))
+            .collect();
         let mut popup = ScrollablePopup::new("Test", lines);
         popup.visible_height = 5;
 

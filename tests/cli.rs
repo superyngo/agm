@@ -55,7 +55,9 @@ fn test_version_flag() {
 
 #[test]
 fn test_old_commands_removed() {
-    for cmd in &["link", "unlink", "status", "config", "prompt", "auth", "mcp"] {
+    for cmd in &[
+        "link", "unlink", "status", "config", "prompt", "auth", "mcp",
+    ] {
         Command::cargo_bin("agm")
             .unwrap()
             .arg(cmd)

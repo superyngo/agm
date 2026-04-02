@@ -224,6 +224,7 @@ impl ToolConfig {
     /// - Absolute-looking path (contains `/`, `\`, starts with `~`, or has drive letter) →
     ///   expand `~` and `$VAR`
     /// - Otherwise → relative to `config_dir`
+    #[allow(dead_code)]
     pub fn resolve_path(&self, path: &str) -> PathBuf {
         let is_absolute = path.contains('/')
             || path.contains('\\')

@@ -12,11 +12,13 @@ pub fn expand_tilde(path: &str) -> PathBuf {
 
 /// Expand environment variables ($VAR, ${VAR}) and ~ in a path string.
 /// Variables that are not set are left unexpanded.
+#[allow(dead_code)]
 pub fn expand_path(path: &str) -> PathBuf {
     let expanded = expand_env_vars(path);
     expand_tilde(&expanded)
 }
 
+#[allow(dead_code)]
 fn expand_env_vars(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let chars: Vec<char> = s.chars().collect();

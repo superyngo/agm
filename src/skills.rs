@@ -57,9 +57,20 @@ pub struct SourceGroup {
 /// Progress report from update_all_with_progress
 #[derive(Debug, Clone)]
 pub enum UpdateProgress {
-    RepoStart { name: String },
-    RepoComplete { name: String, success: bool, message: String },
-    AllDone { total: usize, updated: usize, new_skills: usize, new_agents: usize },
+    RepoStart {
+        name: String,
+    },
+    RepoComplete {
+        name: String,
+        success: bool,
+        message: String,
+    },
+    AllDone {
+        total: usize,
+        updated: usize,
+        new_skills: usize,
+        new_agents: usize,
+    },
 }
 
 /// Scan a path for skills. Returns list of (skill_name, skill_dir_path).
@@ -471,7 +482,10 @@ pub fn update_all_with_progress<F>(
 
     if total == 0 {
         on_progress(UpdateProgress::AllDone {
-            total: 0, updated: 0, new_skills: 0, new_agents: 0,
+            total: 0,
+            updated: 0,
+            new_skills: 0,
+            new_agents: 0,
         });
         return;
     }
@@ -484,7 +498,9 @@ pub fn update_all_with_progress<F>(
             .unwrap_or("unknown")
             .to_string();
 
-        on_progress(UpdateProgress::RepoStart { name: repo_name.clone() });
+        on_progress(UpdateProgress::RepoStart {
+            name: repo_name.clone(),
+        });
 
         let result = std::process::Command::new("git")
             .args(["pull"])
@@ -535,10 +551,10 @@ pub fn update_all_with_progress<F>(
         let new_skills = scan_skills(git_root);
         for (name, skill_path) in new_skills {
             let link_path = skills_dir.join(&name);
-            if link_path.symlink_metadata().is_err() {
-                if install_skill(&name, &skill_path, skills_dir).is_ok() {
-                    new_skills_total += 1;
-                }
+            if link_path.symlink_metadata().is_err()
+                && install_skill(&name, &skill_path, skills_dir).is_ok()
+            {
+                new_skills_total += 1;
             }
         }
 
@@ -546,10 +562,10 @@ pub fn update_all_with_progress<F>(
         for (name, agent_path) in new_agents {
             let link_name = format!("{}.md", name);
             let link_path = agents_dir.join(&link_name);
-            if link_path.symlink_metadata().is_err() {
-                if install_agent(&name, &agent_path, agents_dir).is_ok() {
-                    new_agents_total += 1;
-                }
+            if link_path.symlink_metadata().is_err()
+                && install_agent(&name, &agent_path, agents_dir).is_ok()
+            {
+                new_agents_total += 1;
             }
         }
     }
@@ -898,12 +914,28 @@ pub fn migrate_tool_dir(
     central_skills: &Path,
     tool_key: &str,
 ) -> anyhow::Result<usize> {
+    let (count, msgs) =
+        migrate_tool_dir_quiet(skills_link, tool_skills_target, central_skills, tool_key)?;
+    for m in &msgs {
+        println!("{}", m);
+    }
+    Ok(count)
+}
+
+/// Like `migrate_tool_dir` but returns messages instead of printing (TUI-safe).
+pub fn migrate_tool_dir_quiet(
+    skills_link: &Path,
+    tool_skills_target: &Path,
+    central_skills: &Path,
+    tool_key: &str,
+) -> anyhow::Result<(usize, Vec<String>)> {
     use anyhow::Context;
 
+    let mut msgs = Vec::new();
     fs::create_dir_all(tool_skills_target)?;
     fs::create_dir_all(central_skills)?;
 
-    let discovered = scan_skills(skills_link);  // was skills::scan_skills — now local call
+    let discovered = scan_skills(skills_link);
     let mut migrated = 0;
 
     for (name, skill_path) in &discovered {
@@ -911,12 +943,10 @@ pub fn migrate_tool_dir(
             name.clone()
         } else {
             let prefixed = format!("{}_{}", tool_key, name);
-            println!(
-                "  {} skill '{}' already in central, renaming to '{}'",
-                "warn".yellow(),
-                name,
-                prefixed
-            );
+            msgs.push(format!(
+                "  skill '{}' already in central, renaming to '{}'",
+                name, prefixed
+            ));
             prefixed
         };
 
@@ -924,11 +954,7 @@ pub fn migrate_tool_dir(
         let link = central_skills.join(&effective_name);
 
         if dest.exists() {
-            println!(
-                "  {} {} already in store, re-linking",
-                "skip".yellow(),
-                effective_name
-            );
+            msgs.push(format!("  {} already in store, re-linking", effective_name));
         } else {
             fs::rename(skill_path, &dest)
                 .with_context(|| format!("Failed to move skill '{}' to store", effective_name))?;
@@ -941,7 +967,7 @@ pub fn migrate_tool_dir(
                 .map(|(a, b)| a == b)
                 .unwrap_or(false);
             if already_ok {
-                println!("  {} {} already linked", "skip".yellow(), effective_name);
+                msgs.push(format!("  {} already linked", effective_name));
                 migrated += 1;
                 continue;
             }
@@ -951,12 +977,7 @@ pub fn migrate_tool_dir(
         platform::link_dir(&dest, &link)
             .with_context(|| format!("Failed to link skill '{}' into central", effective_name))?;
 
-        println!(
-            "  {} {} → {}",
-            " ok ".green(),
-            effective_name,
-            crate::paths::contract_tilde(&dest)
-        );
+        msgs.push(format!("  {} → {}", effective_name, contract_tilde(&dest)));
         migrated += 1;
     }
 
@@ -964,7 +985,82 @@ pub fn migrate_tool_dir(
         fs::remove_dir_all(skills_link)?;
     }
 
-    Ok(migrated)
+    Ok((migrated, msgs))
+}
+
+/// Migrate a tool's agents directory to the central store (TUI-safe).
+/// Moves .md files from `agents_link` into `tool_agents_target` (under
+/// source_dir/agm_tools/{tool}/agents/), then creates file links in `central_agents`.
+pub fn migrate_agents_dir_quiet(
+    agents_link: &Path,
+    tool_agents_target: &Path,
+    central_agents: &Path,
+    tool_key: &str,
+) -> anyhow::Result<(usize, Vec<String>)> {
+    use anyhow::Context;
+
+    let mut msgs = Vec::new();
+    fs::create_dir_all(tool_agents_target)?;
+    fs::create_dir_all(central_agents)?;
+
+    let mut migrated = 0;
+    let entries: Vec<_> = fs::read_dir(agents_link)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let p = e.path();
+            p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("md")
+        })
+        .collect();
+
+    for entry in &entries {
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy().to_string();
+        let src = entry.path();
+
+        let effective_name = if !central_agents.join(&name).exists() {
+            name.clone()
+        } else {
+            let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or(&name);
+            let prefixed = format!("{}_{}.md", tool_key, stem);
+            msgs.push(format!(
+                "  agent '{}' already in central, renaming to '{}'",
+                name, prefixed
+            ));
+            prefixed
+        };
+
+        let dest = tool_agents_target.join(&effective_name);
+        let link = central_agents.join(&effective_name);
+
+        if dest.exists() {
+            msgs.push(format!("  {} already in store, re-linking", effective_name));
+        } else {
+            fs::rename(&src, &dest)
+                .with_context(|| format!("Failed to move agent '{}' to store", effective_name))?;
+        }
+
+        if link.symlink_metadata().is_ok() {
+            let already_ok = platform::same_file(&link, &dest).unwrap_or(false);
+            if already_ok {
+                msgs.push(format!("  {} already linked", effective_name));
+                migrated += 1;
+                continue;
+            }
+            platform::remove_link(&link)?;
+        }
+
+        platform::link_file(&dest, &link)
+            .with_context(|| format!("Failed to link agent '{}' into central", effective_name))?;
+
+        msgs.push(format!("  {} → {}", effective_name, contract_tilde(&dest)));
+        migrated += 1;
+    }
+
+    if agents_link.exists() {
+        fs::remove_dir_all(agents_link)?;
+    }
+
+    Ok((migrated, msgs))
 }
 
 /// Recursively copy a directory, preserving symlinks.
@@ -1001,6 +1097,7 @@ pub fn copy_dir_all(src: &Path, dst: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::linker;
     use tempfile::TempDir;
 
     #[test]
@@ -1497,7 +1594,12 @@ mod tests {
 
         assert_eq!(events.len(), 1);
         match &events[0] {
-            UpdateProgress::AllDone { total, updated, new_skills, new_agents } => {
+            UpdateProgress::AllDone {
+                total,
+                updated,
+                new_skills,
+                new_agents,
+            } => {
                 assert_eq!(*total, 0);
                 assert_eq!(*updated, 0);
                 assert_eq!(*new_skills, 0);
@@ -1527,5 +1629,308 @@ mod tests {
             UpdateProgress::AllDone { total, .. } => assert_eq!(*total, 0),
             other => panic!("Expected AllDone, got {:?}", other),
         }
+    }
+
+    // ------------------------------------------------------------------
+    // migrate_tool_dir_quiet tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_migrate_tool_dir_quiet_basic() {
+        let tmp = TempDir::new().unwrap();
+        // Tool's local skills dir with 2 skills
+        let skills_dir = tmp.path().join("tool_skills");
+        let s1 = skills_dir.join("alpha");
+        let s2 = skills_dir.join("beta");
+        fs::create_dir_all(&s1).unwrap();
+        fs::create_dir_all(&s2).unwrap();
+        fs::write(s1.join("SKILL.md"), "# alpha").unwrap();
+        fs::write(s2.join("SKILL.md"), "# beta").unwrap();
+
+        let store = tmp.path().join("store");
+        let central = tmp.path().join("central");
+
+        let (count, msgs) = migrate_tool_dir_quiet(&skills_dir, &store, &central, "test").unwrap();
+
+        assert_eq!(count, 2);
+        assert!(!msgs.is_empty());
+        // Original dir removed
+        assert!(!skills_dir.exists());
+        // Items in store
+        assert!(store.join("alpha").join("SKILL.md").exists());
+        assert!(store.join("beta").join("SKILL.md").exists());
+        // Links in central
+        assert!(platform::is_dir_link(&central.join("alpha")));
+        assert!(platform::is_dir_link(&central.join("beta")));
+    }
+
+    #[test]
+    fn test_migrate_tool_dir_quiet_conflict_rename() {
+        let tmp = TempDir::new().unwrap();
+        let skills_dir = tmp.path().join("tool_skills");
+        let s1 = skills_dir.join("shared");
+        fs::create_dir_all(&s1).unwrap();
+        fs::write(s1.join("SKILL.md"), "# shared").unwrap();
+
+        let store = tmp.path().join("store");
+        let central = tmp.path().join("central");
+        // Pre-existing skill with same name in central
+        fs::create_dir_all(central.join("shared")).unwrap();
+
+        let (count, msgs) =
+            migrate_tool_dir_quiet(&skills_dir, &store, &central, "mytool").unwrap();
+
+        assert_eq!(count, 1);
+        // Should be renamed with tool prefix
+        assert!(store.join("mytool_shared").exists());
+        assert!(central.join("mytool_shared").exists());
+        // Messages mention the rename
+        assert!(msgs.iter().any(|m| m.contains("renaming")));
+    }
+
+    #[test]
+    fn test_migrate_tool_dir_quiet_empty() {
+        let tmp = TempDir::new().unwrap();
+        let skills_dir = tmp.path().join("empty_skills");
+        fs::create_dir_all(&skills_dir).unwrap();
+        // No skills inside
+
+        let store = tmp.path().join("store");
+        let central = tmp.path().join("central");
+
+        let (count, _msgs) = migrate_tool_dir_quiet(&skills_dir, &store, &central, "test").unwrap();
+        assert_eq!(count, 0);
+        // Original dir still removed
+        assert!(!skills_dir.exists());
+    }
+
+    // ------------------------------------------------------------------
+    // migrate_agents_dir_quiet tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_migrate_agents_dir_quiet_basic() {
+        let tmp = TempDir::new().unwrap();
+        let agents_dir = tmp.path().join("tool_agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(agents_dir.join("helper.md"), "# helper agent").unwrap();
+        fs::write(agents_dir.join("reviewer.md"), "# reviewer agent").unwrap();
+        fs::write(agents_dir.join("README"), "not an agent").unwrap(); // non-.md file
+
+        let store = tmp.path().join("store_agents");
+        let central = tmp.path().join("central_agents");
+
+        let (count, msgs) =
+            migrate_agents_dir_quiet(&agents_dir, &store, &central, "test").unwrap();
+
+        assert_eq!(count, 2);
+        assert!(!msgs.is_empty());
+        // Original dir removed
+        assert!(!agents_dir.exists());
+        // Items in store
+        assert!(store.join("helper.md").exists());
+        assert!(store.join("reviewer.md").exists());
+        // Non-md file not migrated (lost with dir removal — intentional)
+        // Links in central (file links)
+        assert!(fs::read_link(central.join("helper.md")).is_ok());
+        assert!(fs::read_link(central.join("reviewer.md")).is_ok());
+    }
+
+    #[test]
+    fn test_migrate_agents_dir_quiet_conflict_rename() {
+        let tmp = TempDir::new().unwrap();
+        let agents_dir = tmp.path().join("tool_agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+        fs::write(agents_dir.join("shared.md"), "# shared agent").unwrap();
+
+        let store = tmp.path().join("store_agents");
+        let central = tmp.path().join("central_agents");
+        // Pre-existing agent with same name in central
+        fs::create_dir_all(&central).unwrap();
+        fs::write(central.join("shared.md"), "# existing agent").unwrap();
+
+        let (count, msgs) =
+            migrate_agents_dir_quiet(&agents_dir, &store, &central, "mytool").unwrap();
+
+        assert_eq!(count, 1);
+        assert!(store.join("mytool_shared.md").exists());
+        assert!(fs::read_link(central.join("mytool_shared.md")).is_ok());
+        // Original preserved
+        assert_eq!(
+            fs::read_to_string(central.join("shared.md")).unwrap(),
+            "# existing agent"
+        );
+        assert!(msgs.iter().any(|m| m.contains("renaming")));
+    }
+
+    #[test]
+    fn test_migrate_agents_dir_quiet_empty() {
+        let tmp = TempDir::new().unwrap();
+        let agents_dir = tmp.path().join("empty_agents");
+        fs::create_dir_all(&agents_dir).unwrap();
+
+        let store = tmp.path().join("store_agents");
+        let central = tmp.path().join("central_agents");
+
+        let (count, _msgs) =
+            migrate_agents_dir_quiet(&agents_dir, &store, &central, "test").unwrap();
+        assert_eq!(count, 0);
+        assert!(!agents_dir.exists());
+    }
+
+    // ------------------------------------------------------------------
+    // Full cycle: migrate → link → unlink → restore
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_skills_full_cycle_migrate_link_unlink_restore() {
+        let tmp = TempDir::new().unwrap();
+        // Setup: tool has local skills dir with content
+        let tool_skills = tmp.path().join("tool_skills");
+        let s1 = tool_skills.join("my-skill");
+        fs::create_dir_all(&s1).unwrap();
+        fs::write(s1.join("SKILL.md"), "# My Skill").unwrap();
+        fs::write(s1.join("code.py"), "print('hi')").unwrap();
+
+        let store = tmp.path().join("agm_tools").join("testtool");
+        let central = tmp.path().join("central_skills");
+
+        // Step 1: Migrate (simulating handle_blocked_link for skills)
+        let (count, _) =
+            migrate_tool_dir_quiet(&tool_skills, &store, &central, "testtool").unwrap();
+        assert_eq!(count, 1);
+        assert!(!tool_skills.exists());
+        assert!(store.join("my-skill").join("SKILL.md").exists());
+        assert!(store.join("my-skill").join("code.py").exists());
+
+        // Step 2: Create link
+        linker::create_link_quiet(&tool_skills, &central, "skills", true).unwrap();
+        assert_eq!(
+            linker::check_link(&tool_skills, &central, true),
+            linker::LinkStatus::Linked
+        );
+
+        // Step 3: Unlink
+        linker::remove_link_quiet(&tool_skills, "skills", true).unwrap();
+        assert!(!tool_skills.exists());
+
+        // Step 4: Restore (simulating recover_after_unlink for Skills)
+        fs::create_dir_all(&tool_skills).unwrap();
+        let mut restored = 0;
+        for entry in fs::read_dir(&store).unwrap().flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let path = entry.path();
+            if !path.is_dir() || !path.join("SKILL.md").exists() {
+                continue;
+            }
+            let dest = tool_skills.join(&name);
+            if !dest.exists() {
+                fs::rename(&path, &dest).unwrap();
+                restored += 1;
+            }
+        }
+        assert_eq!(restored, 1);
+        assert!(tool_skills.join("my-skill").join("SKILL.md").exists());
+        assert!(tool_skills.join("my-skill").join("code.py").exists());
+    }
+
+    #[test]
+    fn test_agents_full_cycle_migrate_link_unlink_restore() {
+        let tmp = TempDir::new().unwrap();
+        // Setup: tool has local agents dir with .md files
+        let tool_agents = tmp.path().join("tool_agents");
+        fs::create_dir_all(&tool_agents).unwrap();
+        fs::write(tool_agents.join("coder.md"), "# Coder Agent").unwrap();
+        fs::write(tool_agents.join("tester.md"), "# Tester Agent").unwrap();
+
+        let store_agents = tmp.path().join("agm_tools").join("testtool").join("agents");
+        let central = tmp.path().join("central_agents");
+
+        // Step 1: Migrate
+        let (count, _) =
+            migrate_agents_dir_quiet(&tool_agents, &store_agents, &central, "testtool").unwrap();
+        assert_eq!(count, 2);
+        assert!(!tool_agents.exists());
+        assert!(store_agents.join("coder.md").exists());
+        assert!(store_agents.join("tester.md").exists());
+
+        // Step 2: Create link
+        linker::create_link_quiet(&tool_agents, &central, "agents", true).unwrap();
+        assert_eq!(
+            linker::check_link(&tool_agents, &central, true),
+            linker::LinkStatus::Linked
+        );
+
+        // Step 3: Unlink
+        linker::remove_link_quiet(&tool_agents, "agents", true).unwrap();
+        assert!(!tool_agents.exists());
+
+        // Step 4: Restore (simulating recover_after_unlink for Agents)
+        assert!(store_agents.exists());
+        fs::rename(&store_agents, &tool_agents).unwrap();
+        assert!(tool_agents.join("coder.md").exists());
+        assert!(tool_agents.join("tester.md").exists());
+        assert_eq!(
+            fs::read_to_string(tool_agents.join("coder.md")).unwrap(),
+            "# Coder Agent"
+        );
+    }
+
+    #[test]
+    fn test_prompt_full_cycle_backup_link_unlink_restore() {
+        let tmp = TempDir::new().unwrap();
+        // Setup: tool has a local prompt file
+        let prompt_path = tmp.path().join("AGENTS.md");
+        fs::write(&prompt_path, "# My Custom Prompt").unwrap();
+
+        let central_prompt = tmp.path().join("central").join("MASTER.md");
+        fs::create_dir_all(central_prompt.parent().unwrap()).unwrap();
+        fs::write(&central_prompt, "# Central Prompt").unwrap();
+
+        // Step 1: Backup (with_extension replaces .md, so AGENTS.md → AGENTS.{ts}.bak)
+        let backup = prompt_path.with_extension("20990101_120000.bak");
+        fs::rename(&prompt_path, &backup).unwrap();
+        assert!(!prompt_path.exists());
+        assert!(backup.exists());
+
+        // Step 2: Create link
+        linker::create_link_quiet(&prompt_path, &central_prompt, "prompt", false).unwrap();
+        assert_eq!(
+            linker::check_link(&prompt_path, &central_prompt, false),
+            linker::LinkStatus::Linked
+        );
+        assert_eq!(
+            fs::read_to_string(&prompt_path).unwrap(),
+            "# Central Prompt"
+        );
+
+        // Step 3: Unlink
+        linker::remove_link_quiet(&prompt_path, "prompt", false).unwrap();
+        assert!(!prompt_path.exists());
+
+        // Step 4: Restore (simulating recover_after_unlink for Prompt)
+        // Use file_stem to match backup pattern (same logic as tool.rs)
+        let stem = "AGENTS";
+        let prefix = format!("{}.", stem);
+        let parent = tmp.path();
+        let mut backups: Vec<_> = fs::read_dir(parent)
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                let n = e.file_name().to_string_lossy().to_string();
+                n.starts_with(&prefix) && n.ends_with(".bak")
+            })
+            .collect();
+        backups.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+        assert!(!backups.is_empty());
+        let latest = backups.first().unwrap();
+        fs::rename(latest.path(), &prompt_path).unwrap();
+
+        // Verify original content restored
+        assert!(prompt_path.exists());
+        assert_eq!(
+            fs::read_to_string(&prompt_path).unwrap(),
+            "# My Custom Prompt"
+        );
     }
 }
