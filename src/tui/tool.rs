@@ -157,6 +157,55 @@ pub fn build_rows(config: &Config, expanded: &HashSet<String>) -> Vec<ToolRow> {
     rows
 }
 
+/// Extract a [tools.{key}] section from raw config text.
+/// Returns (section_lines, start_line_index, end_line_index).
+fn extract_tool_section(config_text: &str, tool_key: &str) -> Option<(Vec<String>, usize, usize)> {
+    let header = format!("[tools.{}]", tool_key);
+    let lines: Vec<&str> = config_text.lines().collect();
+
+    let start = lines.iter().position(|l| l.trim() == header)?;
+
+    let sub_prefix = format!("[tools.{}.", tool_key);
+    let mut end = lines.len();
+    for i in (start + 1)..lines.len() {
+        let trimmed = lines[i].trim();
+        if trimmed.starts_with('[') && !trimmed.starts_with(&sub_prefix) {
+            end = i;
+            break;
+        }
+    }
+
+    let section_lines: Vec<String> = lines[start..end].iter().map(|l| l.to_string()).collect();
+    Some((section_lines, start, end))
+}
+
+/// Replace a [tools.{key}] section in raw config text with new content.
+fn replace_tool_section(config_text: &str, tool_key: &str, new_section: &str) -> Option<String> {
+    let header = format!("[tools.{}]", tool_key);
+    let lines: Vec<&str> = config_text.lines().collect();
+
+    let start = lines.iter().position(|l| l.trim() == header)?;
+
+    let sub_prefix = format!("[tools.{}.", tool_key);
+    let mut end = lines.len();
+    for i in (start + 1)..lines.len() {
+        let trimmed = lines[i].trim();
+        if trimmed.starts_with('[') && !trimmed.starts_with(&sub_prefix) {
+            end = i;
+            break;
+        }
+    }
+
+    let mut result: Vec<&str> = Vec::new();
+    result.extend_from_slice(&lines[..start]);
+    for line in new_section.lines() {
+        result.push(line);
+    }
+    result.extend_from_slice(&lines[end..]);
+
+    Some(result.join("\n"))
+}
+
 // ---------------------------------------------------------------------------
 // Popup state
 // ---------------------------------------------------------------------------
@@ -1039,6 +1088,83 @@ impl ToolApp {
 
     fn handle_edit(&mut self, row: &ToolRow, terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) {
         match row {
+            ToolRow::ToolHeader { key, .. } => {
+                use super::log::LogLevel;
+                let config_path = self.config_path.clone()
+                    .unwrap_or_else(|| expand_tilde("~/.config/agm/config.toml"));
+                let config_text = match std::fs::read_to_string(&config_path) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        self.set_status(format!("✗ Failed to read config: {}", e));
+                        return;
+                    }
+                };
+                let (section_lines, _, _) = match extract_tool_section(&config_text, key) {
+                    Some(v) => v,
+                    None => {
+                        self.set_status(format!("✗ Section [tools.{}] not found", key));
+                        return;
+                    }
+                };
+                let section_text = section_lines.join("\n") + "\n";
+
+                let tmp_path = std::env::temp_dir().join(format!("agm-{}.toml", key));
+                if let Err(e) = std::fs::write(&tmp_path, &section_text) {
+                    self.set_status(format!("✗ Failed to write temp file: {}", e));
+                    return;
+                }
+
+                self.open_in_editor(terminal, &[tmp_path.clone()]);
+
+                let new_section = match std::fs::read_to_string(&tmp_path) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        self.set_status(format!("✗ Failed to read temp file: {}", e));
+                        return;
+                    }
+                };
+                let _ = std::fs::remove_file(&tmp_path);
+
+                // Validate TOML syntax
+                if new_section.parse::<toml::Value>().is_err() {
+                    self.log.push(LogLevel::Error, format!("[{}] Invalid TOML syntax, changes discarded", key));
+                    self.set_status("✗ Invalid TOML, changes discarded");
+                    return;
+                }
+
+                // Re-read config (editor may have been slow, file may have changed)
+                let config_text = match std::fs::read_to_string(&config_path) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        self.set_status(format!("✗ Failed to re-read config: {}", e));
+                        return;
+                    }
+                };
+
+                let new_config_text = match replace_tool_section(&config_text, key, new_section.trim_end()) {
+                    Some(t) => t,
+                    None => {
+                        self.set_status(format!("✗ Section [tools.{}] not found for replacement", key));
+                        return;
+                    }
+                };
+
+                if let Err(e) = std::fs::write(&config_path, &new_config_text) {
+                    self.set_status(format!("✗ Failed to write config: {}", e));
+                    return;
+                }
+
+                // Reload config
+                if let Ok(new_config) = Config::load_from(self.config_path.clone()) {
+                    self.config = new_config;
+                    self.rebuild_rows();
+                    self.log.push(LogLevel::Success, format!("[{}] Config updated", key));
+                    self.set_status(format!("✓ {} config updated", key));
+                } else {
+                    self.log.push(LogLevel::Error, format!("[{}] Config reload failed after edit", key));
+                    self.set_status("✗ Config reload failed");
+                }
+            }
             ToolRow::CentralItem(CentralField::Config) => {
                 let path = self.config_path.clone()
                     .unwrap_or_else(|| expand_tilde("~/.config/agm/config.toml"));
@@ -1209,8 +1335,14 @@ fn hint_text(t: &str) -> Span<'static> {
 fn build_tool_hints(row: Option<&ToolRow>, config: &Config) -> Line<'static> {
     let mut spans = Vec::new();
     match row {
-        Some(ToolRow::CentralHeader) | Some(ToolRow::ToolHeader { .. }) => {
+        Some(ToolRow::CentralHeader) => {
             spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+        Some(ToolRow::ToolHeader { .. }) => {
+            spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
+            spans.extend([hint_key("e"), hint_text(" edit  ")]);
             spans.extend([hint_key("l"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
@@ -1823,5 +1955,76 @@ mod tests {
         assert!(matches!(rows[6], ToolRow::FileItem { ref group, index: 2, .. } if *group == FileGroup::Settings));
         assert!(matches!(rows[7], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Auth));
         assert!(matches!(rows[8], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Mcp));
+    }
+
+    const SAMPLE_CONFIG: &str = r#"[central]
+prompt_source = "~/.local/share/agm/prompts/MASTER.md"
+skills_source = "~/.local/share/agm/skills"
+
+[tools.claude]
+name = "Claude Code"
+config_dir = "~/.claude"
+prompt_filename = "CLAUDE.md"
+skills_dir = "skills"
+
+[tools.codex]
+name = "Codex"
+config_dir = "~/.codex"
+prompt_filename = "AGENTS.md"
+skills_dir = "skills"
+
+[tools.copilot]
+name = "Copilot"
+config_dir = "~/.copilot"
+"#;
+
+    #[test]
+    fn test_extract_tool_section() {
+        let result = extract_tool_section(SAMPLE_CONFIG, "codex");
+        assert!(result.is_some());
+        let (section, start, end) = result.unwrap();
+        assert!(section[0].contains("[tools.codex]"));
+        assert!(start < end);
+    }
+
+    #[test]
+    fn test_extract_tool_section_first_tool() {
+        let result = extract_tool_section(SAMPLE_CONFIG, "claude");
+        assert!(result.is_some());
+        let (section, _, _) = result.unwrap();
+        assert!(section[0].contains("[tools.claude]"));
+        assert!(section.iter().any(|l| l.contains("Claude Code")));
+    }
+
+    #[test]
+    fn test_extract_tool_section_last_tool() {
+        let result = extract_tool_section(SAMPLE_CONFIG, "copilot");
+        assert!(result.is_some());
+        let (section, _, _) = result.unwrap();
+        assert!(section[0].contains("[tools.copilot]"));
+    }
+
+    #[test]
+    fn test_extract_tool_section_not_found() {
+        let result = extract_tool_section(SAMPLE_CONFIG, "nonexistent");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_replace_tool_section() {
+        let new_section = "[tools.codex]\nname = \"OpenAI Codex\"\nconfig_dir = \"~/.codex\"\n";
+        let result = replace_tool_section(SAMPLE_CONFIG, "codex", new_section);
+        assert!(result.is_some());
+        let new_config = result.unwrap();
+        assert!(new_config.contains("OpenAI Codex"));
+        assert!(!new_config.contains("\"Codex\""));
+        assert!(new_config.contains("[tools.claude]"));
+        assert!(new_config.contains("[tools.copilot]"));
+    }
+
+    #[test]
+    fn test_replace_tool_section_not_found() {
+        let result = replace_tool_section(SAMPLE_CONFIG, "nonexistent", "whatever");
+        assert!(result.is_none());
     }
 }
