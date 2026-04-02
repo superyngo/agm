@@ -1050,9 +1050,8 @@ impl App {
             }
             KeyCode::Char('/') => {
                 self.search_mode = true;
-                self.search_query.clear();
-                self.filtered_rows = None;
-                // Expand all for search visibility
+                // Preserve existing search_query and filtered_rows
+                // so user can continue editing their previous search
                 self.expand_all();
             }
             KeyCode::Char('l') => {
