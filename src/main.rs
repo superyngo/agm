@@ -104,6 +104,7 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
     let central_agents = paths::expand_tilde(&config.central.agents_source);
     let central_prompt = paths::expand_tilde(&config.central.prompt_source);
     let source_dir = paths::expand_tilde(&config.central.source_dir);
+    let disabled = &config.central.disabled;
     let yes = true; // Non-interactive mode
 
     // Collect which tools to link (all installed tools)
@@ -176,8 +177,12 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
     for (key, tool) in tools_to_link {
         println!("\n{} ({}):", key, tool.name);
 
+        for d in disabled {
+            println!("  {} {} (disabled)", "skip".yellow(), d);
+        }
+
         // Link skills directory
-        if !tool.skills_dir.is_empty() {
+        if !tool.skills_dir.is_empty() && !disabled.iter().any(|d| d == "skills") {
             let skills_link = tool.resolved_config_dir().join(&tool.skills_dir);
 
             if platform::is_dir_link(&skills_link) {
@@ -239,7 +244,7 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
         }
 
         // Link agents directory
-        if !tool.agents_dir.is_empty() {
+        if !tool.agents_dir.is_empty() && !disabled.iter().any(|d| d == "agents") {
             let agents_link = tool.resolved_config_dir().join(&tool.agents_dir);
 
             if platform::is_dir_link(&agents_link) {
@@ -293,7 +298,7 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
         }
 
         // Link prompt file
-        if !tool.prompt_filename.is_empty() {
+        if !tool.prompt_filename.is_empty() && !disabled.iter().any(|d| d == "prompt") {
             let prompt_link = tool.resolved_config_dir().join(&tool.prompt_filename);
 
             // Check if prompt is already correctly linked (symlink or hardlink)
@@ -376,7 +381,7 @@ fn unlink_all(config: &config::Config) -> anyhow::Result<()> {
         println!("Unlinking {} ({}):", key, tool_config.name);
 
         // Remove skills link then copy central skills back
-        if !tool_config.skills_dir.is_empty() {
+        if !tool_config.skills_dir.is_empty() && !config.central.disabled.iter().any(|d| d == "skills") {
             let skills_link = tool_config
                 .resolved_config_dir()
                 .join(&tool_config.skills_dir);
@@ -387,7 +392,7 @@ fn unlink_all(config: &config::Config) -> anyhow::Result<()> {
         }
 
         // Remove agents link then copy central agents back
-        if !tool_config.agents_dir.is_empty() {
+        if !tool_config.agents_dir.is_empty() && !config.central.disabled.iter().any(|d| d == "agents") {
             let agents_link = tool_config
                 .resolved_config_dir()
                 .join(&tool_config.agents_dir);
@@ -398,7 +403,7 @@ fn unlink_all(config: &config::Config) -> anyhow::Result<()> {
         }
 
         // Remove prompt link then copy central prompt back
-        if !tool_config.prompt_filename.is_empty() {
+        if !tool_config.prompt_filename.is_empty() && !config.central.disabled.iter().any(|d| d == "prompt") {
             let prompt_link = tool_config
                 .resolved_config_dir()
                 .join(&tool_config.prompt_filename);

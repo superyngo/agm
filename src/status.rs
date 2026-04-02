@@ -8,6 +8,7 @@ use crate::skills;
 /// Display table with tool name, config dir, prompt/skills/agents link status and paths
 pub fn status() -> anyhow::Result<()> {
     let config = Config::load()?;
+    let disabled = &config.central.disabled;
     let central_skills = expand_tilde(&config.central.skills_source);
     let central_agents = expand_tilde(&config.central.agents_source);
     let central_commands = expand_tilde(&config.central.commands_source);
@@ -65,24 +66,28 @@ pub fn status() -> anyhow::Result<()> {
         if let Some(ls) = prompt_ls {
             let prompt_link = tool.resolved_config_dir().join(&tool.prompt_filename);
             print!("{}{:<8}", INDENT, "prompt");
-            match ls {
-                LinkStatus::Linked => println!(
-                    "{} → {}",
-                    "✓ linked".green(),
-                    contract_tilde(&prompt_link).dimmed()
-                ),
-                LinkStatus::Missing => println!(
-                    "{} → {}",
-                    "✗ missing".yellow(),
-                    contract_tilde(&central_prompt).dimmed()
-                ),
-                LinkStatus::Broken => println!("{}", "✗ broken".red()),
-                LinkStatus::Wrong(t) => println!("{} → {}", "✗ wrong".red(), t.dimmed()),
-                LinkStatus::Blocked => println!(
-                    "{} → {}",
-                    "✗ not linked".yellow(),
-                    contract_tilde(&prompt_link).dimmed()
-                ),
+            if disabled.iter().any(|d| d == "prompt") {
+                println!("{}", "disabled".dimmed());
+            } else {
+                match ls {
+                    LinkStatus::Linked => println!(
+                        "{} → {}",
+                        "✓ linked".green(),
+                        contract_tilde(&prompt_link).dimmed()
+                    ),
+                    LinkStatus::Missing => println!(
+                        "{} → {}",
+                        "✗ missing".yellow(),
+                        contract_tilde(&central_prompt).dimmed()
+                    ),
+                    LinkStatus::Broken => println!("{}", "✗ broken".red()),
+                    LinkStatus::Wrong(t) => println!("{} → {}", "✗ wrong".red(), t.dimmed()),
+                    LinkStatus::Blocked => println!(
+                        "{} → {}",
+                        "✗ not linked".yellow(),
+                        contract_tilde(&prompt_link).dimmed()
+                    ),
+                }
             }
         }
 
@@ -90,24 +95,28 @@ pub fn status() -> anyhow::Result<()> {
         if let Some(ls) = skills_ls {
             let skills_link = tool.resolved_config_dir().join(&tool.skills_dir);
             print!("{}{:<8}", INDENT, "skills");
-            match ls {
-                LinkStatus::Linked => println!(
-                    "{} → {}",
-                    "✓ linked".green(),
-                    contract_tilde(&skills_link).dimmed()
-                ),
-                LinkStatus::Missing => println!(
-                    "{} → {}",
-                    "✗ missing".yellow(),
-                    contract_tilde(&central_skills).dimmed()
-                ),
-                LinkStatus::Broken => println!("{}", "✗ broken".red()),
-                LinkStatus::Wrong(t) => println!("{} → {}", "✗ wrong".red(), t.dimmed()),
-                LinkStatus::Blocked => println!(
-                    "{} → {}",
-                    "✗ not linked".yellow(),
-                    contract_tilde(&skills_link).dimmed()
-                ),
+            if disabled.iter().any(|d| d == "skills") {
+                println!("{}", "disabled".dimmed());
+            } else {
+                match ls {
+                    LinkStatus::Linked => println!(
+                        "{} → {}",
+                        "✓ linked".green(),
+                        contract_tilde(&skills_link).dimmed()
+                    ),
+                    LinkStatus::Missing => println!(
+                        "{} → {}",
+                        "✗ missing".yellow(),
+                        contract_tilde(&central_skills).dimmed()
+                    ),
+                    LinkStatus::Broken => println!("{}", "✗ broken".red()),
+                    LinkStatus::Wrong(t) => println!("{} → {}", "✗ wrong".red(), t.dimmed()),
+                    LinkStatus::Blocked => println!(
+                        "{} → {}",
+                        "✗ not linked".yellow(),
+                        contract_tilde(&skills_link).dimmed()
+                    ),
+                }
             }
         }
 
@@ -115,24 +124,28 @@ pub fn status() -> anyhow::Result<()> {
         if let Some(ls) = agents_ls {
             let agents_link = tool.resolved_config_dir().join(&tool.agents_dir);
             print!("{}{:<8}", INDENT, "agents");
-            match ls {
-                LinkStatus::Linked => println!(
-                    "{} → {}",
-                    "✓ linked".green(),
-                    contract_tilde(&agents_link).dimmed()
-                ),
-                LinkStatus::Missing => println!(
-                    "{} → {}",
-                    "✗ missing".yellow(),
-                    contract_tilde(&central_agents).dimmed()
-                ),
-                LinkStatus::Broken => println!("{}", "✗ broken".red()),
-                LinkStatus::Wrong(t) => println!("{} → {}", "✗ wrong".red(), t.dimmed()),
-                LinkStatus::Blocked => println!(
-                    "{} → {}",
-                    "✗ not linked".yellow(),
-                    contract_tilde(&agents_link).dimmed()
-                ),
+            if disabled.iter().any(|d| d == "agents") {
+                println!("{}", "disabled".dimmed());
+            } else {
+                match ls {
+                    LinkStatus::Linked => println!(
+                        "{} → {}",
+                        "✓ linked".green(),
+                        contract_tilde(&agents_link).dimmed()
+                    ),
+                    LinkStatus::Missing => println!(
+                        "{} → {}",
+                        "✗ missing".yellow(),
+                        contract_tilde(&central_agents).dimmed()
+                    ),
+                    LinkStatus::Broken => println!("{}", "✗ broken".red()),
+                    LinkStatus::Wrong(t) => println!("{} → {}", "✗ wrong".red(), t.dimmed()),
+                    LinkStatus::Blocked => println!(
+                        "{} → {}",
+                        "✗ not linked".yellow(),
+                        contract_tilde(&agents_link).dimmed()
+                    ),
+                }
             }
         }
 
@@ -140,24 +153,28 @@ pub fn status() -> anyhow::Result<()> {
         if let Some(ls) = commands_ls {
             let commands_link = tool.resolved_config_dir().join(&tool.commands_dir);
             print!("{}{:<8}", INDENT, "commands");
-            match ls {
-                LinkStatus::Linked => println!(
-                    "{} → {}",
-                    "✓ linked".green(),
-                    contract_tilde(&commands_link).dimmed()
-                ),
-                LinkStatus::Missing => println!(
-                    "{} → {}",
-                    "✗ missing".yellow(),
-                    contract_tilde(&central_commands).dimmed()
-                ),
-                LinkStatus::Broken => println!("{}", "✗ broken".red()),
-                LinkStatus::Wrong(t) => println!("{} → {}", "✗ wrong".red(), t.dimmed()),
-                LinkStatus::Blocked => println!(
-                    "{} → {}",
-                    "✗ not linked".yellow(),
-                    contract_tilde(&commands_link).dimmed()
-                ),
+            if disabled.iter().any(|d| d == "commands") {
+                println!("{}", "disabled".dimmed());
+            } else {
+                match ls {
+                    LinkStatus::Linked => println!(
+                        "{} → {}",
+                        "✓ linked".green(),
+                        contract_tilde(&commands_link).dimmed()
+                    ),
+                    LinkStatus::Missing => println!(
+                        "{} → {}",
+                        "✗ missing".yellow(),
+                        contract_tilde(&central_commands).dimmed()
+                    ),
+                    LinkStatus::Broken => println!("{}", "✗ broken".red()),
+                    LinkStatus::Wrong(t) => println!("{} → {}", "✗ wrong".red(), t.dimmed()),
+                    LinkStatus::Blocked => println!(
+                        "{} → {}",
+                        "✗ not linked".yellow(),
+                        contract_tilde(&commands_link).dimmed()
+                    ),
+                }
             }
         }
     }
@@ -188,23 +205,55 @@ pub fn status() -> anyhow::Result<()> {
         .filter(|c| c.install_status == skills::SkillInstallStatus::Installed)
         .count();
 
-    println!("Central prompt : {}", contract_tilde(&central_prompt));
-    println!(
-        "Central skills : {} ({} installed, {} sources)",
-        contract_tilde(&central_skills),
-        installed_skills,
-        groups.len()
-    );
-    println!(
-        "Central agents : {} ({} installed)",
-        contract_tilde(&central_agents),
-        installed_agents,
-    );
-    println!(
-        "Central commands: {} ({} installed)",
-        contract_tilde(&central_commands),
-        installed_commands,
-    );
+    if disabled.iter().any(|d| d == "prompt") {
+        println!("Central prompt : {} {}", contract_tilde(&central_prompt), "(disabled)".dimmed());
+    } else {
+        println!("Central prompt : {}", contract_tilde(&central_prompt));
+    }
+    if disabled.iter().any(|d| d == "skills") {
+        println!(
+            "Central skills : {} ({} installed, {} sources) {}",
+            contract_tilde(&central_skills),
+            installed_skills,
+            groups.len(),
+            "(disabled)".dimmed()
+        );
+    } else {
+        println!(
+            "Central skills : {} ({} installed, {} sources)",
+            contract_tilde(&central_skills),
+            installed_skills,
+            groups.len()
+        );
+    }
+    if disabled.iter().any(|d| d == "agents") {
+        println!(
+            "Central agents : {} ({} installed) {}",
+            contract_tilde(&central_agents),
+            installed_agents,
+            "(disabled)".dimmed()
+        );
+    } else {
+        println!(
+            "Central agents : {} ({} installed)",
+            contract_tilde(&central_agents),
+            installed_agents,
+        );
+    }
+    if disabled.iter().any(|d| d == "commands") {
+        println!(
+            "Central commands: {} ({} installed) {}",
+            contract_tilde(&central_commands),
+            installed_commands,
+            "(disabled)".dimmed()
+        );
+    } else {
+        println!(
+            "Central commands: {} ({} installed)",
+            contract_tilde(&central_commands),
+            installed_commands,
+        );
+    }
     let source_dir = expand_tilde(&config.central.source_dir);
     println!("Central source : {}", contract_tilde(&source_dir));
     println!();
