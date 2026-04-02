@@ -108,11 +108,11 @@ pub fn build_rows(config: &Config, expanded: &HashSet<String>) -> Vec<ToolRow> {
     rows.push(ToolRow::CentralHeader);
     if expanded.contains("central") {
         rows.push(ToolRow::CentralItem(CentralField::Config));
+        rows.push(ToolRow::CentralItem(CentralField::Source));
         rows.push(ToolRow::CentralItem(CentralField::Prompt));
         rows.push(ToolRow::CentralItem(CentralField::Skills));
         rows.push(ToolRow::CentralItem(CentralField::Agents));
         rows.push(ToolRow::CentralItem(CentralField::Commands));
-        rows.push(ToolRow::CentralItem(CentralField::Source));
     }
 
     // Tool sections — BTreeMap gives alphabetical order
@@ -251,6 +251,11 @@ pub enum PopupState {
     },
     ConfirmCreate {
         path: PathBuf,
+    },
+    ConfirmToggleFeature {
+        feature: String,
+        enabling: bool,
+        tool_count: usize,
     },
 }
 
@@ -415,6 +420,18 @@ impl ToolApp {
                             | CentralField::Commands
                             | CentralField::Source),
                         ) => {
+                            let feature_name = match cf {
+                                CentralField::Skills => Some("skills"),
+                                CentralField::Agents => Some("agents"),
+                                CentralField::Commands => Some("commands"),
+                                _ => None,
+                            };
+                            if let Some(name) = feature_name {
+                                if self.config.central.is_disabled(name) {
+                                    self.set_status(format!("{} is disabled — press i to enable", name));
+                                    return;
+                                }
+                            }
                             let current_value = match cf {
                                 CentralField::Skills => self.config.central.skills_source.clone(),
                                 CentralField::Agents => self.config.central.agents_source.clone(),
@@ -433,7 +450,11 @@ impl ToolApp {
                             self.show_central_info(&CentralField::Config);
                         }
                         ToolRow::CentralItem(CentralField::Prompt) => {
-                            self.show_central_info(&CentralField::Prompt);
+                            if self.config.central.is_disabled("prompt") {
+                                self.set_status("prompt is disabled — press i to enable".to_string());
+                            } else {
+                                self.show_central_info(&CentralField::Prompt);
+                            }
                         }
                         ToolRow::LinkItem { tool_key, field } => {
                             self.show_link_info(&tool_key.clone(), &field.clone());
@@ -462,11 +483,24 @@ impl ToolApp {
             KeyCode::Char('i') => {
                 if let Some(row) = self.current_row().cloned() {
                     match &row {
+                        ToolRow::CentralItem(ref cf @ (CentralField::Prompt | CentralField::Skills | CentralField::Agents | CentralField::Commands)) => {
+                            self.show_toggle_feature_confirm(cf);
+                        }
                         ToolRow::StatusHeader { tool_key } => {
                             self.toggle_all_links(&tool_key.clone());
                         }
                         ToolRow::LinkItem { tool_key, field } => {
-                            self.toggle_link(&tool_key.clone(), &field.clone());
+                            let feature = match field {
+                                LinkField::Prompt => "prompt",
+                                LinkField::Skills => "skills",
+                                LinkField::Agents => "agents",
+                                LinkField::Commands => "commands",
+                            };
+                            if self.config.central.is_disabled(feature) {
+                                self.set_status(format!("{} is globally disabled", feature));
+                            } else {
+                                self.toggle_link(&tool_key.clone(), &field.clone());
+                            }
                         }
                         _ => {}
                     }
@@ -506,6 +540,7 @@ impl ToolApp {
         let is_info = matches!(&self.popup, Some(PopupState::Info { .. }));
         let is_path = matches!(&self.popup, Some(PopupState::PathEditor { .. }));
         let is_confirm = matches!(&self.popup, Some(PopupState::ConfirmCreate { .. }));
+        let is_confirm_toggle = matches!(&self.popup, Some(PopupState::ConfirmToggleFeature { .. }));
 
         if is_log {
             if let Some(PopupState::Log(ref mut popup)) = self.popup {
@@ -569,6 +604,18 @@ impl ToolApp {
                         } else {
                             self.open_in_editor(terminal, &[path_clone]);
                         }
+                    }
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    self.popup = None;
+                }
+                _ => {}
+            }
+        } else if is_confirm_toggle {
+            match code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    if let Some(PopupState::ConfirmToggleFeature { feature, enabling, .. }) = self.popup.take() {
+                        self.execute_toggle_feature(&feature, enabling);
                     }
                 }
                 KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
@@ -1066,8 +1113,26 @@ impl ToolApp {
             return;
         }
 
-        // Check current state of all 3 links
-        let fields = [LinkField::Prompt, LinkField::Skills, LinkField::Agents, LinkField::Commands];
+        // Check current state of enabled links
+        let all_fields = [LinkField::Prompt, LinkField::Skills, LinkField::Agents, LinkField::Commands];
+        let fields: Vec<&LinkField> = all_fields
+            .iter()
+            .filter(|f| {
+                let name = match f {
+                    LinkField::Prompt => "prompt",
+                    LinkField::Skills => "skills",
+                    LinkField::Agents => "agents",
+                    LinkField::Commands => "commands",
+                };
+                !self.config.central.is_disabled(name)
+            })
+            .collect();
+
+        if fields.is_empty() {
+            self.set_status("All features are disabled".to_string());
+            return;
+        }
+
         let mut linked_count = 0;
         for f in &fields {
             if let Some((link_path, target, is_dir, _)) = self.get_link_paths(tool_key, f) {
@@ -1081,8 +1146,8 @@ impl ToolApp {
         }
 
         let tk = tool_key.to_string();
-        if linked_count == 4 {
-            // All linked → unlink all
+        if linked_count == fields.len() {
+            // All enabled features linked → unlink all
             for f in &fields {
                 if let Some((link_path, target, is_dir, _)) = self.get_link_paths(&tk, f) {
                     if matches!(
@@ -1094,7 +1159,7 @@ impl ToolApp {
                 }
             }
         } else {
-            // Partially or none linked → link all
+            // Partially or none linked → link all enabled
             for f in &fields {
                 if let Some((link_path, target, is_dir, _)) = self.get_link_paths(&tk, f) {
                     if !matches!(
@@ -1106,6 +1171,155 @@ impl ToolApp {
                 }
             }
         }
+    }
+
+    fn show_toggle_feature_confirm(&mut self, field: &CentralField) {
+        let feature = match field {
+            CentralField::Prompt => "prompt",
+            CentralField::Skills => "skills",
+            CentralField::Agents => "agents",
+            CentralField::Commands => "commands",
+            _ => return,
+        };
+
+        let enabling = self.config.central.is_disabled(feature);
+        let tool_count = self.config.tools.values().filter(|t| t.is_installed()).count();
+
+        self.popup = Some(PopupState::ConfirmToggleFeature {
+            feature: feature.to_string(),
+            enabling,
+            tool_count,
+        });
+    }
+
+    fn execute_toggle_feature(&mut self, feature: &str, enabling: bool) {
+        use super::log::LogLevel;
+
+        let link_field = match feature {
+            "prompt" => LinkField::Prompt,
+            "skills" => LinkField::Skills,
+            "agents" => LinkField::Agents,
+            "commands" => LinkField::Commands,
+            _ => return,
+        };
+
+        let tool_keys: Vec<String> = self
+            .config
+            .tools
+            .iter()
+            .filter(|(_, tc)| tc.is_installed())
+            .map(|(k, _)| k.clone())
+            .collect();
+
+        let mut success_count = 0;
+        let mut fail_count = 0;
+
+        if enabling {
+            // Remove from disabled list first
+            self.config.central.disabled.retain(|d| d != feature);
+
+            // Link for all installed tools
+            for key in &tool_keys {
+                if let Some((link_path, target, is_dir, _)) = self.get_link_paths(key, &link_field) {
+                    let status = linker::check_link(&link_path, &target, is_dir);
+                    match status {
+                        LinkStatus::Linked => {
+                            success_count += 1;
+                        }
+                        LinkStatus::Missing | LinkStatus::Broken => {
+                            match linker::create_link_quiet(&link_path, &target, feature, is_dir) {
+                                Ok((true, msg)) => {
+                                    self.log.push(LogLevel::Success, format!("[{}] {}", key, msg));
+                                    success_count += 1;
+                                }
+                                Ok((false, msg)) => {
+                                    self.log.push(LogLevel::Info, format!("[{}] {}", key, msg));
+                                    success_count += 1;
+                                }
+                                Err(e) => {
+                                    self.log.push(LogLevel::Error, format!("[{}] Link {} failed: {}", key, feature, e));
+                                    fail_count += 1;
+                                }
+                            }
+                        }
+                        LinkStatus::Blocked => {
+                            self.handle_blocked_link(key, &link_field, &link_path, &target, is_dir, feature);
+                            success_count += 1;
+                        }
+                        LinkStatus::Wrong(_) => {
+                            if let Err(e) = crate::platform::remove_link(&link_path) {
+                                self.log.push(LogLevel::Error, format!("[{}] Remove wrong link failed: {}", key, e));
+                                fail_count += 1;
+                                continue;
+                            }
+                            match linker::create_link_quiet(&link_path, &target, feature, is_dir) {
+                                Ok((true, msg)) => {
+                                    self.log.push(LogLevel::Success, format!("[{}] Repaired: {}", key, msg));
+                                    success_count += 1;
+                                }
+                                Ok((false, msg)) => {
+                                    self.log.push(LogLevel::Info, format!("[{}] {}", key, msg));
+                                    success_count += 1;
+                                }
+                                Err(e) => {
+                                    self.log.push(LogLevel::Error, format!("[{}] Repair failed: {}", key, e));
+                                    fail_count += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // Unlink for all installed tools
+            for key in &tool_keys {
+                if let Some((link_path, target, is_dir, _)) = self.get_link_paths(key, &link_field) {
+                    let status = linker::check_link(&link_path, &target, is_dir);
+                    match status {
+                        LinkStatus::Linked => {
+                            match linker::remove_link_quiet(&link_path, feature, is_dir) {
+                                Ok((true, msg)) => {
+                                    self.log.push(LogLevel::Success, format!("[{}] {}", key, msg));
+                                    self.recover_after_unlink(key, &link_field, &link_path);
+                                    success_count += 1;
+                                }
+                                Ok((false, msg)) => {
+                                    self.log.push(LogLevel::Info, format!("[{}] {}", key, msg));
+                                    success_count += 1;
+                                }
+                                Err(e) => {
+                                    self.log.push(LogLevel::Error, format!("[{}] Unlink {} failed: {}", key, feature, e));
+                                    fail_count += 1;
+                                }
+                            }
+                        }
+                        _ => {
+                            success_count += 1;
+                        }
+                    }
+                }
+            }
+
+            // Add to disabled list
+            if !self.config.central.disabled.contains(&feature.to_string()) {
+                self.config.central.disabled.push(feature.to_string());
+            }
+        }
+
+        // Save config
+        let config_path = self.config_path.clone().unwrap_or_else(Config::config_path);
+        if let Err(e) = self.config.save_to(&config_path) {
+            self.log.push(LogLevel::Error, format!("Failed to save config: {}", e));
+        }
+
+        let action = if enabling { "Enabled" } else { "Disabled" };
+        if fail_count == 0 {
+            self.set_status(format!("✓ {} {} for {} tool(s)", action, feature, success_count));
+        } else {
+            self.set_status(format!("⚠ {} {}: {} ok, {} failed", action, feature, success_count, fail_count));
+        }
+
+        self.rebuild_rows();
     }
 
     // ------------------------------------------------------------------
@@ -1677,15 +1891,28 @@ fn build_tool_hints(row: Option<&ToolRow>, config: &Config) -> Line<'static> {
             spans.extend([hint_key("l"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
-        Some(ToolRow::CentralItem(CentralField::Config))
-        | Some(ToolRow::CentralItem(CentralField::Prompt)) => {
+        Some(ToolRow::CentralItem(CentralField::Config)) => {
             spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
             spans.extend([hint_key("l"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
-        Some(ToolRow::CentralItem(_)) => {
+        Some(ToolRow::CentralItem(CentralField::Source)) => {
             spans.extend([hint_key("␣/⏎"), hint_text(" edit path  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+        Some(ToolRow::CentralItem(CentralField::Prompt)) => {
+            spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
+            spans.extend([hint_key("e"), hint_text(" edit  ")]);
+            spans.extend([hint_key("i"), hint_text(" toggle  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+        Some(ToolRow::CentralItem(_)) => {
+            // Skills, Agents, Commands
+            spans.extend([hint_key("␣/⏎"), hint_text(" edit path  ")]);
+            spans.extend([hint_key("i"), hint_text(" toggle  ")]);
             spans.extend([hint_key("l"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
@@ -1763,6 +1990,9 @@ fn render(app: &mut ToolApp, frame: &mut Frame) {
         Some(PopupState::Info { ref mut popup, .. }) => popup.render(frame, frame.area()),
         Some(PopupState::PathEditor { .. }) => render_path_editor(app, frame, frame.area()),
         Some(PopupState::ConfirmCreate { .. }) => render_confirm_create(app, frame, frame.area()),
+        Some(PopupState::ConfirmToggleFeature { .. }) => {
+            render_confirm_toggle_feature(app, frame, frame.area())
+        }
         None => {}
     }
 }
@@ -1833,6 +2063,10 @@ fn render_row(
                     "config".to_string(),
                     "~/.config/agm/config.toml".to_string(),
                 ),
+                CentralField::Source => (
+                    "source".to_string(),
+                    contract_tilde(&expand_tilde(&config.central.source_dir)),
+                ),
                 CentralField::Prompt => (
                     "prompt".to_string(),
                     contract_tilde(&expand_tilde(&config.central.prompt_source)),
@@ -1849,23 +2083,38 @@ fn render_row(
                     "commands".to_string(),
                     contract_tilde(&expand_tilde(&config.central.commands_source)),
                 ),
-                CentralField::Source => (
-                    "source".to_string(),
-                    contract_tilde(&expand_tilde(&config.central.source_dir)),
-                ),
             };
-            let style = if is_cursor {
+
+            let is_feature = matches!(
+                field,
+                CentralField::Prompt | CentralField::Skills | CentralField::Agents | CentralField::Commands
+            );
+            let is_disabled = is_feature && config.central.is_disabled(&label);
+
+            let (indicator, indicator_style) = if !is_feature {
+                ("  ".to_string(), Style::default())
+            } else if is_disabled {
+                ("✗ ".to_string(), Style::default().fg(Color::Red))
+            } else {
+                ("✓ ".to_string(), Style::default().fg(Color::Green))
+            };
+
+            let value_style = if is_cursor {
                 Style::default().fg(Color::Yellow)
+            } else if is_disabled {
+                Style::default().fg(Color::DarkGray)
             } else {
                 Style::default().fg(Color::White)
             };
+
             Line::from(vec![
                 Span::raw(format!("{}    ", cursor_prefix)),
+                Span::styled(indicator, indicator_style),
                 Span::styled(
                     format!("{:<8}", label),
                     Style::default().fg(Color::DarkGray),
                 ),
-                Span::styled(value, style),
+                Span::styled(value, value_style),
             ])
         }
 
@@ -1945,19 +2194,37 @@ fn render_row(
                 }
             };
             let status = linker::check_link(&link_path, &target, is_dir);
-            let status_spans = link_status_spans(&status, &link_path);
-            let mut spans = vec![
-                Span::raw(format!("{}      ", cursor_prefix)),
-                Span::styled(
-                    format!("{:<8} ", label),
-                    Style::default().fg(Color::DarkGray),
-                ),
-            ];
-            spans.extend(status_spans);
-            if is_cursor {
-                Line::from(spans).style(Style::default().fg(Color::Yellow))
+            let feature_disabled = config.central.is_disabled(label);
+
+            if feature_disabled {
+                let spans = vec![
+                    Span::raw(format!("{}      ", cursor_prefix)),
+                    Span::styled(
+                        format!("{:<8} ", label),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled("disabled", Style::default().fg(Color::DarkGray)),
+                ];
+                if is_cursor {
+                    Line::from(spans).style(Style::default().fg(Color::Yellow))
+                } else {
+                    Line::from(spans)
+                }
             } else {
-                Line::from(spans)
+                let status_spans = link_status_spans(&status, &link_path);
+                let mut spans = vec![
+                    Span::raw(format!("{}      ", cursor_prefix)),
+                    Span::styled(
+                        format!("{:<8} ", label),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ];
+                spans.extend(status_spans);
+                if is_cursor {
+                    Line::from(spans).style(Style::default().fg(Color::Yellow))
+                } else {
+                    Line::from(spans)
+                }
             }
         }
 
@@ -2132,6 +2399,39 @@ fn render_confirm_create(app: &ToolApp, frame: &mut Frame, area: Rect) {
     }
 }
 
+fn render_confirm_toggle_feature(app: &ToolApp, frame: &mut Frame, area: Rect) {
+    if let Some(PopupState::ConfirmToggleFeature {
+        ref feature,
+        enabling,
+        tool_count,
+    }) = app.popup
+    {
+        let popup_area = super::dialog_area(area, 3);
+        frame.render_widget(Clear, popup_area);
+
+        let action = if enabling { "Enable" } else { "Disable" };
+        let title = format!(" {} Feature ", action);
+        let block = Block::default()
+            .title(title.as_str())
+            .title_bottom(" y:confirm  n/Esc:cancel ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(if enabling {
+                Color::Green
+            } else {
+                Color::Red
+            }));
+        let inner = block.inner(popup_area);
+        frame.render_widget(block, popup_area);
+
+        let text = format!(
+            "{} {} for {} installed tool(s)?",
+            action, feature, tool_count
+        );
+        let paragraph = Paragraph::new(text).wrap(Wrap { trim: true });
+        frame.render_widget(paragraph, inner);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -2280,23 +2580,23 @@ mod tests {
         ));
         assert!(matches!(
             rows[2],
-            ToolRow::CentralItem(CentralField::Prompt)
+            ToolRow::CentralItem(CentralField::Source)
         ));
         assert!(matches!(
             rows[3],
-            ToolRow::CentralItem(CentralField::Skills)
+            ToolRow::CentralItem(CentralField::Prompt)
         ));
         assert!(matches!(
             rows[4],
-            ToolRow::CentralItem(CentralField::Agents)
+            ToolRow::CentralItem(CentralField::Skills)
         ));
         assert!(matches!(
             rows[5],
-            ToolRow::CentralItem(CentralField::Commands)
+            ToolRow::CentralItem(CentralField::Agents)
         ));
         assert!(matches!(
             rows[6],
-            ToolRow::CentralItem(CentralField::Source)
+            ToolRow::CentralItem(CentralField::Commands)
         ));
         assert!(matches!(rows[7], ToolRow::ToolHeader { ref key, .. } if key == "claude"));
     }
