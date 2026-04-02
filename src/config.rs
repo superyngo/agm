@@ -24,6 +24,8 @@ pub struct CentralConfig {
     pub source_dir: String,
     #[serde(default)]
     pub source_repos: Vec<String>,
+    #[serde(default)]
+    pub disabled: Vec<String>,
 }
 
 impl CentralConfig {
@@ -33,6 +35,10 @@ impl CentralConfig {
 
     fn default_commands_source() -> String {
         "~/.local/share/agm/commands".into()
+    }
+
+    pub fn is_disabled(&self, feature: &str) -> bool {
+        self.disabled.iter().any(|d| d == feature)
     }
 }
 
@@ -208,6 +214,7 @@ impl Config {
                 commands_source: "~/.local/share/agm/commands".into(),
                 source_dir: "~/.local/share/agm/source".into(),
                 source_repos: vec![],
+                disabled: vec![],
             },
             tools,
         }
@@ -416,6 +423,36 @@ mod tests {
 
         config.remove_source_repo("https://github.com/user/nonexistent.git");
         assert_eq!(config.central.source_repos.len(), 1);
+    }
+
+    #[test]
+    fn test_disabled_field_roundtrip() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config_path = tmp.path().join("config.toml");
+        let mut config = Config::default_config();
+        config.central.disabled = vec!["skills".to_string(), "agents".to_string()];
+        config.save_to(&config_path).unwrap();
+        let loaded = Config::load_from(Some(config_path)).unwrap();
+        assert_eq!(loaded.central.disabled, vec!["skills", "agents"]);
+    }
+
+    #[test]
+    fn test_disabled_field_default_empty() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let config_path = tmp.path().join("config.toml");
+        let config = Config::default_config();
+        config.save_to(&config_path).unwrap();
+        let loaded = Config::load_from(Some(config_path)).unwrap();
+        assert!(loaded.central.disabled.is_empty());
+    }
+
+    #[test]
+    fn test_is_disabled() {
+        let mut config = Config::default_config();
+        assert!(!config.central.is_disabled("skills"));
+        config.central.disabled = vec!["skills".to_string()];
+        assert!(config.central.is_disabled("skills"));
+        assert!(!config.central.is_disabled("prompt"));
     }
 
     #[test]

@@ -2209,6 +2209,7 @@ mod tests {
                 commands_source: "~/.local/share/agm/commands".to_string(),
                 source_dir: "~/.local/share/agm/source".to_string(),
                 source_repos: vec![],
+                disabled: vec![],
             },
             tools: tools_map,
         }
