@@ -18,7 +18,7 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use crate::config::Config;
+use crate::config::{CentralConfig, Config};
 use crate::editor;
 use crate::linker::{self, LinkStatus};
 use crate::paths::{contract_tilde, expand_tilde};
@@ -1194,6 +1194,10 @@ impl ToolApp {
 
     fn execute_toggle_feature(&mut self, feature: &str, enabling: bool) {
         use super::log::LogLevel;
+
+        if !CentralConfig::TOGGLEABLE_FEATURES.contains(&feature) {
+            return;
+        }
 
         let link_field = match feature {
             "prompt" => LinkField::Prompt,
