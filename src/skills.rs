@@ -2190,4 +2190,129 @@ mod tests {
             "# My Custom Prompt"
         );
     }
+
+    // ------------------------------------------------------------------
+    // Commands tests
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_scan_commands() {
+        let tmp = tempfile::tempdir().unwrap();
+        let commands_dir = tmp.path().join("commands");
+        fs::create_dir_all(&commands_dir).unwrap();
+        fs::write(commands_dir.join("fix.md"), "# Fix command").unwrap();
+        fs::write(commands_dir.join("review.md"), "# Review command").unwrap();
+        fs::write(commands_dir.join("not-a-command.txt"), "ignored").unwrap();
+
+        let result = scan_commands(tmp.path());
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].0, "fix");
+        assert_eq!(result[1].0, "review");
+    }
+
+    #[test]
+    fn test_scan_commands_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = scan_commands(tmp.path());
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_install_uninstall_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source_dir = tmp.path().join("source");
+        let central_dir = tmp.path().join("central");
+        fs::create_dir_all(&source_dir).unwrap();
+        fs::create_dir_all(&central_dir).unwrap();
+
+        let cmd_file = source_dir.join("deploy.md");
+        fs::write(&cmd_file, "# Deploy command").unwrap();
+
+        // Install
+        install_command("deploy", &cmd_file, &central_dir).unwrap();
+        let link = central_dir.join("deploy.md");
+        assert!(link.symlink_metadata().is_ok());
+        assert!(link.exists());
+
+        // Install again (idempotent)
+        install_command("deploy", &cmd_file, &central_dir).unwrap();
+
+        // Uninstall
+        uninstall_command("deploy", &central_dir).unwrap();
+        assert!(central_dir.join("deploy.md").symlink_metadata().is_err());
+
+        // Uninstall again (idempotent)
+        uninstall_command("deploy", &central_dir).unwrap();
+    }
+
+    #[test]
+    fn test_install_command_conflict() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source1 = tmp.path().join("source1");
+        let source2 = tmp.path().join("source2");
+        let central = tmp.path().join("central");
+        fs::create_dir_all(&source1).unwrap();
+        fs::create_dir_all(&source2).unwrap();
+        fs::create_dir_all(&central).unwrap();
+
+        let cmd1 = source1.join("test.md");
+        let cmd2 = source2.join("test.md");
+        fs::write(&cmd1, "# Command from source 1").unwrap();
+        fs::write(&cmd2, "# Command from source 2").unwrap();
+
+        install_command("test", &cmd1, &central).unwrap();
+        let result = install_command("test", &cmd2, &central);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_prune_broken_commands() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("source");
+        let central = tmp.path().join("central");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&central).unwrap();
+
+        let cmd_file = source.join("ephemeral.md");
+        fs::write(&cmd_file, "# Ephemeral").unwrap();
+
+        install_command("ephemeral", &cmd_file, &central).unwrap();
+        assert!(central.join("ephemeral.md").exists());
+
+        // Remove source — link is now broken
+        fs::remove_file(&cmd_file).unwrap();
+        assert!(!central.join("ephemeral.md").exists()); // target gone
+
+        let removed = prune_broken_commands(&central).unwrap();
+        assert_eq!(removed, 1);
+        assert!(central.join("ephemeral.md").symlink_metadata().is_err());
+    }
+
+    #[test]
+    fn test_migrate_commands_dir_quiet() {
+        let tmp = tempfile::tempdir().unwrap();
+        let tool_commands = tmp.path().join("tool_commands");
+        let store = tmp.path().join("store");
+        let central = tmp.path().join("central");
+        fs::create_dir_all(&tool_commands).unwrap();
+
+        fs::write(tool_commands.join("build.md"), "# Build").unwrap();
+        fs::write(tool_commands.join("test.md"), "# Test").unwrap();
+
+        let (count, msgs) =
+            migrate_commands_dir_quiet(&tool_commands, &store, &central, "claude").unwrap();
+        assert_eq!(count, 2);
+        assert!(!msgs.is_empty());
+
+        // Original dir should be removed
+        assert!(!tool_commands.exists());
+
+        // Store should have files
+        assert!(store.join("build.md").exists());
+        assert!(store.join("test.md").exists());
+
+        // Central should have symlinks
+        assert!(central.join("build.md").symlink_metadata().is_ok());
+        assert!(central.join("test.md").symlink_metadata().is_ok());
+    }
 }
