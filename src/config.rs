@@ -37,6 +37,8 @@ impl CentralConfig {
         "~/.local/share/agm/commands".into()
     }
 
+    pub const TOGGLEABLE_FEATURES: &'static [&'static str] = &["prompt", "skills", "agents", "commands"];
+
     pub fn is_disabled(&self, feature: &str) -> bool {
         self.disabled.iter().any(|d| d == feature)
     }
@@ -453,6 +455,16 @@ mod tests {
         config.central.disabled = vec!["skills".to_string()];
         assert!(config.central.is_disabled("skills"));
         assert!(!config.central.is_disabled("prompt"));
+    }
+
+    #[test]
+    fn test_toggleable_features() {
+        assert!(CentralConfig::TOGGLEABLE_FEATURES.contains(&"prompt"));
+        assert!(CentralConfig::TOGGLEABLE_FEATURES.contains(&"skills"));
+        assert!(CentralConfig::TOGGLEABLE_FEATURES.contains(&"agents"));
+        assert!(CentralConfig::TOGGLEABLE_FEATURES.contains(&"commands"));
+        assert!(!CentralConfig::TOGGLEABLE_FEATURES.contains(&"config"));
+        assert!(!CentralConfig::TOGGLEABLE_FEATURES.contains(&"source"));
     }
 
     #[test]
