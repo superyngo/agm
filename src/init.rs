@@ -34,6 +34,7 @@ pub fn run(config_path_override: Option<PathBuf>) -> anyhow::Result<()> {
     let dirs_to_create = [
         &config.central.skills_source,
         &config.central.agents_source,
+        &config.central.commands_source,
         &config.central.source_dir,
     ];
     for dir in dirs_to_create {
