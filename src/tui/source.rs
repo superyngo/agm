@@ -33,6 +33,7 @@ use crate::skills::{self, SkillInstallStatus, SourceGroup, SourceKind};
 enum Category {
     Skills,
     Agents,
+    Commands,
 }
 
 #[derive(Clone)]
@@ -51,6 +52,10 @@ enum ListRow {
     AgentItem {
         group_index: usize,
         agent_index: usize,
+    },
+    CommandItem {
+        group_index: usize,
+        command_index: usize,
     },
 }
 
@@ -92,6 +97,7 @@ struct App {
     expanded_categories: HashSet<Category>,
     expanded_skills_sources: HashSet<usize>,
     expanded_agents_sources: HashSet<usize>,
+    expanded_commands_sources: HashSet<usize>,
     confirm_state: Option<ConfirmState>,
     matcher: SkimMatcherV2,
     log: super::log::LogBuffer,
@@ -129,6 +135,7 @@ impl App {
             expanded_categories: HashSet::new(),
             expanded_skills_sources: HashSet::new(),
             expanded_agents_sources: HashSet::new(),
+            expanded_commands_sources: HashSet::new(),
             confirm_state: None,
             matcher: SkimMatcherV2::default(),
             log: super::log::LogBuffer::new(500),
@@ -147,6 +154,7 @@ impl App {
             &self.expanded_categories,
             &self.expanded_skills_sources,
             &self.expanded_agents_sources,
+            &self.expanded_commands_sources,
         );
         self.apply_search_filter();
     }
@@ -232,8 +240,10 @@ impl App {
         // (decoupled from expansion state of rows)
         let mut matching_groups_skills: HashSet<usize> = HashSet::new();
         let mut matching_groups_agents: HashSet<usize> = HashSet::new();
+        let mut matching_groups_commands: HashSet<usize> = HashSet::new();
         let mut matching_skills: HashSet<(usize, usize)> = HashSet::new();
         let mut matching_agents: HashSet<(usize, usize)> = HashSet::new();
+        let mut matching_commands: HashSet<(usize, usize)> = HashSet::new();
 
         for (gi, group) in self.groups.iter().enumerate() {
             for (si, skill) in group.skills.iter().enumerate() {
@@ -248,6 +258,12 @@ impl App {
                     matching_agents.insert((gi, ai));
                 }
             }
+            for (ci, command) in group.commands.iter().enumerate() {
+                if self.matcher.fuzzy_match(&command.name, query).is_some() {
+                    matching_groups_commands.insert(gi);
+                    matching_commands.insert((gi, ci));
+                }
+            }
         }
 
         // Phase 2: Build filtered row indices from self.rows
@@ -258,6 +274,7 @@ impl App {
                     let has_matches = match category {
                         Category::Skills => !matching_groups_skills.is_empty(),
                         Category::Agents => !matching_groups_agents.is_empty(),
+                        Category::Commands => !matching_groups_commands.is_empty(),
                     };
                     if has_matches {
                         result.push(i);
@@ -270,6 +287,7 @@ impl App {
                     let is_match = match category {
                         Category::Skills => matching_groups_skills.contains(group_index),
                         Category::Agents => matching_groups_agents.contains(group_index),
+                        Category::Commands => matching_groups_commands.contains(group_index),
                     };
                     if is_match {
                         result.push(i);
@@ -288,6 +306,14 @@ impl App {
                     agent_index,
                 } => {
                     if matching_agents.contains(&(*group_index, *agent_index)) {
+                        result.push(i);
+                    }
+                }
+                ListRow::CommandItem {
+                    group_index,
+                    command_index,
+                } => {
+                    if matching_commands.contains(&(*group_index, *command_index)) {
                         result.push(i);
                     }
                 }
@@ -318,6 +344,7 @@ impl App {
                 let set = match category {
                     Category::Skills => &mut self.expanded_skills_sources,
                     Category::Agents => &mut self.expanded_agents_sources,
+                    Category::Commands => &mut self.expanded_commands_sources,
                 };
                 if set.contains(&group_index) {
                     set.remove(&group_index);
@@ -338,6 +365,12 @@ impl App {
                 agent_index,
             } => {
                 self.toggle_agent(group_index, agent_index);
+            }
+            ListRow::CommandItem {
+                group_index,
+                command_index,
+            } => {
+                self.toggle_command(group_index, command_index);
             }
         }
     }
@@ -436,6 +469,53 @@ impl App {
         }
     }
 
+    fn toggle_command(&mut self, group_index: usize, command_index: usize) {
+        let command = &self.groups[group_index].commands[command_index];
+        let name = command.name.clone();
+        let source_path = command.source_path.clone();
+        match command.install_status {
+            SkillInstallStatus::Installed => {
+                match skills::uninstall_command(&name, &self.commands_dir) {
+                    Ok(()) => {
+                        self.groups[group_index].commands[command_index].install_status =
+                            SkillInstallStatus::NotInstalled;
+                        self.log
+                            .push(super::log::LogLevel::Success, format!("Uninstalled {name}"));
+                        self.set_status(format!("Uninstalled command {name}"));
+                    }
+                    Err(e) => {
+                        self.log
+                            .push(super::log::LogLevel::Error, format!("Uninstall error: {e}"));
+                        self.set_status(format!("Error: {e}"));
+                    }
+                }
+            }
+            SkillInstallStatus::NotInstalled => {
+                match skills::install_command(&name, &source_path, &self.commands_dir) {
+                    Ok(()) => {
+                        self.groups[group_index].commands[command_index].install_status =
+                            SkillInstallStatus::Installed;
+                        self.log
+                            .push(super::log::LogLevel::Success, format!("Installed {name}"));
+                        self.set_status(format!("Installed command {name}"));
+                    }
+                    Err(e) => {
+                        self.log
+                            .push(super::log::LogLevel::Error, format!("Install error: {e}"));
+                        self.set_status(format!("Error: {e}"));
+                    }
+                }
+            }
+            SkillInstallStatus::Conflict => {
+                self.log.push(
+                    super::log::LogLevel::Warning,
+                    format!("Conflict: command {name} from another source"),
+                );
+                self.set_status(format!("Conflict: command {name} from another source"));
+            }
+        }
+    }
+
     fn start_delete(&mut self) {
         let row = match self.current_row() {
             Some(r) => r.clone(),
@@ -494,6 +574,11 @@ impl App {
                 .iter()
                 .filter(|a| a.install_status != SkillInstallStatus::Conflict)
                 .all(|a| a.install_status == SkillInstallStatus::Installed),
+            Category::Commands => group
+                .commands
+                .iter()
+                .filter(|c| c.install_status != SkillInstallStatus::Conflict)
+                .all(|c| c.install_status == SkillInstallStatus::Installed),
         };
         self.confirm_state = Some(ConfirmState::BulkToggle {
             group_index,
@@ -541,11 +626,30 @@ impl App {
                     }
                 }
             }
+            Category::Commands => {
+                let len = self.groups[group_index].commands.len();
+                for ci in 0..len {
+                    let status = &self.groups[group_index].commands[ci].install_status;
+                    if *status == SkillInstallStatus::Conflict {
+                        continue;
+                    }
+                    let should_act = if install {
+                        *status == SkillInstallStatus::NotInstalled
+                    } else {
+                        *status == SkillInstallStatus::Installed
+                    };
+                    if should_act {
+                        self.toggle_command(group_index, ci);
+                        count += 1;
+                    }
+                }
+            }
         }
         let action = if install { "Installed" } else { "Uninstalled" };
         let kind = match category {
             Category::Skills => "skill(s)",
             Category::Agents => "agent(s)",
+            Category::Commands => "command(s)",
         };
         self.set_status(format!("{action} {count} {kind}"));
     }
@@ -579,6 +683,17 @@ impl App {
                 }
                 agent.source_path.clone()
             }
+            ListRow::CommandItem {
+                group_index,
+                command_index,
+            } => {
+                let command = &self.groups[group_index].commands[command_index];
+                if !command.source_path.exists() {
+                    self.set_status("Command file not found");
+                    return;
+                }
+                command.source_path.clone()
+            }
             _ => return,
         };
 
@@ -608,6 +723,10 @@ impl App {
                 group_index,
                 agent_index,
             } => self.build_agent_info_lines(group_index, agent_index),
+            ListRow::CommandItem {
+                group_index,
+                command_index,
+            } => self.build_command_info_lines(group_index, command_index),
             ListRow::SourceHeader { group_index, .. } => self.build_source_info_lines(group_index),
             ListRow::CategoryHeader { .. } => {
                 return; // No info for category headers
@@ -743,6 +862,58 @@ impl App {
         lines
     }
 
+    fn build_command_info_lines(&self, group_index: usize, command_index: usize) -> Vec<Line<'static>> {
+        let group = &self.groups[group_index];
+        let command = &group.commands[command_index];
+        let mut lines = Vec::new();
+
+        lines.push(Line::from(vec![
+            Span::styled("Name: ", Style::default().fg(Color::Yellow)),
+            Span::raw(command.name.clone()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Source: ", Style::default().fg(Color::Yellow)),
+            Span::raw(group.name.clone()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Path: ", Style::default().fg(Color::Yellow)),
+            Span::raw(contract_tilde(&command.source_path).to_string()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Status: ", Style::default().fg(Color::Yellow)),
+            Span::raw(format!("{:?}", command.install_status)),
+        ]));
+        lines.push(Line::default());
+
+        if command.source_path.exists() {
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "─── {} ───",
+                    command
+                        .source_path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("command.md")
+                ),
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            match std::fs::read_to_string(&command.source_path) {
+                Ok(content) => {
+                    for line in content.lines().take(5000) {
+                        lines.push(Line::from(line.to_string()));
+                    }
+                }
+                Err(e) => {
+                    lines.push(Line::from(format!("(error reading command file: {})", e)));
+                }
+            }
+        }
+
+        lines
+    }
+
     fn build_source_info_lines(&self, group_index: usize) -> Vec<Line<'static>> {
         let group = &self.groups[group_index];
         let mut lines = Vec::new();
@@ -776,6 +947,11 @@ impl App {
         lines.push(Line::from(vec![
             Span::styled("Agents: ", Style::default().fg(Color::Yellow)),
             Span::raw(format!("{}", group.agents.len())),
+        ]));
+
+        lines.push(Line::from(vec![
+            Span::styled("Commands: ", Style::default().fg(Color::Yellow)),
+            Span::raw(format!("{}", group.commands.len())),
         ]));
 
         lines.push(Line::default());
@@ -817,18 +993,40 @@ impl App {
             }
         }
 
+        // List commands
+        if !group.commands.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "Commands:",
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            )));
+            for command in &group.commands {
+                let status_icon = match command.install_status {
+                    SkillInstallStatus::Installed => "✓",
+                    SkillInstallStatus::NotInstalled => "○",
+                    SkillInstallStatus::Conflict => "⚠",
+                };
+                lines.push(Line::from(format!("  {} {}", status_icon, command.name)));
+            }
+        }
+
         lines
     }
 
     fn expand_all(&mut self) {
         self.expanded_categories.insert(Category::Skills);
         self.expanded_categories.insert(Category::Agents);
+        self.expanded_categories.insert(Category::Commands);
         for i in 0..self.groups.len() {
             if self.groups[i].skills.iter().any(|_| true) {
                 self.expanded_skills_sources.insert(i);
             }
             if self.groups[i].agents.iter().any(|_| true) {
                 self.expanded_agents_sources.insert(i);
+            }
+            if self.groups[i].commands.iter().any(|_| true) {
+                self.expanded_commands_sources.insert(i);
             }
         }
         self.rebuild_rows();
@@ -1089,7 +1287,7 @@ impl App {
             KeyCode::Char(' ') | KeyCode::Enter => {
                 let row = self.current_row().cloned();
                 match row {
-                    Some(ListRow::SkillItem { .. }) | Some(ListRow::AgentItem { .. }) => {
+                    Some(ListRow::SkillItem { .. }) | Some(ListRow::AgentItem { .. }) | Some(ListRow::CommandItem { .. }) => {
                         self.show_info();
                     }
                     _ => self.toggle_item(),
@@ -1111,6 +1309,12 @@ impl App {
                         agent_index,
                     }) => {
                         self.toggle_agent(group_index, agent_index);
+                    }
+                    Some(ListRow::CommandItem {
+                        group_index,
+                        command_index,
+                    }) => {
+                        self.toggle_command(group_index, command_index);
                     }
                     Some(ListRow::SourceHeader {
                         group_index,
@@ -1173,6 +1377,7 @@ fn build_rows(
     expanded_categories: &HashSet<Category>,
     expanded_skills_sources: &HashSet<usize>,
     expanded_agents_sources: &HashSet<usize>,
+    expanded_commands_sources: &HashSet<usize>,
 ) -> Vec<ListRow> {
     let mut rows = Vec::new();
 
@@ -1223,6 +1428,33 @@ fn build_rows(
                         rows.push(ListRow::AgentItem {
                             group_index: gi,
                             agent_index: ai,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // Commands section
+    let has_commands = groups.iter().any(|g| !g.commands.is_empty());
+    if has_commands {
+        rows.push(ListRow::CategoryHeader {
+            category: Category::Commands,
+        });
+        if expanded_categories.contains(&Category::Commands) {
+            for (gi, group) in groups.iter().enumerate() {
+                if group.commands.is_empty() {
+                    continue;
+                }
+                rows.push(ListRow::SourceHeader {
+                    category: Category::Commands,
+                    group_index: gi,
+                });
+                if expanded_commands_sources.contains(&gi) {
+                    for ci in 0..group.commands.len() {
+                        rows.push(ListRow::CommandItem {
+                            group_index: gi,
+                            command_index: ci,
                         });
                     }
                 }
@@ -1470,6 +1702,19 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                             app.expanded_categories.contains(&Category::Agents),
                         )
                     }
+                    Category::Commands => {
+                        let total: usize = app.groups.iter().map(|g| g.commands.len()).sum();
+                        let installed: usize = app
+                            .groups
+                            .iter()
+                            .flat_map(|g| &g.commands)
+                            .filter(|c| c.install_status == SkillInstallStatus::Installed)
+                            .count();
+                        (
+                            format!("💬 Commands [{installed}/{total}]"),
+                            app.expanded_categories.contains(&Category::Commands),
+                        )
+                    }
                 };
                 let arrow = if expanded { "▼" } else { "▶" };
                 let text = format!("{arrow} {label}");
@@ -1507,6 +1752,13 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                             "agent",
                         );
                         (c, app.expanded_agents_sources.contains(group_index))
+                    }
+                    Category::Commands => {
+                        let c = count_label(
+                            &group.commands.iter().map(|_| 0u8).collect::<Vec<_>>(),
+                            "command",
+                        );
+                        (c, app.expanded_commands_sources.contains(group_index))
                     }
                 };
                 let arrow = if expanded { "▼" } else { "▶" };
@@ -1559,6 +1811,26 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                 render_item_line(
                     &agent.name,
                     &agent.install_status,
+                    is_cursor,
+                    ">",
+                    indices.as_deref(),
+                )
+            }
+            ListRow::CommandItem {
+                group_index,
+                command_index,
+            } => {
+                let command = &app.groups[*group_index].commands[*command_index];
+                let indices = if app.filtered_rows.is_some() && !app.search_query.is_empty() {
+                    app.matcher
+                        .fuzzy_indices(&command.name, &app.search_query)
+                        .map(|(_, idx)| idx)
+                } else {
+                    None
+                };
+                render_item_line(
+                    &command.name,
+                    &command.install_status,
                     is_cursor,
                     ">",
                     indices.as_deref(),
@@ -1617,6 +1889,14 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("l"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
+        Some(ListRow::CommandItem { .. }) => {
+            spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
+            spans.extend([hint_key("i"), hint_text(" install  ")]);
+            spans.extend([hint_key("e"), hint_text(" edit  ")]);
+            spans.extend([hint_key("/"), hint_text(" search  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
         None => {
             spans.extend([hint_key("a"), hint_text(" add  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
@@ -1639,10 +1919,11 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             ConfirmState::Normal { group_index } => {
                 let g = &app.groups[*group_index];
                 format!(
-                    "Delete \"{}\" ({} skill(s), {} agent(s))? [y/N]",
+                    "Delete \"{}\" ({} skill(s), {} agent(s), {} command(s))? [y/N]",
                     g.name,
                     g.skills.len(),
-                    g.agents.len()
+                    g.agents.len(),
+                    g.commands.len()
                 )
             }
             ConfirmState::Migrated { group_index, typed } => {
@@ -1686,6 +1967,21 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
                             })
                             .count();
                         ("agent(s)", c)
+                    }
+                    Category::Commands => {
+                        let c = g
+                            .commands
+                            .iter()
+                            .filter(|c| {
+                                c.install_status != SkillInstallStatus::Conflict
+                                    && if *install {
+                                        c.install_status == SkillInstallStatus::NotInstalled
+                                    } else {
+                                        c.install_status == SkillInstallStatus::Installed
+                                    }
+                            })
+                            .count();
+                        ("command(s)", c)
                     }
                 };
                 format!("{action} {count} {kind} from \"{}\"? [y/N]", g.name)
