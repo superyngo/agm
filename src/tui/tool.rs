@@ -571,6 +571,7 @@ impl ToolApp {
                 match linker::remove_link_quiet(&link_path, label, is_dir) {
                     Ok((true, msg)) => {
                         self.log.push(LogLevel::Success, format!("[{}] {}", tool_key, msg));
+                        self.recover_after_unlink(tool_key, field, &link_path);
                         self.set_status(format!("✓ {} {} unlinked", tool_key, label));
                     }
                     Ok((false, msg)) => self.set_status(msg),
@@ -680,6 +681,79 @@ impl ToolApp {
                     self.log.push(LogLevel::Error, format!("[{}] Backup failed: {}", tool_key, e));
                     self.set_status(format!("✗ Backup failed: {}", e));
                 }
+            }
+        }
+    }
+
+    fn cleanup_empty_tool_store(&self, tool_store: &std::path::Path) {
+        if !tool_store.exists() { return; }
+        if let Ok(mut entries) = std::fs::read_dir(tool_store) {
+            if entries.next().is_none() {
+                let _ = std::fs::remove_dir(tool_store);
+            }
+        }
+    }
+
+    fn recover_after_unlink(&mut self, tool_key: &str, field: &LinkField, link_path: &std::path::Path) {
+        use super::log::LogLevel;
+        let source_dir = expand_tilde(&self.config.central.source_dir);
+        let tool_store = source_dir.join("agm_tools").join(tool_key);
+
+        match field {
+            LinkField::Skills => {
+                if !tool_store.exists() {
+                    let _ = std::fs::create_dir_all(link_path);
+                    return;
+                }
+                // Create the tool's skills directory
+                if let Err(e) = std::fs::create_dir_all(link_path) {
+                    self.log.push(LogLevel::Warning,
+                        format!("[{}] Failed to create skills dir: {}", tool_key, e));
+                    return;
+                }
+                // Move skill directories: any dir in tool_store that
+                // is not "agents" and contains SKILL.md
+                let mut count = 0usize;
+                if let Ok(entries) = std::fs::read_dir(&tool_store) {
+                    for entry in entries.flatten() {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        if name == "agents" { continue; }
+                        let path = entry.path();
+                        if !path.is_dir() { continue; }
+                        if !path.join("SKILL.md").exists() { continue; }
+                        let dest = link_path.join(&name);
+                        if dest.exists() { continue; }
+                        if std::fs::rename(&path, &dest).is_ok() {
+                            count += 1;
+                        }
+                    }
+                }
+                if count > 0 {
+                    self.log.push(LogLevel::Info,
+                        format!("[{}] Restored {} skill(s)", tool_key, count));
+                }
+                self.cleanup_empty_tool_store(&tool_store);
+            }
+            LinkField::Agents => {
+                let agents_store = tool_store.join("agents");
+                if !agents_store.exists() {
+                    return;
+                }
+                // Move entire agents directory to tool's agents path
+                match std::fs::rename(&agents_store, link_path) {
+                    Ok(()) => {
+                        self.log.push(LogLevel::Info,
+                            format!("[{}] Restored agents directory", tool_key));
+                    }
+                    Err(e) => {
+                        self.log.push(LogLevel::Warning,
+                            format!("[{}] Failed to restore agents: {}", tool_key, e));
+                    }
+                }
+                self.cleanup_empty_tool_store(&tool_store);
+            }
+            LinkField::Prompt => {
+                // No recovery needed for prompt files
             }
         }
     }
