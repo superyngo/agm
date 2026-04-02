@@ -14,7 +14,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame, Terminal,
 };
 
@@ -178,6 +178,9 @@ pub enum PopupState {
         field: CentralField,
         value: String,
         cursor_pos: usize,
+    },
+    ConfirmCreate {
+        path: PathBuf,
     },
 }
 
@@ -420,6 +423,7 @@ impl ToolApp {
         let is_log = matches!(&self.popup, Some(PopupState::Log(_)));
         let is_info = matches!(&self.popup, Some(PopupState::Info { .. }));
         let is_path = matches!(&self.popup, Some(PopupState::PathEditor { .. }));
+        let is_confirm = matches!(&self.popup, Some(PopupState::ConfirmCreate { .. }));
 
         if is_log {
             if let Some(PopupState::Log(ref mut popup)) = self.popup {
@@ -453,6 +457,27 @@ impl ToolApp {
                     KeyCode::Esc => self.popup = None,
                     _ => {}
                 }
+            }
+        } else if is_confirm {
+            match code {
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                    if let Some(PopupState::ConfirmCreate { ref path }) = self.popup {
+                        let path_clone = path.clone();
+                        self.popup = None;
+                        if let Some(parent) = path_clone.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                        if let Err(e) = std::fs::write(&path_clone, "") {
+                            self.set_status(format!("Failed to create file: {}", e));
+                        } else {
+                            self.set_status(format!("Created: {}", contract_tilde(&path_clone)));
+                        }
+                    }
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                    self.popup = None;
+                }
+                _ => {}
             }
         }
     }
@@ -981,6 +1006,20 @@ impl ToolApp {
                     }
                 }
             }
+            ToolRow::LinkItem { tool_key, field: LinkField::Prompt } => {
+                if let Some((link_path, target, _, _)) = self.get_link_paths(tool_key, &LinkField::Prompt) {
+                    let status = linker::check_link(&link_path, &target, false);
+                    let path = match status {
+                        LinkStatus::Linked => target,
+                        _ => link_path,
+                    };
+                    if path.exists() {
+                        self.open_in_editor(terminal, &[path]);
+                    } else {
+                        self.popup = Some(PopupState::ConfirmCreate { path });
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -1119,6 +1158,7 @@ fn build_tool_hints(row: Option<&ToolRow>, config: &Config) -> Line<'static> {
         }
         Some(ToolRow::LinkItem { .. }) => {
             spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
+            spans.extend([hint_key("e"), hint_text(" edit  ")]);
             spans.extend([hint_key("i"), hint_text(" link  ")]);
             spans.extend([hint_key("l"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
@@ -1174,6 +1214,7 @@ fn render(app: &mut ToolApp, frame: &mut Frame) {
         Some(PopupState::Log(ref mut popup)) => popup.render(frame, frame.area()),
         Some(PopupState::Info { ref mut popup, .. }) => popup.render(frame, frame.area()),
         Some(PopupState::PathEditor { .. }) => render_path_editor(app, frame, frame.area()),
+        Some(PopupState::ConfirmCreate { .. }) => render_confirm_create(app, frame, frame.area()),
         None => {}
     }
 }
@@ -1432,6 +1473,25 @@ fn render_path_editor(app: &ToolApp, frame: &mut Frame, area: Rect) {
             spans.push(Span::styled(" ", Style::default().fg(Color::Black).bg(Color::White)));
         }
         frame.render_widget(Paragraph::new(Line::from(spans)), inner);
+    }
+}
+
+fn render_confirm_create(app: &ToolApp, frame: &mut Frame, area: Rect) {
+    if let Some(PopupState::ConfirmCreate { ref path }) = app.popup {
+        let popup_area = super::dialog_area(area, 3);
+        frame.render_widget(Clear, popup_area);
+        
+        let block = Block::default()
+            .title(" Create File ")
+            .title_bottom(" y:create  n/Esc:cancel ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Yellow));
+        let inner = block.inner(popup_area);
+        frame.render_widget(block, popup_area);
+        
+        let text = format!("Create file: {}", contract_tilde(path));
+        let paragraph = Paragraph::new(text).wrap(Wrap { trim: true });
+        frame.render_widget(paragraph, inner);
     }
 }
 
