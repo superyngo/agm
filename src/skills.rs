@@ -1233,6 +1233,81 @@ pub fn migrate_agents_dir_quiet(
     Ok((migrated, msgs))
 }
 
+/// Migrate a tool's commands directory to the central store (TUI-safe).
+/// Moves .md files from `commands_link` into `tool_commands_target` (under
+/// source_dir/agm_tools/{tool}/commands/), then creates file links in `central_commands`.
+pub fn migrate_commands_dir_quiet(
+    commands_link: &Path,
+    tool_commands_target: &Path,
+    central_commands: &Path,
+    tool_key: &str,
+) -> anyhow::Result<(usize, Vec<String>)> {
+    use anyhow::Context;
+
+    let mut msgs = Vec::new();
+    fs::create_dir_all(tool_commands_target)?;
+    fs::create_dir_all(central_commands)?;
+
+    let mut migrated = 0;
+    let entries: Vec<_> = fs::read_dir(commands_link)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            let p = e.path();
+            p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("md")
+        })
+        .collect();
+
+    for entry in &entries {
+        let file_name = entry.file_name();
+        let name = file_name.to_string_lossy().to_string();
+        let src = entry.path();
+
+        let effective_name = if !central_commands.join(&name).exists() {
+            name.clone()
+        } else {
+            let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or(&name);
+            let prefixed = format!("{}_{}.md", tool_key, stem);
+            msgs.push(format!(
+                "  command '{}' already in central, renaming to '{}'",
+                name, prefixed
+            ));
+            prefixed
+        };
+
+        let dest = tool_commands_target.join(&effective_name);
+        let link = central_commands.join(&effective_name);
+
+        if dest.exists() {
+            msgs.push(format!("  {} already in store, re-linking", effective_name));
+        } else {
+            fs::rename(&src, &dest)
+                .with_context(|| format!("Failed to move command '{}' to store", effective_name))?;
+        }
+
+        if link.symlink_metadata().is_ok() {
+            let already_ok = platform::same_file(&link, &dest).unwrap_or(false);
+            if already_ok {
+                msgs.push(format!("  {} already linked", effective_name));
+                migrated += 1;
+                continue;
+            }
+            platform::remove_link(&link)?;
+        }
+
+        platform::link_file(&dest, &link)
+            .with_context(|| format!("Failed to link command '{}' into central", effective_name))?;
+
+        msgs.push(format!("  {} → {}", effective_name, contract_tilde(&dest)));
+        migrated += 1;
+    }
+
+    if commands_link.exists() {
+        fs::remove_dir_all(commands_link)?;
+    }
+
+    Ok((migrated, msgs))
+}
+
 /// Recursively copy a directory, preserving symlinks.
 pub fn copy_dir_all(src: &Path, dst: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(dst)?;
