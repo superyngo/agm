@@ -35,6 +35,7 @@ pub enum CentralField {
     Prompt,
     Skills,
     Agents,
+    Commands,
     Source,
 }
 
@@ -44,6 +45,7 @@ pub enum LinkField {
     Prompt,
     Skills,
     Agents,
+    Commands,
 }
 
 /// Which file-group type a row represents
@@ -109,6 +111,7 @@ pub fn build_rows(config: &Config, expanded: &HashSet<String>) -> Vec<ToolRow> {
         rows.push(ToolRow::CentralItem(CentralField::Prompt));
         rows.push(ToolRow::CentralItem(CentralField::Skills));
         rows.push(ToolRow::CentralItem(CentralField::Agents));
+        rows.push(ToolRow::CentralItem(CentralField::Commands));
         rows.push(ToolRow::CentralItem(CentralField::Source));
     }
 
@@ -138,6 +141,10 @@ pub fn build_rows(config: &Config, expanded: &HashSet<String>) -> Vec<ToolRow> {
                 rows.push(ToolRow::LinkItem {
                     tool_key: key.clone(),
                     field: LinkField::Agents,
+                });
+                rows.push(ToolRow::LinkItem {
+                    tool_key: key.clone(),
+                    field: LinkField::Commands,
                 });
             }
             // File groups
@@ -405,11 +412,13 @@ impl ToolApp {
                         ToolRow::CentralItem(
                             ref cf @ (CentralField::Skills
                             | CentralField::Agents
+                            | CentralField::Commands
                             | CentralField::Source),
                         ) => {
                             let current_value = match cf {
                                 CentralField::Skills => self.config.central.skills_source.clone(),
                                 CentralField::Agents => self.config.central.agents_source.clone(),
+                                CentralField::Commands => self.config.central.commands_source.clone(),
                                 CentralField::Source => self.config.central.source_dir.clone(),
                                 _ => unreachable!(),
                             };
@@ -643,6 +652,11 @@ impl ToolApp {
                 let target = expand_tilde(&self.config.central.agents_source);
                 (link, target, true, "agents")
             }
+            LinkField::Commands => {
+                let link = config_dir.join(&tool.commands_dir);
+                let target = expand_tilde(&self.config.central.commands_source);
+                (link, target, true, "commands")
+            }
         })
     }
 
@@ -755,6 +769,15 @@ impl ToolApp {
                     skills::migrate_agents_dir_quiet(
                         link_path,
                         &agents_target,
+                        central_dir,
+                        tool_key,
+                    )
+                }
+                LinkField::Commands => {
+                    let commands_target = tool_target.join("commands");
+                    skills::migrate_commands_dir_quiet(
+                        link_path,
+                        &commands_target,
                         central_dir,
                         tool_key,
                     )
@@ -950,6 +973,41 @@ impl ToolApp {
                     }
                 }
             }
+            LinkField::Commands => {
+                let commands_store = tool_store.join("commands");
+                if commands_store.exists() {
+                    match std::fs::rename(&commands_store, link_path) {
+                        Ok(()) => {
+                            self.log.push(
+                                LogLevel::Info,
+                                format!("[{}] Restored commands directory", tool_key),
+                            );
+                        }
+                        Err(e) => {
+                            self.log.push(
+                                LogLevel::Warning,
+                                format!("[{}] Failed to restore commands: {}", tool_key, e),
+                            );
+                        }
+                    }
+                    self.cleanup_empty_tool_store(&tool_store);
+                } else {
+                    match std::fs::create_dir_all(link_path) {
+                        Ok(()) => {
+                            self.log.push(
+                                LogLevel::Info,
+                                format!("[{}] Created empty commands directory", tool_key),
+                            );
+                        }
+                        Err(e) => {
+                            self.log.push(
+                                LogLevel::Warning,
+                                format!("[{}] Failed to create commands directory: {}", tool_key, e),
+                            );
+                        }
+                    }
+                }
+            }
             LinkField::Prompt => {
                 // Find and restore the most recent .bak backup.
                 // Backup naming: link_path.with_extension("{timestamp}.bak")
@@ -1009,7 +1067,7 @@ impl ToolApp {
         }
 
         // Check current state of all 3 links
-        let fields = [LinkField::Prompt, LinkField::Skills, LinkField::Agents];
+        let fields = [LinkField::Prompt, LinkField::Skills, LinkField::Agents, LinkField::Commands];
         let mut linked_count = 0;
         for f in &fields {
             if let Some((link_path, target, is_dir, _)) = self.get_link_paths(tool_key, f) {
@@ -1023,7 +1081,7 @@ impl ToolApp {
         }
 
         let tk = tool_key.to_string();
-        if linked_count == 3 {
+        if linked_count == 4 {
             // All linked → unlink all
             for f in &fields {
                 if let Some((link_path, target, is_dir, _)) = self.get_link_paths(&tk, f) {
@@ -1494,6 +1552,7 @@ impl ToolApp {
         match field {
             CentralField::Skills => self.config.central.skills_source = contracted.clone(),
             CentralField::Agents => self.config.central.agents_source = contracted.clone(),
+            CentralField::Commands => self.config.central.commands_source = contracted.clone(),
             CentralField::Source => self.config.central.source_dir = contracted.clone(),
             _ => return,
         };
@@ -1786,6 +1845,10 @@ fn render_row(
                     "agents".to_string(),
                     contract_tilde(&expand_tilde(&config.central.agents_source)),
                 ),
+                CentralField::Commands => (
+                    "commands".to_string(),
+                    contract_tilde(&expand_tilde(&config.central.commands_source)),
+                ),
                 CentralField::Source => (
                     "source".to_string(),
                     contract_tilde(&expand_tilde(&config.central.source_dir)),
@@ -1874,6 +1937,11 @@ fn render_row(
                     let link = config_dir.join(&tool.agents_dir);
                     let target = expand_tilde(&config.central.agents_source);
                     (link, target, true, "agents")
+                }
+                LinkField::Commands => {
+                    let link = config_dir.join(&tool.commands_dir);
+                    let target = expand_tilde(&config.central.commands_source);
+                    (link, target, true, "commands")
                 }
             };
             let status = linker::check_link(&link_path, &target, is_dir);
@@ -2012,6 +2080,7 @@ fn render_path_editor(app: &ToolApp, frame: &mut Frame, area: Rect) {
         let label = match field {
             CentralField::Skills => "skills",
             CentralField::Agents => "agents",
+            CentralField::Commands => "commands",
             CentralField::Source => "source",
             _ => "path",
         };
@@ -2222,9 +2291,13 @@ mod tests {
         ));
         assert!(matches!(
             rows[5],
+            ToolRow::CentralItem(CentralField::Commands)
+        ));
+        assert!(matches!(
+            rows[6],
             ToolRow::CentralItem(CentralField::Source)
         ));
-        assert!(matches!(rows[6], ToolRow::ToolHeader { ref key, .. } if key == "claude"));
+        assert!(matches!(rows[7], ToolRow::ToolHeader { ref key, .. } if key == "claude"));
     }
 
     #[test]
@@ -2275,8 +2348,8 @@ mod tests {
         expanded.insert("claude:status".to_string());
         let rows = build_rows(&config, &expanded);
 
-        // CentralHeader + ToolHeader + StatusHeader + 3 LinkItems + Settings + Auth + Mcp
-        assert_eq!(rows.len(), 9);
+        // CentralHeader + ToolHeader + StatusHeader + 4 LinkItems + Settings + Auth + Mcp
+        assert_eq!(rows.len(), 10);
         assert!(matches!(rows[0], ToolRow::CentralHeader));
         assert!(matches!(rows[1], ToolRow::ToolHeader { .. }));
         assert!(matches!(rows[2], ToolRow::StatusHeader { .. }));
@@ -2290,13 +2363,16 @@ mod tests {
             matches!(rows[5], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Agents)
         );
         assert!(
-            matches!(rows[6], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Settings)
+            matches!(rows[6], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Commands)
         );
         assert!(
-            matches!(rows[7], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Auth)
+            matches!(rows[7], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Settings)
         );
         assert!(
-            matches!(rows[8], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Mcp)
+            matches!(rows[8], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Auth)
+        );
+        assert!(
+            matches!(rows[9], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Mcp)
         );
     }
 
@@ -2315,8 +2391,8 @@ mod tests {
         expanded.insert("minimal:status".to_string());
         let rows = build_rows(&config, &expanded);
 
-        // CentralHeader + ToolHeader + StatusHeader + 3 LinkItems (no file groups since empty)
-        assert_eq!(rows.len(), 6);
+        // CentralHeader + ToolHeader + StatusHeader + 4 LinkItems (no file groups since empty)
+        assert_eq!(rows.len(), 7);
         assert!(matches!(rows[0], ToolRow::CentralHeader));
         assert!(matches!(rows[1], ToolRow::ToolHeader { ref key, .. } if key == "minimal"));
         assert!(matches!(rows[2], ToolRow::StatusHeader { .. }));
@@ -2328,6 +2404,9 @@ mod tests {
         );
         assert!(
             matches!(rows[5], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Agents)
+        );
+        assert!(
+            matches!(rows[6], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Commands)
         );
 
         // No FileGroupHeader rows
