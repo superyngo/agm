@@ -7,7 +7,7 @@ use ratatui::{
     Frame,
 };
 
-const MAX_CONTENT_LINES: usize = 5000;
+pub const MAX_CONTENT_LINES: usize = 5000;
 
 pub struct ScrollablePopup {
     pub title: String,

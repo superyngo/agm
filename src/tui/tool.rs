@@ -24,6 +24,10 @@ use crate::linker::{self, LinkStatus};
 use crate::paths::{contract_tilde, expand_tilde};
 use crate::skills;
 
+// ---------------------------------------------------------------------------
+// Data model
+// ---------------------------------------------------------------------------
+
 /// Which central config field a row represents
 #[derive(Debug, Clone, PartialEq)]
 pub enum CentralField {
@@ -34,12 +38,17 @@ pub enum CentralField {
     Source,
 }
 
-/// Which tool-specific field a row represents
+/// Which linkable field a tool row represents
 #[derive(Debug, Clone, PartialEq)]
-pub enum ToolField {
+pub enum LinkField {
     Prompt,
     Skills,
     Agents,
+}
+
+/// Which file-group type a row represents
+#[derive(Debug, Clone, PartialEq)]
+pub enum FileGroup {
     Settings,
     Auth,
     Mcp,
@@ -55,14 +64,41 @@ pub enum ToolRow {
         name: String,
         installed: bool,
     },
-    ToolItem {
+    StatusHeader {
         tool_key: String,
-        field: ToolField,
+    },
+    LinkItem {
+        tool_key: String,
+        field: LinkField,
+    },
+    FileGroupHeader {
+        tool_key: String,
+        group: FileGroup,
+    },
+    FileItem {
+        tool_key: String,
+        group: FileGroup,
+        index: usize,
     },
 }
 
+fn group_key_suffix(group: &FileGroup) -> &'static str {
+    match group {
+        FileGroup::Settings => "settings",
+        FileGroup::Auth => "auth",
+        FileGroup::Mcp => "mcp",
+    }
+}
+
+fn group_label(group: &FileGroup) -> &'static str {
+    match group {
+        FileGroup::Settings => "settings",
+        FileGroup::Auth => "auth",
+        FileGroup::Mcp => "mcp",
+    }
+}
+
 /// Build the flat list of rows from config state and expanded sections.
-/// `expanded` contains keys of sections that are currently open ("central", tool keys).
 pub fn build_rows(config: &Config, expanded: &HashSet<String>) -> Vec<ToolRow> {
     let mut rows = Vec::new();
 
@@ -85,17 +121,35 @@ pub fn build_rows(config: &Config, expanded: &HashSet<String>) -> Vec<ToolRow> {
             installed,
         });
         if expanded.contains(key) {
-            rows.push(ToolRow::ToolItem { tool_key: key.clone(), field: ToolField::Prompt });
-            rows.push(ToolRow::ToolItem { tool_key: key.clone(), field: ToolField::Skills });
-            rows.push(ToolRow::ToolItem { tool_key: key.clone(), field: ToolField::Agents });
-            if !tool.settings.is_empty() {
-                rows.push(ToolRow::ToolItem { tool_key: key.clone(), field: ToolField::Settings });
+            // Status sub-group (links)
+            rows.push(ToolRow::StatusHeader { tool_key: key.clone() });
+            let status_key = format!("{}:status", key);
+            if expanded.contains(&status_key) {
+                rows.push(ToolRow::LinkItem { tool_key: key.clone(), field: LinkField::Prompt });
+                rows.push(ToolRow::LinkItem { tool_key: key.clone(), field: LinkField::Skills });
+                rows.push(ToolRow::LinkItem { tool_key: key.clone(), field: LinkField::Agents });
             }
-            if !tool.auth.is_empty() {
-                rows.push(ToolRow::ToolItem { tool_key: key.clone(), field: ToolField::Auth });
-            }
-            if !tool.mcp.is_empty() {
-                rows.push(ToolRow::ToolItem { tool_key: key.clone(), field: ToolField::Mcp });
+            // File groups
+            for (files, group) in [
+                (&tool.settings, FileGroup::Settings),
+                (&tool.auth, FileGroup::Auth),
+                (&tool.mcp, FileGroup::Mcp),
+            ] {
+                if !files.is_empty() {
+                    rows.push(ToolRow::FileGroupHeader { tool_key: key.clone(), group: group.clone() });
+                    if files.len() > 1 {
+                        let gk = format!("{}:{}", key, group_key_suffix(&group));
+                        if expanded.contains(&gk) {
+                            for i in 0..files.len() {
+                                rows.push(ToolRow::FileItem {
+                                    tool_key: key.clone(),
+                                    group: group.clone(),
+                                    index: i,
+                                });
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -107,12 +161,18 @@ pub fn build_rows(config: &Config, expanded: &HashSet<String>) -> Vec<ToolRow> {
 // Popup state
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
+struct LinkContext {
+    tool_key: String,
+    field: LinkField,
+}
+
 pub enum PopupState {
     Log(super::popup::ScrollablePopup),
-    FilePicker {
-        title: String,
-        files: Vec<(String, PathBuf, bool)>, // (display, resolved_path, exists)
-        cursor: usize,
+    Info {
+        popup: super::popup::ScrollablePopup,
+        editor_path: Option<PathBuf>,
+        link_context: Option<LinkContext>,
     },
     PathEditor {
         field: CentralField,
@@ -160,7 +220,6 @@ impl ToolApp {
     }
 
     fn rebuild_rows(&mut self) {
-        let old_len = self.rows.len();
         self.rows = build_rows(&self.config, &self.expanded);
         if self.cursor >= self.rows.len() {
             self.cursor = self.rows.len().saturating_sub(1);
@@ -211,15 +270,18 @@ impl ToolApp {
         self.rebuild_rows();
     }
 
+    // ------------------------------------------------------------------
+    // Key handling
+    // ------------------------------------------------------------------
+
     fn handle_key(
         &mut self,
         code: KeyCode,
         terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
         area_height: u16,
     ) {
-        // Popup intercepts all keys
         if self.popup.is_some() {
-            self.handle_popup_key(code);
+            self.handle_popup_key(code, terminal);
             return;
         }
 
@@ -247,22 +309,30 @@ impl ToolApp {
                 self.expanded.insert("central".to_string());
                 for key in self.config.tools.keys() {
                     self.expanded.insert(key.clone());
+                    self.expanded.insert(format!("{}:status", key));
+                    let tool = &self.config.tools[key];
+                    if tool.settings.len() > 1 {
+                        self.expanded.insert(format!("{}:settings", key));
+                    }
+                    if tool.auth.len() > 1 {
+                        self.expanded.insert(format!("{}:auth", key));
+                    }
+                    if tool.mcp.len() > 1 {
+                        self.expanded.insert(format!("{}:mcp", key));
+                    }
                 }
                 self.rebuild_rows();
             }
 
+            // Primary action: space/enter
             KeyCode::Char(' ') | KeyCode::Enter => {
                 if let Some(row) = self.current_row().cloned() {
                     match &row {
                         ToolRow::CentralHeader => self.toggle_expanded("central"),
                         ToolRow::ToolHeader { key, .. } => self.toggle_expanded(key),
-                        ToolRow::ToolItem { tool_key, field } => {
-                            match field {
-                                ToolField::Prompt | ToolField::Skills | ToolField::Agents => {
-                                    self.toggle_link(&tool_key, &field);
-                                }
-                                _ => {} // Settings/Auth/Mcp: no toggle action
-                            }
+                        ToolRow::StatusHeader { tool_key } => {
+                            let sk = format!("{}:status", tool_key);
+                            self.toggle_expanded(&sk);
                         }
                         ToolRow::CentralItem(ref cf @ (CentralField::Skills | CentralField::Agents | CentralField::Source)) => {
                             let current_value = match cf {
@@ -277,6 +347,41 @@ impl ToolApp {
                                 value: current_value,
                                 cursor_pos: len,
                             });
+                        }
+                        ToolRow::CentralItem(CentralField::Config) => {
+                            self.show_central_info(&CentralField::Config);
+                        }
+                        ToolRow::CentralItem(CentralField::Prompt) => {
+                            self.show_central_info(&CentralField::Prompt);
+                        }
+                        ToolRow::LinkItem { tool_key, field } => {
+                            self.show_link_info(&tool_key.clone(), &field.clone());
+                        }
+                        ToolRow::FileGroupHeader { tool_key, group } => {
+                            let files = self.get_group_files(&tool_key, &group);
+                            if files.len() <= 1 {
+                                self.show_file_info(&tool_key.clone(), &group.clone(), 0);
+                            } else {
+                                let gk = format!("{}:{}", tool_key, group_key_suffix(&group));
+                                self.toggle_expanded(&gk);
+                            }
+                        }
+                        ToolRow::FileItem { tool_key, group, index } => {
+                            self.show_file_info(&tool_key.clone(), &group.clone(), *index);
+                        }
+                    }
+                }
+            }
+
+            // Install/link action: i
+            KeyCode::Char('i') => {
+                if let Some(row) = self.current_row().cloned() {
+                    match &row {
+                        ToolRow::StatusHeader { tool_key } => {
+                            self.toggle_all_links(&tool_key.clone());
+                        }
+                        ToolRow::LinkItem { tool_key, field } => {
+                            self.toggle_link(&tool_key.clone(), &field.clone());
                         }
                         _ => {}
                     }
@@ -293,10 +398,10 @@ impl ToolApp {
             // Log popup
             KeyCode::Char('l') => {
                 let lines = self.log.to_lines();
-                self.popup = Some(PopupState::Log(
-                    super::popup::ScrollablePopup::new("Log", lines)
-                        .with_close_hint("l:close"),
-                ));
+                let mut popup = super::popup::ScrollablePopup::new("Log", lines)
+                    .with_close_hint("l:close");
+                popup.scroll_offset = popup.lines.len().saturating_sub(1);
+                self.popup = Some(PopupState::Log(popup));
             }
 
             // Quit
@@ -306,35 +411,27 @@ impl ToolApp {
         }
     }
 
-    fn handle_popup_key(&mut self, code: KeyCode) {
-        match &mut self.popup {
-            Some(PopupState::Log(ref mut popup)) => {
+    fn handle_popup_key(
+        &mut self,
+        code: KeyCode,
+        _terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    ) {
+        // Determine popup type first
+        let is_log = matches!(&self.popup, Some(PopupState::Log(_)));
+        let is_info = matches!(&self.popup, Some(PopupState::Info { .. }));
+        let is_path = matches!(&self.popup, Some(PopupState::PathEditor { .. }));
+
+        if is_log {
+            if let Some(PopupState::Log(ref mut popup)) = self.popup {
                 match code {
                     KeyCode::Char('l') | KeyCode::Esc => self.popup = None,
                     _ => { popup.handle_key(code); }
                 }
             }
-            Some(PopupState::FilePicker { ref files, ref mut cursor, .. }) => {
-                let len = files.len();
-                match code {
-                    KeyCode::Up | KeyCode::Char('k') => *cursor = cursor.saturating_sub(1),
-                    KeyCode::Down | KeyCode::Char('j') => *cursor = (*cursor + 1).min(len.saturating_sub(1)),
-                    KeyCode::Enter => {
-                        if let Some((display, path, exists)) = files.get(*cursor).cloned() {
-                            if exists {
-                                self.popup = None;
-                                // Store path for editor open after popup close
-                                self.pending_editor_path = Some(path);
-                            } else {
-                                self.set_status(format!("File not found: {}", display));
-                            }
-                        }
-                    }
-                    KeyCode::Esc => self.popup = None,
-                    _ => {}
-                }
-            }
-            Some(PopupState::PathEditor { ref field, ref mut value, ref mut cursor_pos }) => {
+        } else if is_info {
+            self.handle_info_popup_key(code);
+        } else if is_path {
+            if let Some(PopupState::PathEditor { ref field, ref mut value, ref mut cursor_pos }) = self.popup {
                 match code {
                     KeyCode::Char(c) => { value.insert(*cursor_pos, c); *cursor_pos += 1; }
                     KeyCode::Backspace => {
@@ -357,11 +454,75 @@ impl ToolApp {
                     _ => {}
                 }
             }
-            None => {}
         }
     }
 
-    fn toggle_link(&mut self, tool_key: &str, field: &ToolField) {
+    fn handle_info_popup_key(&mut self, code: KeyCode) {
+        // Let ScrollablePopup handle scrolling first
+        if let Some(PopupState::Info { ref mut popup, .. }) = self.popup {
+            match popup.handle_key(code) {
+                super::popup::PopupAction::Close => { self.popup = None; return; }
+                super::popup::PopupAction::Consumed => return,
+                super::popup::PopupAction::Ignored => {} // fall through
+            }
+        }
+
+        // Extract context for action keys
+        let (editor_path, link_ctx) = match &self.popup {
+            Some(PopupState::Info { editor_path, link_context, .. }) => {
+                (editor_path.clone(), link_context.clone())
+            }
+            _ => return,
+        };
+
+        match code {
+            KeyCode::Char('e') => {
+                if let Some(path) = editor_path {
+                    self.popup = None;
+                    self.pending_editor_path = Some(path);
+                }
+            }
+            KeyCode::Char('i') => {
+                if let Some(ctx) = link_ctx {
+                    let tk = ctx.tool_key.clone();
+                    let f = ctx.field.clone();
+                    self.popup = None;
+                    self.toggle_link(&tk, &f);
+                    self.show_link_info(&tk, &f);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Link operations
+    // ------------------------------------------------------------------
+
+    fn get_link_paths(&self, tool_key: &str, field: &LinkField) -> Option<(PathBuf, PathBuf, bool, &'static str)> {
+        let tool = self.config.tools.get(tool_key)?;
+        if !tool.is_installed() { return None; }
+        let config_dir = expand_tilde(&tool.config_dir);
+        Some(match field {
+            LinkField::Prompt => {
+                let link = config_dir.join(&tool.prompt_filename);
+                let target = expand_tilde(&self.config.central.prompt_source);
+                (link, target, false, "prompt")
+            }
+            LinkField::Skills => {
+                let link = config_dir.join(&tool.skills_dir);
+                let target = expand_tilde(&self.config.central.skills_source);
+                (link, target, true, "skills")
+            }
+            LinkField::Agents => {
+                let link = config_dir.join(&tool.agents_dir);
+                let target = expand_tilde(&self.config.central.agents_source);
+                (link, target, true, "agents")
+            }
+        })
+    }
+
+    fn toggle_link(&mut self, tool_key: &str, field: &LinkField) {
         use super::log::LogLevel;
 
         let tool = match self.config.tools.get(tool_key) {
@@ -374,38 +535,20 @@ impl ToolApp {
             return;
         }
 
-        let config_dir = expand_tilde(&tool.config_dir);
-        let (link_path, target, is_dir, label) = match field {
-            ToolField::Prompt => {
-                let link = config_dir.join(&tool.prompt_filename);
-                let target = expand_tilde(&self.config.central.prompt_source);
-                (link, target, false, "prompt")
-            }
-            ToolField::Skills => {
-                let link = config_dir.join(&tool.skills_dir);
-                let target = expand_tilde(&self.config.central.skills_source);
-                (link, target, true, "skills")
-            }
-            ToolField::Agents => {
-                let link = config_dir.join(&tool.agents_dir);
-                let target = expand_tilde(&self.config.central.agents_source);
-                (link, target, true, "agents")
-            }
-            _ => return, // Settings/Auth/Mcp are not linkable
+        let (link_path, target, is_dir, label) = match self.get_link_paths(tool_key, field) {
+            Some(v) => v,
+            None => return,
         };
 
         let status = linker::check_link(&link_path, &target, is_dir);
         match status {
             LinkStatus::Linked => {
-                // Unlink
                 match linker::remove_link_quiet(&link_path, label, is_dir) {
                     Ok((true, msg)) => {
                         self.log.push(LogLevel::Success, format!("[{}] {}", tool_key, msg));
                         self.set_status(format!("✓ {} {} unlinked", tool_key, label));
                     }
-                    Ok((false, msg)) => {
-                        self.set_status(msg);
-                    }
+                    Ok((false, msg)) => self.set_status(msg),
                     Err(e) => {
                         self.log.push(LogLevel::Error, format!("[{}] Unlink {} failed: {}", tool_key, label, e));
                         self.set_status(format!("✗ {}", e));
@@ -413,15 +556,12 @@ impl ToolApp {
                 }
             }
             LinkStatus::Missing | LinkStatus::Broken => {
-                // Create link
                 match linker::create_link_quiet(&link_path, &target, label, is_dir) {
                     Ok((true, msg)) => {
                         self.log.push(LogLevel::Success, format!("[{}] {}", tool_key, msg));
                         self.set_status(format!("✓ {} {} linked", tool_key, label));
                     }
-                    Ok((false, msg)) => {
-                        self.set_status(msg);
-                    }
+                    Ok((false, msg)) => self.set_status(msg),
                     Err(e) => {
                         self.log.push(LogLevel::Error, format!("[{}] Link {} failed: {}", tool_key, label, e));
                         self.set_status(format!("✗ {}", e));
@@ -429,7 +569,6 @@ impl ToolApp {
                 }
             }
             LinkStatus::Wrong(_) => {
-                // Repair: remove wrong link, create correct one
                 if let Err(e) = crate::platform::remove_link(&link_path) {
                     self.log.push(LogLevel::Error, format!("[{}] Failed to remove wrong link: {}", tool_key, e));
                     self.set_status(format!("✗ Failed to remove wrong link: {}", e));
@@ -448,7 +587,6 @@ impl ToolApp {
                 }
             }
             LinkStatus::Blocked => {
-                // Existing file/dir that's not a link — handle backup
                 self.handle_blocked_link(tool_key, field, &link_path, &target, is_dir, label);
             }
         }
@@ -457,7 +595,7 @@ impl ToolApp {
     fn handle_blocked_link(
         &mut self,
         tool_key: &str,
-        field: &ToolField,
+        _field: &LinkField,
         link_path: &std::path::Path,
         target: &std::path::Path,
         is_dir: bool,
@@ -467,17 +605,11 @@ impl ToolApp {
         use chrono::Local;
 
         if is_dir {
-            // For skills/agents directories: migrate contents to central, then link
             let source_dir = expand_tilde(&self.config.central.source_dir);
-            let tool_target = source_dir
-                .join("agm_tools")
-                .join(tool_key);
+            let tool_target = source_dir.join("agm_tools").join(tool_key);
             let central_dir = target;
-
             match skills::migrate_tool_dir(link_path, &tool_target, central_dir, tool_key) {
                 Ok(count) => {
-                    // migrate_tool_dir removes the original dir and creates central links
-                    // Now create the symlink from tool config to central
                     match linker::create_link_quiet(link_path, target, label, true) {
                         Ok((true, msg)) => {
                             self.log.push(LogLevel::Success,
@@ -499,23 +631,19 @@ impl ToolApp {
                 }
             }
         } else {
-            // For prompt files: backup then link
             let timestamp = Local::now().format("%Y%m%d_%H%M%S");
             let backup = link_path.with_extension(format!("{}.bak", timestamp));
             match std::fs::rename(link_path, &backup) {
                 Ok(()) => {
                     self.log.push(LogLevel::Info,
-                        format!("[{}] Backed up {} to {}", tool_key, label,
-                            contract_tilde(&backup)));
+                        format!("[{}] Backed up {} to {}", tool_key, label, contract_tilde(&backup)));
                     match linker::create_link_quiet(link_path, target, label, false) {
                         Ok((true, msg)) => {
-                            self.log.push(LogLevel::Success,
-                                format!("[{}] {}", tool_key, msg));
+                            self.log.push(LogLevel::Success, format!("[{}] {}", tool_key, msg));
                             self.set_status(format!("✓ {} {} backed up and linked", tool_key, label));
                         }
                         Ok((false, msg)) => self.set_status(msg),
                         Err(e) => {
-                            // Restore backup on failure
                             let _ = std::fs::rename(&backup, link_path);
                             self.log.push(LogLevel::Error,
                                 format!("[{}] Link failed, restored backup: {}", tool_key, e));
@@ -524,13 +652,280 @@ impl ToolApp {
                     }
                 }
                 Err(e) => {
-                    self.log.push(LogLevel::Error,
-                        format!("[{}] Backup failed: {}", tool_key, e));
+                    self.log.push(LogLevel::Error, format!("[{}] Backup failed: {}", tool_key, e));
                     self.set_status(format!("✗ Backup failed: {}", e));
                 }
             }
         }
     }
+
+    fn toggle_all_links(&mut self, tool_key: &str) {
+        let tool = match self.config.tools.get(tool_key) {
+            Some(t) => t,
+            None => return,
+        };
+        if !tool.is_installed() {
+            self.set_status(format!("{} is not installed", tool_key));
+            return;
+        }
+
+        // Check current state of all 3 links
+        let fields = [LinkField::Prompt, LinkField::Skills, LinkField::Agents];
+        let mut linked_count = 0;
+        for f in &fields {
+            if let Some((link_path, target, is_dir, _)) = self.get_link_paths(tool_key, f) {
+                if matches!(linker::check_link(&link_path, &target, is_dir), LinkStatus::Linked) {
+                    linked_count += 1;
+                }
+            }
+        }
+
+        let tk = tool_key.to_string();
+        if linked_count == 3 {
+            // All linked → unlink all
+            for f in &fields {
+                if let Some((link_path, target, is_dir, _)) = self.get_link_paths(&tk, f) {
+                    if matches!(linker::check_link(&link_path, &target, is_dir), LinkStatus::Linked) {
+                        self.toggle_link(&tk, f);
+                    }
+                }
+            }
+        } else {
+            // Partially or none linked → link all
+            for f in &fields {
+                if let Some((link_path, target, is_dir, _)) = self.get_link_paths(&tk, f) {
+                    if !matches!(linker::check_link(&link_path, &target, is_dir), LinkStatus::Linked) {
+                        self.toggle_link(&tk, f);
+                    }
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Info popups
+    // ------------------------------------------------------------------
+
+    fn show_central_info(&mut self, field: &CentralField) {
+        let (title, path) = match field {
+            CentralField::Config => {
+                let p = self.config_path.clone()
+                    .unwrap_or_else(|| expand_tilde("~/.config/agm/config.toml"));
+                ("Config".to_string(), p)
+            }
+            CentralField::Prompt => {
+                let p = expand_tilde(&self.config.central.prompt_source);
+                ("Prompt".to_string(), p)
+            }
+            _ => return,
+        };
+
+        let mut content_lines = vec![
+            Line::from(vec![
+                Span::styled("Path: ", Style::default().fg(Color::DarkGray)),
+                Span::raw(contract_tilde(&path)),
+            ]),
+            Line::from(""),
+        ];
+
+        if path.exists() {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
+                    for line in content.lines().take(super::popup::MAX_CONTENT_LINES) {
+                        content_lines.push(Line::from(line.to_string()));
+                    }
+                }
+                Err(e) => {
+                    content_lines.push(Line::from(Span::styled(
+                        format!("Error reading file: {}", e),
+                        Style::default().fg(Color::Red),
+                    )));
+                }
+            }
+        } else {
+            content_lines.push(Line::from(Span::styled(
+                "File not found", Style::default().fg(Color::Yellow),
+            )));
+        }
+
+        let editor_path = if path.exists() { Some(path) } else { None };
+        let hint = if editor_path.is_some() { "Esc:close  e:edit" } else { "Esc:close" };
+        self.popup = Some(PopupState::Info {
+            popup: super::popup::ScrollablePopup::new(&title, content_lines)
+                .with_close_hint(hint),
+            editor_path,
+            link_context: None,
+        });
+    }
+
+    fn show_link_info(&mut self, tool_key: &str, field: &LinkField) {
+        let tool = match self.config.tools.get(tool_key) {
+            Some(t) => t,
+            None => return,
+        };
+        let config_dir = expand_tilde(&tool.config_dir);
+        let (link_path, target, is_dir, label) = match self.get_link_paths(tool_key, field) {
+            Some(v) => v,
+            None => return,
+        };
+
+        let status = linker::check_link(&link_path, &target, is_dir);
+        let status_text = match &status {
+            LinkStatus::Linked => "✓ Linked",
+            LinkStatus::Missing => "✗ Not linked",
+            LinkStatus::Broken => "✗ Broken link",
+            LinkStatus::Wrong(_) => "✗ Wrong target",
+            LinkStatus::Blocked => "⚠ Blocked",
+        };
+        let status_color = match &status {
+            LinkStatus::Linked => Color::Green,
+            LinkStatus::Missing => Color::Yellow,
+            _ => Color::Red,
+        };
+
+        let mut lines = vec![
+            Line::from(vec![
+                Span::styled("Field:  ", Style::default().fg(Color::DarkGray)),
+                Span::raw(label),
+            ]),
+            Line::from(vec![
+                Span::styled("Status: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(status_text.to_string(), Style::default().fg(status_color)),
+            ]),
+            Line::from(vec![
+                Span::styled("Link:   ", Style::default().fg(Color::DarkGray)),
+                Span::raw(contract_tilde(&link_path)),
+            ]),
+            Line::from(vec![
+                Span::styled("Target: ", Style::default().fg(Color::DarkGray)),
+                Span::raw(contract_tilde(&target)),
+            ]),
+            Line::from(""),
+        ];
+
+        if is_dir {
+            // Directory: show stats
+            let dir_path = if matches!(status, LinkStatus::Linked) { &target } else { &link_path };
+            if dir_path.exists() {
+                let mut entries = Vec::new();
+                if let Ok(rd) = std::fs::read_dir(dir_path) {
+                    for entry in rd.flatten() {
+                        entries.push(entry.file_name().to_string_lossy().to_string());
+                    }
+                }
+                entries.sort();
+                lines.push(Line::from(Span::styled(
+                    format!("Contents: {} item(s)", entries.len()),
+                    Style::default().fg(Color::DarkGray),
+                )));
+                for e in &entries {
+                    lines.push(Line::from(format!("  {}", e)));
+                }
+            } else {
+                lines.push(Line::from(Span::styled(
+                    "Directory not found", Style::default().fg(Color::Yellow),
+                )));
+            }
+        } else {
+            // File: show content
+            let file_path = if matches!(status, LinkStatus::Linked) { &target } else { &link_path };
+            if file_path.exists() {
+                match std::fs::read_to_string(file_path) {
+                    Ok(content) => {
+                        lines.push(Line::from(Span::styled("Content:", Style::default().fg(Color::DarkGray))));
+                        for line in content.lines().take(super::popup::MAX_CONTENT_LINES) {
+                            lines.push(Line::from(line.to_string()));
+                        }
+                    }
+                    Err(e) => {
+                        lines.push(Line::from(Span::styled(
+                            format!("Error reading: {}", e), Style::default().fg(Color::Red),
+                        )));
+                    }
+                }
+            }
+        }
+
+        let title = format!("{} — {}", tool_key, label);
+        self.popup = Some(PopupState::Info {
+            popup: super::popup::ScrollablePopup::new(&title, lines)
+                .with_close_hint("Esc:close  i:toggle link"),
+            editor_path: None,
+            link_context: Some(LinkContext {
+                tool_key: tool_key.to_string(),
+                field: field.clone(),
+            }),
+        });
+    }
+
+    fn show_file_info(&mut self, tool_key: &str, group: &FileGroup, index: usize) {
+        let files = self.get_group_files(tool_key, group);
+        let path = match files.get(index) {
+            Some(p) => p.clone(),
+            None => return,
+        };
+
+        let mut lines = vec![
+            Line::from(vec![
+                Span::styled("Path: ", Style::default().fg(Color::DarkGray)),
+                Span::raw(contract_tilde(&path)),
+            ]),
+            Line::from(""),
+        ];
+
+        if path.exists() {
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
+                    for line in content.lines().take(super::popup::MAX_CONTENT_LINES) {
+                        lines.push(Line::from(line.to_string()));
+                    }
+                }
+                Err(e) => {
+                    lines.push(Line::from(Span::styled(
+                        format!("Error reading: {}", e), Style::default().fg(Color::Red),
+                    )));
+                }
+            }
+        } else {
+            lines.push(Line::from(Span::styled(
+                "File not found", Style::default().fg(Color::Yellow),
+            )));
+        }
+
+        let title = format!("{} — {}", tool_key, group_label(group));
+        let editor_path = if path.exists() { Some(path) } else { None };
+        let hint = if editor_path.is_some() { "Esc:close  e:edit" } else { "Esc:close" };
+        self.popup = Some(PopupState::Info {
+            popup: super::popup::ScrollablePopup::new(&title, lines)
+                .with_close_hint(hint),
+            editor_path,
+            link_context: None,
+        });
+    }
+
+    fn get_group_files(&self, tool_key: &str, group: &FileGroup) -> Vec<PathBuf> {
+        let tool = match self.config.tools.get(tool_key) {
+            Some(t) => t,
+            None => return vec![],
+        };
+        let config_dir = expand_tilde(&tool.config_dir);
+        let file_list: &[String] = match group {
+            FileGroup::Settings => &tool.settings,
+            FileGroup::Auth => &tool.auth,
+            FileGroup::Mcp => &tool.mcp,
+        };
+        file_list.iter().map(|f| {
+            if std::path::Path::new(f).is_absolute() || f.starts_with('~') {
+                expand_tilde(f)
+            } else {
+                config_dir.join(f)
+            }
+        }).collect()
+    }
+
+    // ------------------------------------------------------------------
+    // Edit
+    // ------------------------------------------------------------------
 
     fn open_in_editor(&self, terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, paths: &[PathBuf]) {
         let _ = disable_raw_mode();
@@ -550,7 +945,6 @@ impl ToolApp {
                     .unwrap_or_else(|| expand_tilde("~/.config/agm/config.toml"));
                 if path.exists() {
                     self.open_in_editor(terminal, &[path]);
-                    // Reload config after editing
                     if let Ok(new_config) = Config::load_from(self.config_path.clone()) {
                         self.config = new_config;
                         self.rebuild_rows();
@@ -567,85 +961,32 @@ impl ToolApp {
                     self.set_status(format!("File not found: {}", contract_tilde(&path)));
                 }
             }
-            ToolRow::ToolItem { tool_key, field: ToolField::Prompt } => {
-                let tool = match self.config.tools.get(tool_key) {
-                    Some(t) => t,
-                    None => return,
-                };
-                let path = expand_tilde(&tool.config_dir).join(&tool.prompt_filename);
-                if path.exists() {
-                    self.open_in_editor(terminal, &[path]);
-                } else {
-                    self.set_status(format!("File not found: {}", contract_tilde(&path)));
+            ToolRow::FileGroupHeader { tool_key, group } => {
+                let files = self.get_group_files(tool_key, group);
+                if let Some(path) = files.first() {
+                    if path.exists() {
+                        self.open_in_editor(terminal, &[path.clone()]);
+                    } else {
+                        self.set_status(format!("File not found: {}", contract_tilde(path)));
+                    }
                 }
             }
-            ToolRow::ToolItem { tool_key, field: ToolField::Settings }
-            | ToolRow::ToolItem { tool_key, field: ToolField::Auth }
-            | ToolRow::ToolItem { tool_key, field: ToolField::Mcp } => {
-                self.handle_edit_files(tool_key, &field_from_toolrow(row), terminal);
+            ToolRow::FileItem { tool_key, group, index } => {
+                let files = self.get_group_files(tool_key, group);
+                if let Some(path) = files.get(*index) {
+                    if path.exists() {
+                        self.open_in_editor(terminal, &[path.clone()]);
+                    } else {
+                        self.set_status(format!("File not found: {}", contract_tilde(path)));
+                    }
+                }
             }
-            _ => {} // No edit for Skills/Agents dirs, or headers
-        }
-    }
-
-    fn handle_edit_files(
-        &mut self,
-        tool_key: &str,
-        field: &ToolField,
-        terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
-    ) {
-        let tool = match self.config.tools.get(tool_key) {
-            Some(t) => t,
-            None => return,
-        };
-        let files: &[String] = match field {
-            ToolField::Settings => &tool.settings,
-            ToolField::Auth => &tool.auth,
-            ToolField::Mcp => &tool.mcp,
-            _ => return,
-        };
-        if files.is_empty() {
-            return;
-        }
-
-        let config_dir = expand_tilde(&tool.config_dir);
-        let resolved: Vec<(String, PathBuf, bool)> = files.iter().map(|f| {
-            let path = if std::path::Path::new(f).is_absolute() || f.starts_with('~') {
-                expand_tilde(f)
-            } else {
-                config_dir.join(f)
-            };
-            let display = contract_tilde(&path);
-            let exists = path.exists();
-            (display, path, exists)
-        }).collect();
-
-        if resolved.len() == 1 {
-            let (display, path, exists) = &resolved[0];
-            if *exists {
-                self.open_in_editor(terminal, &[path.clone()]);
-            } else {
-                self.set_status(format!("File not found: {}", display));
-            }
-        } else {
-            // Multiple files — show file picker popup
-            let label = match field {
-                ToolField::Settings => "settings",
-                ToolField::Auth => "auth",
-                ToolField::Mcp => "mcp",
-                _ => "files",
-            };
-            self.popup = Some(PopupState::FilePicker {
-                title: format!("Select {} file to edit", label),
-                files: resolved,
-                cursor: 0,
-            });
+            _ => {}
         }
     }
 
     fn save_central_path(&mut self, field: CentralField, value: String) {
         use super::log::LogLevel;
-
         let contracted = contract_tilde(&expand_tilde(&value));
         match field {
             CentralField::Skills => self.config.central.skills_source = contracted.clone(),
@@ -653,17 +994,15 @@ impl ToolApp {
             CentralField::Source => self.config.central.source_dir = contracted.clone(),
             _ => return,
         };
-
         let save_result = if let Some(ref path) = self.config_path {
             self.config.save_to(path)
         } else {
             self.config.save()
         };
-
         match save_result {
             Ok(()) => {
-                let expanded = expand_tilde(&contracted);
-                if expanded.exists() {
+                let expanded_path = expand_tilde(&contracted);
+                if expanded_path.exists() {
                     self.log.push(LogLevel::Success, format!("Updated path: {}", contracted));
                     self.set_status(format!("✓ Path updated: {}", contracted));
                 } else {
@@ -680,11 +1019,140 @@ impl ToolApp {
     }
 }
 
-fn field_from_toolrow(row: &ToolRow) -> ToolField {
-    match row {
-        ToolRow::ToolItem { field, .. } => field.clone(),
-        _ => unreachable!(),
+// ---------------------------------------------------------------------------
+// Rendering helpers
+// ---------------------------------------------------------------------------
+
+fn resolve_display(tool: &crate::config::ToolConfig, path: &str) -> String {
+    if std::path::Path::new(path).is_absolute() || path.starts_with('~') {
+        contract_tilde(&expand_tilde(path))
+    } else {
+        let full = expand_tilde(&tool.config_dir).join(path);
+        contract_tilde(&full)
     }
+}
+
+fn link_status_spans(status: &LinkStatus, link_path: &std::path::Path) -> Vec<Span<'static>> {
+    match status {
+        LinkStatus::Linked => vec![
+            Span::styled("✓ linked", Style::default().fg(Color::Green)),
+            Span::raw(format!(" → {}", contract_tilde(link_path))),
+        ],
+        LinkStatus::Missing => vec![
+            Span::styled("✗ not linked", Style::default().fg(Color::Yellow)),
+        ],
+        LinkStatus::Broken => vec![
+            Span::styled("✗ broken", Style::default().fg(Color::Red)),
+            Span::raw(format!(" → {}", contract_tilde(link_path))),
+        ],
+        LinkStatus::Wrong(actual) => vec![
+            Span::styled("✗ wrong target", Style::default().fg(Color::Red)),
+            Span::raw(format!(" → {}", actual)),
+        ],
+        LinkStatus::Blocked => vec![
+            Span::styled("⚠ blocked", Style::default().fg(Color::Red)),
+            Span::raw(" (exists, not a link)"),
+        ],
+    }
+}
+
+fn compute_tool_status(config: &Config, tool_key: &str) -> (u8, &'static str, Color) {
+    let tool = match config.tools.get(tool_key) {
+        Some(t) => t,
+        None => return (0, "Not linked", Color::DarkGray),
+    };
+    if !tool.is_installed() {
+        return (0, "Not installed", Color::DarkGray);
+    }
+    let config_dir = expand_tilde(&tool.config_dir);
+    let mut linked = 0u8;
+    for (link_sub, target_src, is_dir) in [
+        (&tool.prompt_filename, &config.central.prompt_source, false),
+        (&tool.skills_dir, &config.central.skills_source, true),
+        (&tool.agents_dir, &config.central.agents_source, true),
+    ] {
+        let link_path = config_dir.join(link_sub);
+        let target = expand_tilde(target_src);
+        if matches!(linker::check_link(&link_path, &target, is_dir), LinkStatus::Linked) {
+            linked += 1;
+        }
+    }
+    match linked {
+        3 => (3, "All linked", Color::Green),
+        0 => (0, "Not linked", Color::DarkGray),
+        _ => (linked, "Partially linked", Color::Yellow),
+    }
+}
+
+fn hint_key(k: &str) -> Span<'static> {
+    Span::styled(k.to_string(), Style::default().fg(Color::Yellow))
+}
+
+fn hint_text(t: &str) -> Span<'static> {
+    Span::raw(t.to_string())
+}
+
+fn build_tool_hints(row: Option<&ToolRow>, config: &Config) -> Line<'static> {
+    let mut spans = Vec::new();
+    match row {
+        Some(ToolRow::CentralHeader) | Some(ToolRow::ToolHeader { .. }) => {
+            spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+        Some(ToolRow::CentralItem(CentralField::Config)) | Some(ToolRow::CentralItem(CentralField::Prompt)) => {
+            spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
+            spans.extend([hint_key("e"), hint_text(" edit  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+        Some(ToolRow::CentralItem(_)) => {
+            spans.extend([hint_key("␣/⏎"), hint_text(" edit path  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+        Some(ToolRow::StatusHeader { .. }) => {
+            spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
+            spans.extend([hint_key("i"), hint_text(" link  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+        Some(ToolRow::LinkItem { .. }) => {
+            spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
+            spans.extend([hint_key("i"), hint_text(" link  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+        Some(ToolRow::FileGroupHeader { tool_key, group }) => {
+            let files: &[String] = match config.tools.get(tool_key) {
+                Some(t) => match group {
+                    FileGroup::Settings => &t.settings,
+                    FileGroup::Auth => &t.auth,
+                    FileGroup::Mcp => &t.mcp,
+                },
+                None => &[],
+            };
+            if files.len() <= 1 {
+                spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
+                spans.extend([hint_key("e"), hint_text(" edit  ")]);
+            } else {
+                spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
+            }
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+        Some(ToolRow::FileItem { .. }) => {
+            spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
+            spans.extend([hint_key("e"), hint_text(" edit  ")]);
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+        None => {
+            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("q"), hint_text(" quit")]);
+        }
+    }
+    Line::from(spans)
 }
 
 // ---------------------------------------------------------------------------
@@ -704,7 +1172,7 @@ fn render(app: &mut ToolApp, frame: &mut Frame) {
     // Popup overlay
     match &mut app.popup {
         Some(PopupState::Log(ref mut popup)) => popup.render(frame, frame.area()),
-        Some(PopupState::FilePicker { .. }) => render_file_picker(app, frame, frame.area()),
+        Some(PopupState::Info { ref mut popup, .. }) => popup.render(frame, frame.area()),
         Some(PopupState::PathEditor { .. }) => render_path_editor(app, frame, frame.area()),
         None => {}
     }
@@ -757,21 +1225,11 @@ fn render_row(row: &ToolRow, is_cursor: bool, config: &Config, expanded: &HashSe
 
         ToolRow::CentralItem(field) => {
             let (label, value) = match field {
-                CentralField::Config => {
-                    ("config".to_string(), "~/.config/agm/config.toml".to_string())
-                }
-                CentralField::Prompt => {
-                    ("prompt".to_string(), contract_tilde(&expand_tilde(&config.central.prompt_source)))
-                }
-                CentralField::Skills => {
-                    ("skills".to_string(), contract_tilde(&expand_tilde(&config.central.skills_source)))
-                }
-                CentralField::Agents => {
-                    ("agents".to_string(), contract_tilde(&expand_tilde(&config.central.agents_source)))
-                }
-                CentralField::Source => {
-                    ("source".to_string(), contract_tilde(&expand_tilde(&config.central.source_dir)))
-                }
+                CentralField::Config => ("config".to_string(), "~/.config/agm/config.toml".to_string()),
+                CentralField::Prompt => ("prompt".to_string(), contract_tilde(&expand_tilde(&config.central.prompt_source))),
+                CentralField::Skills => ("skills".to_string(), contract_tilde(&expand_tilde(&config.central.skills_source))),
+                CentralField::Agents => ("agents".to_string(), contract_tilde(&expand_tilde(&config.central.agents_source))),
+                CentralField::Source => ("source".to_string(), contract_tilde(&expand_tilde(&config.central.source_dir))),
             };
             let style = if is_cursor {
                 Style::default().fg(Color::Yellow)
@@ -801,104 +1259,114 @@ fn render_row(row: &ToolRow, is_cursor: bool, config: &Config, expanded: &HashSe
             ))
         }
 
-        ToolRow::ToolItem { tool_key, field } => {
-            let tool = match config.tools.get(tool_key) {
-                Some(t) => t,
-                None => return Line::from(""),
-            };
-            let (label, value_spans) = render_tool_field(tool, field, config);
+        ToolRow::StatusHeader { tool_key } => {
+            let status_key = format!("{}:status", tool_key);
+            let arrow = if expanded.contains(&status_key) { "▼" } else { "▶" };
+            let (_, status_text, status_color) = compute_tool_status(config, tool_key);
             let mut spans = vec![
-                Span::raw(format!("{}    ", cursor_prefix)),
-                Span::styled(format!("{:<8} ", label), Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{}    {} ", cursor_prefix, arrow)),
+                Span::styled("status", Style::default().fg(Color::DarkGray)),
+                Span::raw("   "),
+                Span::styled(status_text.to_string(), Style::default().fg(status_color)),
             ];
-            spans.extend(value_spans);
             if is_cursor {
-                // Highlight the entire line
                 Line::from(spans).style(Style::default().fg(Color::Yellow))
             } else {
                 Line::from(spans)
             }
         }
-    }
-}
 
-fn render_tool_field(tool: &crate::config::ToolConfig, field: &ToolField, config: &Config) -> (String, Vec<Span<'static>>) {
-    let config_dir = expand_tilde(&tool.config_dir);
+        ToolRow::LinkItem { tool_key, field } => {
+            let tool = match config.tools.get(tool_key) {
+                Some(t) => t,
+                None => return Line::from(""),
+            };
+            let config_dir = expand_tilde(&tool.config_dir);
+            let (link_path, target, is_dir, label) = match field {
+                LinkField::Prompt => {
+                    let link = config_dir.join(&tool.prompt_filename);
+                    let target = expand_tilde(&config.central.prompt_source);
+                    (link, target, false, "prompt")
+                }
+                LinkField::Skills => {
+                    let link = config_dir.join(&tool.skills_dir);
+                    let target = expand_tilde(&config.central.skills_source);
+                    (link, target, true, "skills")
+                }
+                LinkField::Agents => {
+                    let link = config_dir.join(&tool.agents_dir);
+                    let target = expand_tilde(&config.central.agents_source);
+                    (link, target, true, "agents")
+                }
+            };
+            let status = linker::check_link(&link_path, &target, is_dir);
+            let status_spans = link_status_spans(&status, &link_path);
+            let mut spans = vec![
+                Span::raw(format!("{}      ", cursor_prefix)),
+                Span::styled(format!("{:<8} ", label), Style::default().fg(Color::DarkGray)),
+            ];
+            spans.extend(status_spans);
+            if is_cursor {
+                Line::from(spans).style(Style::default().fg(Color::Yellow))
+            } else {
+                Line::from(spans)
+            }
+        }
 
-    match field {
-        ToolField::Prompt => {
-            let link_path = config_dir.join(&tool.prompt_filename);
-            let target = expand_tilde(&config.central.prompt_source);
-            let status = linker::check_link(&link_path, &target, false);
-            let spans = link_status_spans(&status, &link_path, &target);
-            ("prompt".to_string(), spans)
-        }
-        ToolField::Skills => {
-            let link_path = config_dir.join(&tool.skills_dir);
-            let target = expand_tilde(&config.central.skills_source);
-            let status = linker::check_link(&link_path, &target, true);
-            let spans = link_status_spans(&status, &link_path, &target);
-            ("skills".to_string(), spans)
-        }
-        ToolField::Agents => {
-            let link_path = config_dir.join(&tool.agents_dir);
-            let target = expand_tilde(&config.central.agents_source);
-            let status = linker::check_link(&link_path, &target, true);
-            let spans = link_status_spans(&status, &link_path, &target);
-            ("agents".to_string(), spans)
-        }
-        ToolField::Settings => {
-            let paths: Vec<String> = tool.settings.iter()
-                .map(|s| resolve_display(tool, s))
-                .collect();
-            ("settings".to_string(), vec![Span::raw(paths.join(", "))])
-        }
-        ToolField::Auth => {
-            let paths: Vec<String> = tool.auth.iter()
-                .map(|s| resolve_display(tool, s))
-                .collect();
-            ("auth".to_string(), vec![Span::raw(paths.join(", "))])
-        }
-        ToolField::Mcp => {
-            let paths: Vec<String> = tool.mcp.iter()
-                .map(|s| resolve_display(tool, s))
-                .collect();
-            ("mcp".to_string(), vec![Span::raw(paths.join(", "))])
-        }
-    }
-}
+        ToolRow::FileGroupHeader { tool_key, group } => {
+            let tool = match config.tools.get(tool_key) {
+                Some(t) => t,
+                None => return Line::from(""),
+            };
+            let label = group_label(group);
+            let files: &[String] = match group {
+                FileGroup::Settings => &tool.settings,
+                FileGroup::Auth => &tool.auth,
+                FileGroup::Mcp => &tool.mcp,
+            };
 
-fn resolve_display(tool: &crate::config::ToolConfig, path: &str) -> String {
-    if std::path::Path::new(path).is_absolute() || path.starts_with('~') {
-        contract_tilde(&expand_tilde(path))
-    } else {
-        // Relative to config_dir
-        let full = expand_tilde(&tool.config_dir).join(path);
-        contract_tilde(&full)
-    }
-}
+            if files.len() <= 1 {
+                // Single file: inline display
+                let display = files.first()
+                    .map(|f| resolve_display(tool, f))
+                    .unwrap_or_default();
+                let style = if is_cursor { Style::default().fg(Color::Yellow) } else { Style::default() };
+                Line::from(vec![
+                    Span::raw(format!("{}    ", cursor_prefix)),
+                    Span::styled(format!("{:<8} ", label), Style::default().fg(Color::DarkGray)),
+                    Span::styled(display, style),
+                ])
+            } else {
+                // Multi file: expandable
+                let gk = format!("{}:{}", tool_key, group_key_suffix(group));
+                let arrow = if expanded.contains(&gk) { "▼" } else { "▶" };
+                let style = if is_cursor { Style::default().fg(Color::Yellow) } else { Style::default() };
+                Line::from(vec![
+                    Span::raw(format!("{}    {} ", cursor_prefix, arrow)),
+                    Span::styled(label.to_string(), style),
+                ])
+            }
+        }
 
-fn link_status_spans(status: &LinkStatus, link_path: &std::path::Path, target: &std::path::Path) -> Vec<Span<'static>> {
-    match status {
-        LinkStatus::Linked => vec![
-            Span::styled("✓ linked", Style::default().fg(Color::Green)),
-            Span::raw(format!(" → {}", contract_tilde(target))),
-        ],
-        LinkStatus::Missing => vec![
-            Span::styled("✗ not linked", Style::default().fg(Color::Yellow)),
-        ],
-        LinkStatus::Broken => vec![
-            Span::styled("✗ broken", Style::default().fg(Color::Red)),
-            Span::raw(format!(" → {}", contract_tilde(link_path))),
-        ],
-        LinkStatus::Wrong(actual) => vec![
-            Span::styled("✗ wrong target", Style::default().fg(Color::Red)),
-            Span::raw(format!(" → {}", actual)),
-        ],
-        LinkStatus::Blocked => vec![
-            Span::styled("⚠ blocked", Style::default().fg(Color::Red)),
-            Span::raw(" (exists, not a link)"),
-        ],
+        ToolRow::FileItem { tool_key, group, index } => {
+            let tool = match config.tools.get(tool_key) {
+                Some(t) => t,
+                None => return Line::from(""),
+            };
+            let files: &[String] = match group {
+                FileGroup::Settings => &tool.settings,
+                FileGroup::Auth => &tool.auth,
+                FileGroup::Mcp => &tool.mcp,
+            };
+            let display = files.get(*index)
+                .map(|f| resolve_display(tool, f))
+                .unwrap_or_default();
+            let style = if is_cursor { Style::default().fg(Color::Yellow) } else { Style::default() };
+            Line::from(vec![
+                Span::raw(format!("{}      ", cursor_prefix)),
+                Span::styled(display, style),
+            ])
+        }
     }
 }
 
@@ -909,22 +1377,7 @@ fn render_footer(app: &ToolApp, frame: &mut Frame, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let hints = Line::from(vec![
-        Span::styled("␣", Style::default().fg(Color::Yellow)),
-        Span::raw("/"),
-        Span::styled("⏎", Style::default().fg(Color::Yellow)),
-        Span::raw(" toggle  "),
-        Span::styled("e", Style::default().fg(Color::Yellow)),
-        Span::raw(" edit  "),
-        Span::styled("0", Style::default().fg(Color::Yellow)),
-        Span::raw("/"),
-        Span::styled("9", Style::default().fg(Color::Yellow)),
-        Span::raw(" fold/unfold  "),
-        Span::styled("l", Style::default().fg(Color::Yellow)),
-        Span::raw(" log  "),
-        Span::styled("q", Style::default().fg(Color::Yellow)),
-        Span::raw(" quit"),
-    ]);
+    let hints = build_tool_hints(app.current_row(), &app.config);
 
     let status_line = if let Some((ref msg, _)) = app.status_message {
         Line::from(Span::styled(msg.clone(), Style::default().fg(Color::Green)))
@@ -946,34 +1399,6 @@ fn render_footer(app: &ToolApp, frame: &mut Frame, area: Rect) {
     }
 }
 
-fn render_file_picker(app: &ToolApp, frame: &mut Frame, area: Rect) {
-    if let Some(PopupState::FilePicker { ref title, ref files, cursor }) = app.popup {
-        let popup_area = super::dialog_area(area, files.len() as u16);
-        frame.render_widget(Clear, popup_area);
-        let block = Block::default()
-            .title(format!(" {} ", title))
-            .title_bottom(" ⏎:select  Esc:cancel ")
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan));
-        let inner = block.inner(popup_area);
-        frame.render_widget(block, popup_area);
-
-        let lines: Vec<Line> = files.iter().enumerate().map(|(i, (display, _, exists))| {
-            let prefix = if i == cursor { "▸ " } else { "  " };
-            let style = if !exists {
-                Style::default().fg(Color::DarkGray)
-            } else if i == cursor {
-                Style::default().fg(Color::Yellow)
-            } else {
-                Style::default().fg(Color::White)
-            };
-            let warning = if !exists { " ⚠ not found" } else { "" };
-            Line::from(Span::styled(format!("{}{}{}", prefix, display, warning), style))
-        }).collect();
-        frame.render_widget(Paragraph::new(lines), inner);
-    }
-}
-
 fn render_path_editor(app: &ToolApp, frame: &mut Frame, area: Rect) {
     if let Some(PopupState::PathEditor { ref field, ref value, cursor_pos }) = app.popup {
         let popup_area = super::dialog_area(area, 3);
@@ -992,7 +1417,6 @@ fn render_path_editor(app: &ToolApp, frame: &mut Frame, area: Rect) {
         let inner = block.inner(popup_area);
         frame.render_widget(block, popup_area);
 
-        // Render value with cursor
         let mut spans = Vec::new();
         for (i, ch) in value.chars().enumerate() {
             if i == cursor_pos {
@@ -1010,6 +1434,10 @@ fn render_path_editor(app: &ToolApp, frame: &mut Frame, area: Rect) {
         frame.render_widget(Paragraph::new(Line::from(spans)), inner);
     }
 }
+
+// ---------------------------------------------------------------------------
+// Entry point
+// ---------------------------------------------------------------------------
 
 /// Entry point for the tool TUI.
 pub fn run(config_path: Option<PathBuf>) -> Result<()> {
@@ -1044,7 +1472,7 @@ pub fn run(config_path: Option<PathBuf>) -> Result<()> {
             }
         }
 
-        // Process pending editor from file picker
+        // Process pending editor from popup
         if let Some(path) = app.pending_editor_path.take() {
             app.open_in_editor(&mut terminal, &[path]);
         }
@@ -1058,6 +1486,10 @@ pub fn run(config_path: Option<PathBuf>) -> Result<()> {
     stdout().execute(LeaveAlternateScreen)?;
     Ok(())
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -1106,7 +1538,6 @@ mod tests {
         let expanded = HashSet::new();
         let rows = build_rows(&config, &expanded);
 
-        // Should have 1 central header + 2 tool headers
         assert_eq!(rows.len(), 3);
         assert!(matches!(rows[0], ToolRow::CentralHeader));
         assert!(matches!(rows[1], ToolRow::ToolHeader { ref key, .. } if key == "claude"));
@@ -1122,7 +1553,6 @@ mod tests {
         expanded.insert("central".to_string());
         let rows = build_rows(&config, &expanded);
 
-        // Should have central header + 5 central items + 1 tool header
         assert_eq!(rows.len(), 7);
         assert!(matches!(rows[0], ToolRow::CentralHeader));
         assert!(matches!(rows[1], ToolRow::CentralItem(CentralField::Config)));
@@ -1138,7 +1568,7 @@ mod tests {
         let _tmp = TempDir::new().unwrap();
         let tool_dir = _tmp.path().join("claude");
         std::fs::create_dir_all(&tool_dir).unwrap();
-        
+
         let config = test_config_with_tools(vec![
             ("claude", test_tool_config("Claude Code", &tool_dir.to_string_lossy(), true)),
         ]);
@@ -1146,16 +1576,42 @@ mod tests {
         expanded.insert("claude".to_string());
         let rows = build_rows(&config, &expanded);
 
-        // Should have central header + tool header + 6 tool items (Prompt, Skills, Agents, Settings, Auth, Mcp)
-        assert_eq!(rows.len(), 8);
+        // CentralHeader + ToolHeader + StatusHeader + 3 FileGroupHeaders (settings, auth, mcp single-file)
+        // StatusHeader is collapsed so no LinkItems
+        assert_eq!(rows.len(), 6);
         assert!(matches!(rows[0], ToolRow::CentralHeader));
         assert!(matches!(rows[1], ToolRow::ToolHeader { ref key, installed: true, .. } if key == "claude"));
-        assert!(matches!(rows[2], ToolRow::ToolItem { ref field, .. } if *field == ToolField::Prompt));
-        assert!(matches!(rows[3], ToolRow::ToolItem { ref field, .. } if *field == ToolField::Skills));
-        assert!(matches!(rows[4], ToolRow::ToolItem { ref field, .. } if *field == ToolField::Agents));
-        assert!(matches!(rows[5], ToolRow::ToolItem { ref field, .. } if *field == ToolField::Settings));
-        assert!(matches!(rows[6], ToolRow::ToolItem { ref field, .. } if *field == ToolField::Auth));
-        assert!(matches!(rows[7], ToolRow::ToolItem { ref field, .. } if *field == ToolField::Mcp));
+        assert!(matches!(rows[2], ToolRow::StatusHeader { ref tool_key } if tool_key == "claude"));
+        assert!(matches!(rows[3], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Settings));
+        assert!(matches!(rows[4], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Auth));
+        assert!(matches!(rows[5], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Mcp));
+    }
+
+    #[test]
+    fn test_build_rows_tool_with_status_expanded() {
+        let _tmp = TempDir::new().unwrap();
+        let tool_dir = _tmp.path().join("claude");
+        std::fs::create_dir_all(&tool_dir).unwrap();
+
+        let config = test_config_with_tools(vec![
+            ("claude", test_tool_config("Claude Code", &tool_dir.to_string_lossy(), true)),
+        ]);
+        let mut expanded = HashSet::new();
+        expanded.insert("claude".to_string());
+        expanded.insert("claude:status".to_string());
+        let rows = build_rows(&config, &expanded);
+
+        // CentralHeader + ToolHeader + StatusHeader + 3 LinkItems + Settings + Auth + Mcp
+        assert_eq!(rows.len(), 9);
+        assert!(matches!(rows[0], ToolRow::CentralHeader));
+        assert!(matches!(rows[1], ToolRow::ToolHeader { .. }));
+        assert!(matches!(rows[2], ToolRow::StatusHeader { .. }));
+        assert!(matches!(rows[3], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Prompt));
+        assert!(matches!(rows[4], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Skills));
+        assert!(matches!(rows[5], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Agents));
+        assert!(matches!(rows[6], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Settings));
+        assert!(matches!(rows[7], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Auth));
+        assert!(matches!(rows[8], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Mcp));
     }
 
     #[test]
@@ -1163,27 +1619,27 @@ mod tests {
         let _tmp = TempDir::new().unwrap();
         let tool_dir = _tmp.path().join("minimal");
         std::fs::create_dir_all(&tool_dir).unwrap();
-        
+
         let config = test_config_with_tools(vec![
             ("minimal", test_tool_config("Minimal Tool", &tool_dir.to_string_lossy(), false)),
         ]);
         let mut expanded = HashSet::new();
         expanded.insert("minimal".to_string());
+        expanded.insert("minimal:status".to_string());
         let rows = build_rows(&config, &expanded);
 
-        // Should have central header + tool header + 3 tool items (only Prompt, Skills, Agents)
-        assert_eq!(rows.len(), 5);
+        // CentralHeader + ToolHeader + StatusHeader + 3 LinkItems (no file groups since empty)
+        assert_eq!(rows.len(), 6);
         assert!(matches!(rows[0], ToolRow::CentralHeader));
         assert!(matches!(rows[1], ToolRow::ToolHeader { ref key, .. } if key == "minimal"));
-        assert!(matches!(rows[2], ToolRow::ToolItem { ref field, .. } if *field == ToolField::Prompt));
-        assert!(matches!(rows[3], ToolRow::ToolItem { ref field, .. } if *field == ToolField::Skills));
-        assert!(matches!(rows[4], ToolRow::ToolItem { ref field, .. } if *field == ToolField::Agents));
+        assert!(matches!(rows[2], ToolRow::StatusHeader { .. }));
+        assert!(matches!(rows[3], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Prompt));
+        assert!(matches!(rows[4], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Skills));
+        assert!(matches!(rows[5], ToolRow::LinkItem { ref field, .. } if *field == LinkField::Agents));
 
-        // Verify no Settings/Auth/Mcp items
+        // No FileGroupHeader rows
         for row in &rows {
-            if let ToolRow::ToolItem { field, .. } = row {
-                assert!(!matches!(field, ToolField::Settings | ToolField::Auth | ToolField::Mcp));
-            }
+            assert!(!matches!(row, ToolRow::FileGroupHeader { .. }));
         }
     }
 
@@ -1196,10 +1652,41 @@ mod tests {
         let expanded = HashSet::new();
         let rows = build_rows(&config, &expanded);
 
-        // Should have central header + alpha tool header + zed tool header (alphabetical order)
         assert_eq!(rows.len(), 3);
         assert!(matches!(rows[0], ToolRow::CentralHeader));
         assert!(matches!(rows[1], ToolRow::ToolHeader { ref key, .. } if key == "alpha"));
         assert!(matches!(rows[2], ToolRow::ToolHeader { ref key, .. } if key == "zed"));
+    }
+
+    #[test]
+    fn test_build_rows_multi_file_expansion() {
+        let _tmp = TempDir::new().unwrap();
+        let tool_dir = _tmp.path().join("claude");
+        std::fs::create_dir_all(&tool_dir).unwrap();
+
+        let tool = ToolConfig {
+            name: "Claude".to_string(),
+            config_dir: tool_dir.to_string_lossy().to_string(),
+            settings: vec!["a.json".to_string(), "b.json".to_string(), "c.json".to_string()],
+            auth: vec!["cred.json".to_string()],
+            prompt_filename: "PROMPT.md".to_string(),
+            skills_dir: "skills".to_string(),
+            agents_dir: "agents".to_string(),
+            mcp: vec!["mcp.json".to_string()],
+        };
+        let config = test_config_with_tools(vec![("claude", tool)]);
+        let mut expanded = HashSet::new();
+        expanded.insert("claude".to_string());
+        expanded.insert("claude:settings".to_string());
+        let rows = build_rows(&config, &expanded);
+
+        // CentralHeader + ToolHeader + StatusHeader + FileGroupHeader(settings) + 3 FileItems + FileGroupHeader(auth) + FileGroupHeader(mcp)
+        assert_eq!(rows.len(), 9);
+        assert!(matches!(rows[3], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Settings));
+        assert!(matches!(rows[4], ToolRow::FileItem { ref group, index: 0, .. } if *group == FileGroup::Settings));
+        assert!(matches!(rows[5], ToolRow::FileItem { ref group, index: 1, .. } if *group == FileGroup::Settings));
+        assert!(matches!(rows[6], ToolRow::FileItem { ref group, index: 2, .. } if *group == FileGroup::Settings));
+        assert!(matches!(rows[7], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Auth));
+        assert!(matches!(rows[8], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Mcp));
     }
 }
