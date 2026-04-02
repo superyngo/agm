@@ -33,6 +33,14 @@ pub struct AgentInfo {
     pub install_status: SkillInstallStatus,
 }
 
+/// Full info about a single command (.md file in commands/ folder)
+#[derive(Debug, Clone)]
+pub struct CommandInfo {
+    pub name: String,
+    pub source_path: PathBuf,
+    pub install_status: SkillInstallStatus,
+}
+
 /// What kind of source this is
 #[derive(Debug, Clone)]
 pub enum SourceKind {
@@ -52,6 +60,7 @@ pub struct SourceGroup {
     pub path: PathBuf,
     pub skills: Vec<SkillInfo>,
     pub agents: Vec<AgentInfo>,
+    pub commands: Vec<CommandInfo>,
 }
 
 /// Progress report from update_all_with_progress
@@ -70,6 +79,7 @@ pub enum UpdateProgress {
         updated: usize,
         new_skills: usize,
         new_agents: usize,
+        new_commands: usize,
     },
 }
 
@@ -117,6 +127,31 @@ pub fn scan_agents(path: &Path) -> Vec<(String, PathBuf)> {
     }
     agents.sort_by(|a, b| a.0.cmp(&b.0));
     agents
+}
+
+pub fn scan_commands(path: &Path) -> Vec<(String, PathBuf)> {
+    let commands_dir = path.join("commands");
+    if !commands_dir.is_dir() {
+        return vec![];
+    }
+    let mut commands = Vec::new();
+    let Ok(entries) = fs::read_dir(&commands_dir) else {
+        return commands;
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_file() {
+            if let Some(ext) = p.extension() {
+                if ext == "md" {
+                    if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                        commands.push((stem.to_string(), p));
+                    }
+                }
+            }
+        }
+    }
+    commands.sort_by(|a, b| a.0.cmp(&b.0));
+    commands
 }
 
 fn scan_skills_recursive(
@@ -215,10 +250,46 @@ pub fn install_agent(name: &str, source_path: &Path, agents_dir: &Path) -> anyho
     Ok(())
 }
 
+/// Install a single command by symlinking its .md file into the central commands directory.
+pub fn install_command(name: &str, source_path: &Path, commands_dir: &Path) -> anyhow::Result<()> {
+    fs::create_dir_all(commands_dir)?;
+    let link_name = format!("{}.md", name);
+    let link_path = commands_dir.join(&link_name);
+
+    if link_path.exists() || link_path.symlink_metadata().is_ok() {
+        if let Ok(target) = fs::read_link(&link_path) {
+            let target_canon = fs::canonicalize(&target).unwrap_or(target);
+            let source_canon = fs::canonicalize(source_path).unwrap_or(source_path.to_path_buf());
+            if target_canon == source_canon {
+                return Ok(());
+            }
+        }
+        anyhow::bail!(
+            "Command '{}' already exists (installed from another source). Uninstall it first.",
+            name
+        );
+    }
+
+    platform::link_file(source_path, &link_path)
+        .with_context(|| format!("Failed to install command: {}", name))?;
+    Ok(())
+}
+
 /// Uninstall a single agent by removing its symlink from the central agents directory.
 pub fn uninstall_agent(name: &str, agents_dir: &Path) -> anyhow::Result<()> {
     let link_name = format!("{}.md", name);
     let link_path = agents_dir.join(&link_name);
+    if link_path.symlink_metadata().is_err() {
+        return Ok(());
+    }
+    platform::remove_link(&link_path)?;
+    Ok(())
+}
+
+/// Uninstall a single command by removing its symlink from the central commands directory.
+pub fn uninstall_command(name: &str, commands_dir: &Path) -> anyhow::Result<()> {
+    let link_name = format!("{}.md", name);
+    let link_path = commands_dir.join(&link_name);
     if link_path.symlink_metadata().is_err() {
         return Ok(());
     }
@@ -280,6 +351,32 @@ pub fn prune_broken_agents(agents_dir: &Path) -> anyhow::Result<usize> {
     Ok(removed)
 }
 
+/// Scan central commands directory and remove any symlinks whose targets no longer exist.
+pub fn prune_broken_commands(commands_dir: &Path) -> anyhow::Result<usize> {
+    if !commands_dir.is_dir() {
+        return Ok(0);
+    }
+
+    let mut removed = 0;
+    for entry in fs::read_dir(commands_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("md")
+            && path.symlink_metadata().is_ok()
+            && !path.exists()
+        {
+            let name = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("<unknown>");
+            platform::remove_link(&path)?;
+            println!("  {} {} (broken command link removed)", "warn".yellow(), name);
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
 /// Check the install status of an agent by examining the central agents directory.
 fn check_agent_install_status(
     name: &str,
@@ -300,6 +397,27 @@ fn check_agent_install_status(
     }
     SkillInstallStatus::Conflict
 }
+
+fn check_command_install_status(
+    name: &str,
+    source_path: &Path,
+    commands_dir: &Path,
+) -> SkillInstallStatus {
+    let link_name = format!("{}.md", name);
+    let link_path = commands_dir.join(&link_name);
+    if link_path.symlink_metadata().is_err() {
+        return SkillInstallStatus::NotInstalled;
+    }
+    if let Ok(target) = fs::read_link(&link_path) {
+        let target_canon = fs::canonicalize(&target).unwrap_or(target);
+        let source_canon = fs::canonicalize(source_path).unwrap_or(source_path.to_path_buf());
+        if target_canon == source_canon {
+            return SkillInstallStatus::Installed;
+        }
+    }
+    SkillInstallStatus::Conflict
+}
+
 pub fn is_url(source: &str) -> bool {
     source.starts_with("http://") || source.starts_with("https://") || source.starts_with("git@")
 }
@@ -453,6 +571,7 @@ pub fn update_all(skills_dir: &Path, agents_dir: &Path, source_dir: &Path) -> an
 pub fn update_all_with_progress<F>(
     skills_dir: &Path,
     agents_dir: &Path,
+    commands_dir: &Path,
     source_dir: &Path,
     mut on_progress: F,
 ) where
@@ -479,6 +598,7 @@ pub fn update_all_with_progress<F>(
     let mut updated = 0;
     let mut new_skills_total = 0;
     let mut new_agents_total = 0;
+    let mut new_commands_total = 0;
 
     if total == 0 {
         on_progress(UpdateProgress::AllDone {
@@ -486,6 +606,7 @@ pub fn update_all_with_progress<F>(
             updated: 0,
             new_skills: 0,
             new_agents: 0,
+            new_commands: 0,
         });
         return;
     }
@@ -545,6 +666,7 @@ pub fn update_all_with_progress<F>(
     // Prune broken links (silently — TUI will show in log if needed)
     let _ = prune_broken_skills(skills_dir);
     let _ = prune_broken_agents(agents_dir);
+    let _ = prune_broken_commands(commands_dir);
 
     // Re-sync new skills/agents
     for git_root in &git_roots {
@@ -568,6 +690,17 @@ pub fn update_all_with_progress<F>(
                 new_agents_total += 1;
             }
         }
+
+        let new_cmds = scan_commands(git_root);
+        for (name, cmd_path) in new_cmds {
+            let link_name = format!("{}.md", name);
+            let link_path = commands_dir.join(&link_name);
+            if link_path.symlink_metadata().is_err()
+                && install_command(&name, &cmd_path, commands_dir).is_ok()
+            {
+                new_commands_total += 1;
+            }
+        }
     }
 
     on_progress(UpdateProgress::AllDone {
@@ -575,6 +708,7 @@ pub fn update_all_with_progress<F>(
         updated,
         new_skills: new_skills_total,
         new_agents: new_agents_total,
+        new_commands: new_commands_total,
     });
 }
 
@@ -625,6 +759,7 @@ pub fn scan_all_sources(
     source_dir: &Path,
     skills_dir: &Path,
     agents_dir: &Path,
+    commands_dir: &Path,
     source_repos: &[String],
 ) -> Vec<SourceGroup> {
     if !source_dir.is_dir() {
@@ -675,12 +810,21 @@ pub fn scan_all_sources(
                             source_path: sp,
                         })
                         .collect();
+                    let commands = scan_commands(&sub_path)
+                        .into_iter()
+                        .map(|(name, sp)| CommandInfo {
+                            install_status: check_command_install_status(&name, &sp, commands_dir),
+                            name,
+                            source_path: sp,
+                        })
+                        .collect();
                     groups.push(SourceGroup {
                         name: sub_name,
                         kind: SourceKind::Local,
                         path: sub_path,
                         skills,
                         agents,
+                        commands,
                     });
                 }
             }
@@ -711,12 +855,21 @@ pub fn scan_all_sources(
                             source_path: sp,
                         })
                         .collect();
+                    let commands = scan_commands(&sub_path)
+                        .into_iter()
+                        .map(|(name, sp)| CommandInfo {
+                            install_status: check_command_install_status(&name, &sp, commands_dir),
+                            name,
+                            source_path: sp,
+                        })
+                        .collect();
                     groups.push(SourceGroup {
                         name: format!("agm_tools/{}", tool_name),
                         kind: SourceKind::Migrated { tool: tool_name },
                         path: sub_path,
                         skills,
                         agents,
+                        commands,
                     });
                 }
             }
@@ -738,12 +891,21 @@ pub fn scan_all_sources(
                     source_path: sp,
                 })
                 .collect();
+            let commands = scan_commands(&path)
+                .into_iter()
+                .map(|(name, sp)| CommandInfo {
+                    install_status: check_command_install_status(&name, &sp, commands_dir),
+                    name,
+                    source_path: sp,
+                })
+                .collect();
             groups.push(SourceGroup {
                 name: dir_name,
                 kind: SourceKind::Repo { url },
                 path,
                 skills,
                 agents,
+                commands,
             });
         }
     }
@@ -865,6 +1027,7 @@ pub fn delete_source(
     group: &SourceGroup,
     skills_dir: &Path,
     agents_dir: &Path,
+    commands_dir: &Path,
 ) -> anyhow::Result<()> {
     // Remove all central symlinks for this source's skills
     for skill in &group.skills {
@@ -877,6 +1040,13 @@ pub fn delete_source(
     for agent in &group.agents {
         if agent.install_status == SkillInstallStatus::Installed {
             uninstall_agent(&agent.name, agents_dir)?;
+        }
+    }
+
+    // Remove all central symlinks for this source's commands
+    for command in &group.commands {
+        if command.install_status == SkillInstallStatus::Installed {
+            uninstall_command(&command.name, commands_dir)?;
         }
     }
 
@@ -1443,9 +1613,10 @@ mod tests {
                 },
             ],
             agents: vec![],
+            commands: vec![],
         };
 
-        delete_source(&group, &skills_dir, &dir.path().join("agents")).unwrap();
+        delete_source(&group, &skills_dir, &dir.path().join("agents"), &dir.path().join("commands")).unwrap();
 
         // Central links removed
         assert!(!skills_dir.join("skill-a").exists());
