@@ -213,38 +213,30 @@ impl App {
             return;
         }
         let query = &self.search_query;
-        let mut matching_groups_skills = HashSet::new();
-        let mut matching_groups_agents = HashSet::new();
-        let mut visible_items = Vec::new();
 
-        // Find matching items
-        for (i, row) in self.rows.iter().enumerate() {
-            match row {
-                ListRow::SkillItem {
-                    group_index,
-                    skill_index,
-                } => {
-                    let skill = &self.groups[*group_index].skills[*skill_index];
-                    if self.matcher.fuzzy_match(&skill.name, query).is_some() {
-                        matching_groups_skills.insert(*group_index);
-                        visible_items.push(i);
-                    }
+        // Phase 1: Determine matching groups from self.groups directly
+        // (decoupled from expansion state of rows)
+        let mut matching_groups_skills: HashSet<usize> = HashSet::new();
+        let mut matching_groups_agents: HashSet<usize> = HashSet::new();
+        let mut matching_skills: HashSet<(usize, usize)> = HashSet::new();
+        let mut matching_agents: HashSet<(usize, usize)> = HashSet::new();
+
+        for (gi, group) in self.groups.iter().enumerate() {
+            for (si, skill) in group.skills.iter().enumerate() {
+                if self.matcher.fuzzy_match(&skill.name, query).is_some() {
+                    matching_groups_skills.insert(gi);
+                    matching_skills.insert((gi, si));
                 }
-                ListRow::AgentItem {
-                    group_index,
-                    agent_index,
-                } => {
-                    let agent = &self.groups[*group_index].agents[*agent_index];
-                    if self.matcher.fuzzy_match(&agent.name, query).is_some() {
-                        matching_groups_agents.insert(*group_index);
-                        visible_items.push(i);
-                    }
+            }
+            for (ai, agent) in group.agents.iter().enumerate() {
+                if self.matcher.fuzzy_match(&agent.name, query).is_some() {
+                    matching_groups_agents.insert(gi);
+                    matching_agents.insert((gi, ai));
                 }
-                _ => {}
             }
         }
 
-        // Build filtered list: include headers for matching groups
+        // Phase 2: Build filtered row indices from self.rows
         let mut result = Vec::new();
         for (i, row) in self.rows.iter().enumerate() {
             match row {
@@ -257,10 +249,7 @@ impl App {
                         result.push(i);
                     }
                 }
-                ListRow::SourceHeader {
-                    category,
-                    group_index,
-                } => {
+                ListRow::SourceHeader { category, group_index } => {
                     let is_match = match category {
                         Category::Skills => matching_groups_skills.contains(group_index),
                         Category::Agents => matching_groups_agents.contains(group_index),
@@ -269,8 +258,13 @@ impl App {
                         result.push(i);
                     }
                 }
-                ListRow::SkillItem { .. } | ListRow::AgentItem { .. } => {
-                    if visible_items.contains(&i) {
+                ListRow::SkillItem { group_index, skill_index } => {
+                    if matching_skills.contains(&(*group_index, *skill_index)) {
+                        result.push(i);
+                    }
+                }
+                ListRow::AgentItem { group_index, agent_index } => {
+                    if matching_agents.contains(&(*group_index, *agent_index)) {
                         result.push(i);
                     }
                 }
