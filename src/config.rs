@@ -19,6 +19,8 @@ pub struct CentralConfig {
     pub skills_source: String,
     #[serde(default = "CentralConfig::default_agents_source")]
     pub agents_source: String,
+    #[serde(default = "CentralConfig::default_commands_source")]
+    pub commands_source: String,
     pub source_dir: String,
     #[serde(default)]
     pub source_repos: Vec<String>,
@@ -27,6 +29,10 @@ pub struct CentralConfig {
 impl CentralConfig {
     fn default_agents_source() -> String {
         "~/.local/share/agm/agents".into()
+    }
+
+    fn default_commands_source() -> String {
+        "~/.local/share/agm/commands".into()
     }
 }
 
@@ -44,6 +50,8 @@ pub struct ToolConfig {
     pub skills_dir: String,
     #[serde(default)]
     pub agents_dir: String,
+    #[serde(default)]
+    pub commands_dir: String,
     #[serde(default)]
     pub mcp: Vec<String>,
 }
@@ -98,6 +106,7 @@ impl Config {
                 prompt_filename: "CLAUDE.md".into(),
                 skills_dir: "skills".into(),
                 agents_dir: "agents".into(),
+                commands_dir: "commands".into(),
                 mcp: vec!["settings.json".into()],
             },
         );
@@ -111,6 +120,7 @@ impl Config {
                 prompt_filename: "AGENTS.md".into(),
                 skills_dir: "skills".into(),
                 agents_dir: "agents".into(),
+                commands_dir: "commands".into(),
                 mcp: vec!["config.toml".into()],
             },
         );
@@ -124,6 +134,7 @@ impl Config {
                 prompt_filename: "AGENTS.md".into(),
                 skills_dir: "skills".into(),
                 agents_dir: "agents".into(),
+                commands_dir: "commands".into(),
                 mcp: vec!["mcp-config.json".into()],
             },
         );
@@ -137,6 +148,7 @@ impl Config {
                 prompt_filename: "AGENTS.md".into(),
                 skills_dir: "skills".into(),
                 agents_dir: "agents".into(),
+                commands_dir: "commands".into(),
                 mcp: vec!["crush.json".into()],
             },
         );
@@ -154,6 +166,7 @@ impl Config {
                 prompt_filename: "GEMINI.md".into(),
                 skills_dir: "skills".into(),
                 agents_dir: "agents".into(),
+                commands_dir: "commands".into(),
                 mcp: vec!["settings.json".into()],
             },
         );
@@ -167,6 +180,7 @@ impl Config {
                 prompt_filename: "AGENTS.md".into(),
                 skills_dir: "skills".into(),
                 agents_dir: "agents".into(),
+                commands_dir: "commands".into(),
                 mcp: vec!["opencode.json".into()],
             },
         );
@@ -180,6 +194,7 @@ impl Config {
                 prompt_filename: "AGENTS.md".into(),
                 skills_dir: "skills".into(),
                 agents_dir: "agents".into(),
+                commands_dir: "commands".into(),
                 mcp: vec![],
             },
         );
@@ -190,6 +205,7 @@ impl Config {
                 prompt_source: "~/.local/share/agm/prompts/MASTER.md".into(),
                 skills_source: "~/.local/share/agm/skills".into(),
                 agents_source: "~/.local/share/agm/agents".into(),
+                commands_source: "~/.local/share/agm/commands".into(),
                 source_dir: "~/.local/share/agm/source".into(),
                 source_repos: vec![],
             },
@@ -271,6 +287,7 @@ mod tests {
         );
         assert_eq!(config.central.skills_source, "~/.local/share/agm/skills");
         assert_eq!(config.central.agents_source, "~/.local/share/agm/agents");
+        assert_eq!(config.central.commands_source, "~/.local/share/agm/commands");
         assert_eq!(config.central.source_dir, "~/.local/share/agm/source");
         assert!(config.central.source_repos.is_empty());
     }
@@ -285,6 +302,7 @@ mod tests {
             prompt_filename: "TEST.md".into(),
             skills_dir: "skills".into(),
             agents_dir: "agents".into(),
+            commands_dir: "commands".into(),
             mcp: vec![],
         };
         let home = dirs::home_dir().unwrap();
@@ -301,6 +319,7 @@ mod tests {
             prompt_filename: "".into(),
             skills_dir: "".into(),
             agents_dir: "".into(),
+            commands_dir: "".into(),
             mcp: vec![],
         };
         let home = dirs::home_dir().unwrap();
@@ -320,6 +339,7 @@ mod tests {
             prompt_filename: "".into(),
             skills_dir: "".into(),
             agents_dir: "".into(),
+            commands_dir: "".into(),
             mcp: vec![],
         };
         let home = dirs::home_dir().unwrap();
@@ -339,6 +359,7 @@ mod tests {
             prompt_filename: "".into(),
             skills_dir: "".into(),
             agents_dir: "".into(),
+            commands_dir: "".into(),
             mcp: vec![],
         };
         assert_eq!(
@@ -357,6 +378,7 @@ mod tests {
             prompt_filename: "".into(),
             skills_dir: "".into(),
             agents_dir: "".into(),
+            commands_dir: "".into(),
             mcp: vec![],
         };
         std::env::set_var("AGM_TEST_RESOLVE", "/tmp/agm_resolve");

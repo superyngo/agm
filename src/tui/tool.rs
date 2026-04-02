@@ -2137,6 +2137,7 @@ mod tests {
                 prompt_source: "~/.local/share/agm/prompts/MASTER.md".to_string(),
                 skills_source: "~/.local/share/agm/skills".to_string(),
                 agents_source: "~/.local/share/agm/agents".to_string(),
+                commands_source: "~/.local/share/agm/commands".to_string(),
                 source_dir: "~/.local/share/agm/source".to_string(),
                 source_repos: vec![],
             },
@@ -2161,6 +2162,7 @@ mod tests {
             prompt_filename: "PROMPT.md".to_string(),
             skills_dir: "skills".to_string(),
             agents_dir: "agents".to_string(),
+            commands_dir: "commands".to_string(),
             mcp: if with_optional {
                 vec!["mcp.json".to_string()]
             } else {
@@ -2373,6 +2375,7 @@ mod tests {
             prompt_filename: "PROMPT.md".to_string(),
             skills_dir: "skills".to_string(),
             agents_dir: "agents".to_string(),
+            commands_dir: "commands".to_string(),
             mcp: vec!["mcp.json".to_string()],
         };
         let config = test_config_with_tools(vec![("claude", tool)]);
