@@ -1732,8 +1732,8 @@ mod tests {
         assert!(store.join("reviewer.md").exists());
         // Non-md file not migrated (lost with dir removal — intentional)
         // Links in central (file links)
-        assert!(fs::read_link(central.join("helper.md")).is_ok());
-        assert!(fs::read_link(central.join("reviewer.md")).is_ok());
+        assert!(platform::same_file(&central.join("helper.md"), &store.join("helper.md")).unwrap());
+        assert!(platform::same_file(&central.join("reviewer.md"), &store.join("reviewer.md")).unwrap());
     }
 
     #[test]
@@ -1754,7 +1754,7 @@ mod tests {
 
         assert_eq!(count, 1);
         assert!(store.join("mytool_shared.md").exists());
-        assert!(fs::read_link(central.join("mytool_shared.md")).is_ok());
+        assert!(platform::same_file(&central.join("mytool_shared.md"), &store.join("mytool_shared.md")).unwrap());
         // Original preserved
         assert_eq!(
             fs::read_to_string(central.join("shared.md")).unwrap(),
