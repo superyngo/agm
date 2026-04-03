@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Fix Windows CI: use `platform::same_file` for idempotency check in install_command/install_agent
+- Gate `test_prune_broken_commands` with `#[cfg(unix)]` (hard links can't become broken)
+
 ## [v0.7.2] - 2026-04-03
 
 ### Added

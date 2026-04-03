@@ -231,13 +231,8 @@ pub fn install_agent(name: &str, source_path: &Path, agents_dir: &Path) -> anyho
     let link_path = agents_dir.join(&link_name);
 
     if link_path.exists() || link_path.symlink_metadata().is_ok() {
-        // Check if it already points to same source
-        if let Ok(target) = fs::read_link(&link_path) {
-            let target_canon = fs::canonicalize(&target).unwrap_or(target);
-            let source_canon = fs::canonicalize(source_path).unwrap_or(source_path.to_path_buf());
-            if target_canon == source_canon {
-                return Ok(());
-            }
+        if platform::same_file(&link_path, source_path).unwrap_or(false) {
+            return Ok(());
         }
         anyhow::bail!(
             "Agent '{}' already exists (installed from another source). Uninstall it first.",
@@ -257,12 +252,8 @@ pub fn install_command(name: &str, source_path: &Path, commands_dir: &Path) -> a
     let link_path = commands_dir.join(&link_name);
 
     if link_path.exists() || link_path.symlink_metadata().is_ok() {
-        if let Ok(target) = fs::read_link(&link_path) {
-            let target_canon = fs::canonicalize(&target).unwrap_or(target);
-            let source_canon = fs::canonicalize(source_path).unwrap_or(source_path.to_path_buf());
-            if target_canon == source_canon {
-                return Ok(());
-            }
+        if platform::same_file(&link_path, source_path).unwrap_or(false) {
+            return Ok(());
         }
         anyhow::bail!(
             "Command '{}' already exists (installed from another source). Uninstall it first.",
@@ -2287,6 +2278,7 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn test_prune_broken_commands() {
         let tmp = tempfile::tempdir().unwrap();
