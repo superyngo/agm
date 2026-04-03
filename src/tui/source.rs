@@ -539,7 +539,12 @@ impl App {
 
     fn execute_delete(&mut self, group_index: usize) {
         let group = self.groups[group_index].clone();
-        match skills::delete_source(&group, &self.skills_dir, &self.agents_dir, &self.commands_dir) {
+        match skills::delete_source(
+            &group,
+            &self.skills_dir,
+            &self.agents_dir,
+            &self.commands_dir,
+        ) {
             Ok(()) => {
                 if let SourceKind::Repo { url: Some(ref url) } = group.kind {
                     self.config.remove_source_repo(url);
@@ -862,7 +867,11 @@ impl App {
         lines
     }
 
-    fn build_command_info_lines(&self, group_index: usize, command_index: usize) -> Vec<Line<'static>> {
+    fn build_command_info_lines(
+        &self,
+        group_index: usize,
+        command_index: usize,
+    ) -> Vec<Line<'static>> {
         let group = &self.groups[group_index];
         let command = &group.commands[command_index];
         let mut lines = Vec::new();
@@ -1287,7 +1296,9 @@ impl App {
             KeyCode::Char(' ') | KeyCode::Enter => {
                 let row = self.current_row().cloned();
                 match row {
-                    Some(ListRow::SkillItem { .. }) | Some(ListRow::AgentItem { .. }) | Some(ListRow::CommandItem { .. }) => {
+                    Some(ListRow::SkillItem { .. })
+                    | Some(ListRow::AgentItem { .. })
+                    | Some(ListRow::CommandItem { .. }) => {
                         self.show_info();
                     }
                     _ => self.toggle_item(),
@@ -2133,7 +2144,14 @@ pub fn run(config: &mut Config) -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
     terminal.clear()?;
 
-    let mut app = App::new(config.clone(), groups, skills_dir, agents_dir, commands_dir, source_dir);
+    let mut app = App::new(
+        config.clone(),
+        groups,
+        skills_dir,
+        agents_dir,
+        commands_dir,
+        source_dir,
+    );
 
     // Start background update immediately (non-blocking)
     app.do_update();

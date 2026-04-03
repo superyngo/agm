@@ -205,7 +205,11 @@ pub fn status() -> anyhow::Result<()> {
         .count();
 
     if config.central.is_disabled("prompt") {
-        println!("Central prompt : {} {}", contract_tilde(&central_prompt), "(disabled)".dimmed());
+        println!(
+            "Central prompt : {} {}",
+            contract_tilde(&central_prompt),
+            "(disabled)".dimmed()
+        );
     } else {
         println!("Central prompt : {}", contract_tilde(&central_prompt));
     }

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Update — 2026-04-03
+- Show link path for disabled features in tool TUI status rows (e.g., `commands disabled → ~/.claude/commands`)
+
 ## [v0.7.1] - 2026-04-02
 
 ### Fixed

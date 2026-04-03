@@ -37,7 +37,8 @@ impl CentralConfig {
         "~/.local/share/agm/commands".into()
     }
 
-    pub const TOGGLEABLE_FEATURES: &'static [&'static str] = &["prompt", "skills", "agents", "commands"];
+    pub const TOGGLEABLE_FEATURES: &'static [&'static str] =
+        &["prompt", "skills", "agents", "commands"];
 
     pub fn is_disabled(&self, feature: &str) -> bool {
         self.disabled.iter().any(|d| d == feature)
@@ -296,7 +297,10 @@ mod tests {
         );
         assert_eq!(config.central.skills_source, "~/.local/share/agm/skills");
         assert_eq!(config.central.agents_source, "~/.local/share/agm/agents");
-        assert_eq!(config.central.commands_source, "~/.local/share/agm/commands");
+        assert_eq!(
+            config.central.commands_source,
+            "~/.local/share/agm/commands"
+        );
         assert_eq!(config.central.source_dir, "~/.local/share/agm/source");
         assert!(config.central.source_repos.is_empty());
     }

@@ -370,7 +370,11 @@ pub fn prune_broken_commands(commands_dir: &Path) -> anyhow::Result<usize> {
                 .and_then(|n| n.to_str())
                 .unwrap_or("<unknown>");
             platform::remove_link(&path)?;
-            println!("  {} {} (broken command link removed)", "warn".yellow(), name);
+            println!(
+                "  {} {} (broken command link removed)",
+                "warn".yellow(),
+                name
+            );
             removed += 1;
         }
     }
@@ -1486,7 +1490,13 @@ mod tests {
         fs::write(skill_b.join("SKILL.md"), "# B").unwrap();
 
         let url = "https://github.com/user/my-repo.git".to_string();
-        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir, &[url.clone()]);
+        let groups = scan_all_sources(
+            &source_dir,
+            &skills_dir,
+            &agents_dir,
+            &commands_dir,
+            &[url.clone()],
+        );
 
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].name, "my-repo");
@@ -1697,7 +1707,13 @@ mod tests {
             commands: vec![],
         };
 
-        delete_source(&group, &skills_dir, &dir.path().join("agents"), &dir.path().join("commands")).unwrap();
+        delete_source(
+            &group,
+            &skills_dir,
+            &dir.path().join("agents"),
+            &dir.path().join("commands"),
+        )
+        .unwrap();
 
         // Central links removed
         assert!(!skills_dir.join("skill-a").exists());
@@ -1990,7 +2006,9 @@ mod tests {
         // Non-md file not migrated (lost with dir removal — intentional)
         // Links in central (file links)
         assert!(platform::same_file(&central.join("helper.md"), &store.join("helper.md")).unwrap());
-        assert!(platform::same_file(&central.join("reviewer.md"), &store.join("reviewer.md")).unwrap());
+        assert!(
+            platform::same_file(&central.join("reviewer.md"), &store.join("reviewer.md")).unwrap()
+        );
     }
 
     #[test]
@@ -2011,7 +2029,11 @@ mod tests {
 
         assert_eq!(count, 1);
         assert!(store.join("mytool_shared.md").exists());
-        assert!(platform::same_file(&central.join("mytool_shared.md"), &store.join("mytool_shared.md")).unwrap());
+        assert!(platform::same_file(
+            &central.join("mytool_shared.md"),
+            &store.join("mytool_shared.md")
+        )
+        .unwrap());
         // Original preserved
         assert_eq!(
             fs::read_to_string(central.join("shared.md")).unwrap(),
