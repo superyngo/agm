@@ -7,8 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Update — 2026-04-03
+## [v0.7.2] - 2026-04-03
+
+### Added
 - Show link path for disabled features in tool TUI status rows (e.g., `commands disabled → ~/.claude/commands`)
+- Central feature toggle — reorder, `i` key, popup, rendering, guards
+- CLI `link_all`, `unlink_all`, and `status` skip disabled features
+- Gray out disabled categories in source view with `i` key guard
+
+### Changed
+- Use `TOGGLEABLE_FEATURES` constant in `execute_toggle_feature`
+- Review fixes — info popup disabled guard, `compute_tool_status`, refactor
 
 ## [v0.7.1] - 2026-04-02
 
