@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.7.4] - 2026-04-04
+
+### Fixed
+- Prevent dangerous link operations when skills/agents/commands/prompt fields are empty or resolve to config_dir itself (e.g. `""`, `"."`)
+- Centralize link path resolution via `ToolConfig::resolved_link_path()` with built-in safety checks
+- Fix clippy warnings: collapse nested `if` blocks in `src/main.rs`
+
+### Security
+- Add `resolved_link_path()` safety guard to prevent config_dir collision when skills/agents/commands/prompt fields are empty or set to `"."`
+- Centralize all link path resolution through `resolved_link_path()` for defense-in-depth against accidental data loss
+
+## [v0.7.3] - 2026-04-03
+
 ### Fixed
 - Fix Windows CI: use `platform::same_file` for idempotency check in install_command/install_agent
 - Gate `test_prune_broken_commands` with `#[cfg(unix)]` (hard links can't become broken)

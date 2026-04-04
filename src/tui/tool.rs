@@ -130,22 +130,26 @@ pub fn build_rows(config: &Config, expanded: &HashSet<String>) -> Vec<ToolRow> {
             });
             let status_key = format!("{}:status", key);
             if expanded.contains(&status_key) {
-                rows.push(ToolRow::LinkItem {
-                    tool_key: key.clone(),
-                    field: LinkField::Prompt,
-                });
-                rows.push(ToolRow::LinkItem {
-                    tool_key: key.clone(),
-                    field: LinkField::Skills,
-                });
-                rows.push(ToolRow::LinkItem {
-                    tool_key: key.clone(),
-                    field: LinkField::Agents,
-                });
-                rows.push(ToolRow::LinkItem {
-                    tool_key: key.clone(),
-                    field: LinkField::Commands,
-                });
+                let all_fields = [
+                    LinkField::Prompt,
+                    LinkField::Skills,
+                    LinkField::Agents,
+                    LinkField::Commands,
+                ];
+                for field in &all_fields {
+                    let label = match field {
+                        LinkField::Prompt => "prompt",
+                        LinkField::Skills => "skills",
+                        LinkField::Agents => "agents",
+                        LinkField::Commands => "commands",
+                    };
+                    if tool.is_field_configured(label) {
+                        rows.push(ToolRow::LinkItem {
+                            tool_key: key.clone(),
+                            field: field.clone(),
+                        });
+                    }
+                }
             }
             // File groups
             for (files, group) in [
@@ -709,29 +713,32 @@ impl ToolApp {
         if !tool.is_installed() {
             return None;
         }
-        let config_dir = expand_tilde(&tool.config_dir);
-        Some(match field {
+        let label = match field {
+            LinkField::Prompt => "prompt",
+            LinkField::Skills => "skills",
+            LinkField::Agents => "agents",
+            LinkField::Commands => "commands",
+        };
+        let link = tool.resolved_link_path(label)?;
+        let (target, is_dir) = match field {
             LinkField::Prompt => {
-                let link = config_dir.join(&tool.prompt_filename);
                 let target = expand_tilde(&self.config.central.prompt_source);
-                (link, target, false, "prompt")
+                (target, false)
             }
             LinkField::Skills => {
-                let link = config_dir.join(&tool.skills_dir);
                 let target = expand_tilde(&self.config.central.skills_source);
-                (link, target, true, "skills")
+                (target, true)
             }
             LinkField::Agents => {
-                let link = config_dir.join(&tool.agents_dir);
                 let target = expand_tilde(&self.config.central.agents_source);
-                (link, target, true, "agents")
+                (target, true)
             }
             LinkField::Commands => {
-                let link = config_dir.join(&tool.commands_dir);
                 let target = expand_tilde(&self.config.central.commands_source);
-                (link, target, true, "commands")
+                (target, true)
             }
-        })
+        };
+        Some((link, target, is_dir, label))
     }
 
     fn toggle_link(&mut self, tool_key: &str, field: &LinkField) {
@@ -1923,38 +1930,17 @@ fn compute_tool_status(config: &Config, tool_key: &str) -> (u8, &'static str, Co
     if !tool.is_installed() {
         return (0, "Not installed", Color::DarkGray);
     }
-    let config_dir = expand_tilde(&tool.config_dir);
 
-    let all_links: Vec<(&str, &String, &String, bool)> = vec![
-        (
-            "prompt",
-            &tool.prompt_filename,
-            &config.central.prompt_source,
-            false,
-        ),
-        (
-            "skills",
-            &tool.skills_dir,
-            &config.central.skills_source,
-            true,
-        ),
-        (
-            "agents",
-            &tool.agents_dir,
-            &config.central.agents_source,
-            true,
-        ),
-        (
-            "commands",
-            &tool.commands_dir,
-            &config.central.commands_source,
-            true,
-        ),
+    let all_fields = [
+        ("prompt", &config.central.prompt_source, false),
+        ("skills", &config.central.skills_source, true),
+        ("agents", &config.central.agents_source, true),
+        ("commands", &config.central.commands_source, true),
     ];
 
-    let enabled_links: Vec<_> = all_links
+    let enabled_links: Vec<_> = all_fields
         .into_iter()
-        .filter(|(name, sub, _, _)| !sub.is_empty() && !config.central.is_disabled(name))
+        .filter(|(name, _, _)| tool.is_field_configured(name) && !config.central.is_disabled(name))
         .collect();
 
     let total = enabled_links.len();
@@ -1963,14 +1949,15 @@ fn compute_tool_status(config: &Config, tool_key: &str) -> (u8, &'static str, Co
     }
 
     let mut linked = 0usize;
-    for (_, link_sub, target_src, is_dir) in &enabled_links {
-        let link_path = config_dir.join(link_sub);
-        let target = expand_tilde(target_src);
-        if matches!(
-            linker::check_link(&link_path, &target, *is_dir),
-            LinkStatus::Linked
-        ) {
-            linked += 1;
+    for (name, target_src, is_dir) in &enabled_links {
+        if let Some(link_path) = tool.resolved_link_path(name) {
+            let target = expand_tilde(target_src);
+            if matches!(
+                linker::check_link(&link_path, &target, *is_dir),
+                LinkStatus::Linked
+            ) {
+                linked += 1;
+            }
         }
     }
     match (linked, total) {
@@ -2284,28 +2271,21 @@ fn render_row(
                 Some(t) => t,
                 None => return Line::from(""),
             };
-            let config_dir = expand_tilde(&tool.config_dir);
-            let (link_path, target, is_dir, label) = match field {
-                LinkField::Prompt => {
-                    let link = config_dir.join(&tool.prompt_filename);
-                    let target = expand_tilde(&config.central.prompt_source);
-                    (link, target, false, "prompt")
-                }
-                LinkField::Skills => {
-                    let link = config_dir.join(&tool.skills_dir);
-                    let target = expand_tilde(&config.central.skills_source);
-                    (link, target, true, "skills")
-                }
-                LinkField::Agents => {
-                    let link = config_dir.join(&tool.agents_dir);
-                    let target = expand_tilde(&config.central.agents_source);
-                    (link, target, true, "agents")
-                }
-                LinkField::Commands => {
-                    let link = config_dir.join(&tool.commands_dir);
-                    let target = expand_tilde(&config.central.commands_source);
-                    (link, target, true, "commands")
-                }
+            let label = match field {
+                LinkField::Prompt => "prompt",
+                LinkField::Skills => "skills",
+                LinkField::Agents => "agents",
+                LinkField::Commands => "commands",
+            };
+            let link_path = match tool.resolved_link_path(label) {
+                Some(p) => p,
+                None => return Line::from(""),
+            };
+            let (target, is_dir) = match field {
+                LinkField::Prompt => (expand_tilde(&config.central.prompt_source), false),
+                LinkField::Skills => (expand_tilde(&config.central.skills_source), true),
+                LinkField::Agents => (expand_tilde(&config.central.agents_source), true),
+                LinkField::Commands => (expand_tilde(&config.central.commands_source), true),
             };
             let status = linker::check_link(&link_path, &target, is_dir);
             let feature_disabled = config.central.is_disabled(label);

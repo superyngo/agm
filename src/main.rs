@@ -184,183 +184,178 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
         println!("\n{} ({}):", key, tool.name);
 
         // Link skills directory
-        if !tool.skills_dir.is_empty() && !config.central.is_disabled("skills") {
-            let skills_link = tool.resolved_config_dir().join(&tool.skills_dir);
-
-            if platform::is_dir_link(&skills_link) {
-                let actual_target = fs::read_link(&skills_link)?;
-                let expected_target = central_skills
-                    .canonicalize()
-                    .unwrap_or_else(|_| central_skills.clone());
-                let resolved_actual = skills_link
-                    .parent()
-                    .map(|p: &std::path::Path| p.join(&actual_target))
-                    .unwrap_or_else(|| actual_target.clone());
-                let resolved_actual = resolved_actual.canonicalize().unwrap_or(resolved_actual);
-
-                if resolved_actual != expected_target {
-                    if yes
-                        || prompt_yes_no(&format!(
-                            "Skills already linked to {}. Re-link to AGM?",
-                            paths::contract_tilde(&resolved_actual)
-                        ))
-                    {
-                        platform::remove_link(&skills_link)?;
-                        println!("  {} Removed old link", " ok ".green());
-                    } else {
-                        println!("  {} Skipping skills link", "skip".yellow());
-                        continue;
-                    }
-                }
-            } else if skills_link.is_dir() {
-                let skills_content = skills::scan_skills(&skills_link);
-                if !skills_content.is_empty() {
-                    if yes
-                        || prompt_yes_no(&format!(
-                            "Found {} existing skill(s) in {}. Migrate to AGM and create link?",
-                            skills_content.len(),
-                            paths::contract_tilde(&skills_link)
-                        ))
-                    {
-                        let tool_skills_target = source_dir.join("agm_tools").join(key);
-                        let added = skills::migrate_tool_dir(
-                            &skills_link,
-                            &tool_skills_target,
-                            &central_skills,
-                            key,
-                        )?;
-                        if added > 0 {
-                            println!("  {} Migrated {} skill(s)", " ok ".green(), added);
-                        }
-                    } else {
-                        println!("  {} Skipping skills migration", "skip".yellow());
-                        continue;
-                    }
-                } else {
-                    // Empty skills dir — remove it so we can create the link
-                    fs::remove_dir_all(&skills_link)?;
-                }
-            }
-
-            linker::create_link(&skills_link, &central_skills, "skills", true)?;
-        }
-
-        // Link agents directory
-        if !tool.agents_dir.is_empty() && !config.central.is_disabled("agents") {
-            let agents_link = tool.resolved_config_dir().join(&tool.agents_dir);
-
-            if platform::is_dir_link(&agents_link) {
-                let actual_target = fs::read_link(&agents_link)?;
-                let expected_target = central_agents
-                    .canonicalize()
-                    .unwrap_or_else(|_| central_agents.clone());
-                let resolved_actual = agents_link
-                    .parent()
-                    .map(|p: &std::path::Path| p.join(&actual_target))
-                    .unwrap_or_else(|| actual_target.clone());
-                let resolved_actual = resolved_actual.canonicalize().unwrap_or(resolved_actual);
-
-                if resolved_actual != expected_target {
-                    if yes
-                        || prompt_yes_no(&format!(
-                            "Agents already linked to {}. Re-link to AGM?",
-                            paths::contract_tilde(&resolved_actual)
-                        ))
-                    {
-                        platform::remove_link(&agents_link)?;
-                        println!("  {} Removed old agents link", " ok ".green());
-                    } else {
-                        println!("  {} Skipping agents link", "skip".yellow());
-                        continue;
-                    }
-                }
-            } else if agents_link.is_dir() {
-                // Existing agents dir — remove empty or warn
-                let has_files = fs::read_dir(&agents_link)
-                    .map(|rd| rd.count() > 0)
-                    .unwrap_or(false);
-                if has_files {
-                    if yes
-                        || prompt_yes_no(&format!(
-                            "Existing agents dir at {}. Remove and create link?",
-                            paths::contract_tilde(&agents_link)
-                        ))
-                    {
-                        fs::remove_dir_all(&agents_link)?;
-                    } else {
-                        println!("  {} Skipping agents link", "skip".yellow());
-                        continue;
-                    }
-                } else {
-                    fs::remove_dir_all(&agents_link)?;
-                }
-            }
-
-            linker::create_link(&agents_link, &central_agents, "agents", true)?;
-        }
-
-        // Link prompt file
-        if !tool.prompt_filename.is_empty() && !config.central.is_disabled("prompt") {
-            let prompt_link = tool.resolved_config_dir().join(&tool.prompt_filename);
-
-            // Check if prompt is already correctly linked (symlink or hardlink)
-            let already_linked = prompt_link.exists()
-                && central_prompt.exists()
-                && platform::same_file(&prompt_link, &central_prompt).unwrap_or(false);
-
-            if !already_linked && prompt_link.exists() {
-                if fs::read_link(&prompt_link).is_ok() {
-                    // It's a symlink to wrong target
-                    let actual_target = fs::read_link(&prompt_link)?;
-                    let resolved_actual = prompt_link
+        if let Some(skills_link) = tool.resolved_link_path("skills") {
+            if !config.central.is_disabled("skills") {
+                if platform::is_dir_link(&skills_link) {
+                    let actual_target = fs::read_link(&skills_link)?;
+                    let expected_target = central_skills
+                        .canonicalize()
+                        .unwrap_or_else(|_| central_skills.clone());
+                    let resolved_actual = skills_link
                         .parent()
                         .map(|p: &std::path::Path| p.join(&actual_target))
                         .unwrap_or_else(|| actual_target.clone());
                     let resolved_actual = resolved_actual.canonicalize().unwrap_or(resolved_actual);
 
-                    if yes
-                        || prompt_yes_no(&format!(
-                            "Prompt already linked to {}. Re-link to AGM?",
-                            paths::contract_tilde(&resolved_actual)
-                        ))
-                    {
-                        fs::remove_file(&prompt_link)?;
-                        println!("  {} Removed old link", " ok ".green());
-                    } else {
-                        println!("  {} Skipping prompt link", "skip".yellow());
-                        continue;
-                    }
-                } else {
-                    // Regular file (not a link)
-                    let content = fs::read_to_string(&prompt_link)?;
-                    if !content.trim().is_empty() {
+                    if resolved_actual != expected_target {
                         if yes
                             || prompt_yes_no(&format!(
-                                "Existing prompt file found at {}. Backup and create link?",
-                                paths::contract_tilde(&prompt_link)
+                                "Skills already linked to {}. Re-link to AGM?",
+                                paths::contract_tilde(&resolved_actual)
                             ))
                         {
-                            let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-                            let backup_path =
-                                prompt_link.with_extension(format!("{}.bak", timestamp));
-                            fs::rename(&prompt_link, &backup_path)?;
-                            println!(
-                                "  {} Backed up prompt to {}",
-                                " ok ".green(),
-                                paths::contract_tilde(&backup_path)
-                            );
+                            platform::remove_link(&skills_link)?;
+                            println!("  {} Removed old link", " ok ".green());
+                        } else {
+                            println!("  {} Skipping skills link", "skip".yellow());
+                            continue;
+                        }
+                    }
+                } else if skills_link.is_dir() {
+                    let skills_content = skills::scan_skills(&skills_link);
+                    if !skills_content.is_empty() {
+                        if yes
+                            || prompt_yes_no(&format!(
+                                "Found {} existing skill(s) in {}. Migrate to AGM and create link?",
+                                skills_content.len(),
+                                paths::contract_tilde(&skills_link)
+                            ))
+                        {
+                            let tool_skills_target = source_dir.join("agm_tools").join(key);
+                            let added = skills::migrate_tool_dir(
+                                &skills_link,
+                                &tool_skills_target,
+                                &central_skills,
+                                key,
+                            )?;
+                            if added > 0 {
+                                println!("  {} Migrated {} skill(s)", " ok ".green(), added);
+                            }
+                        } else {
+                            println!("  {} Skipping skills migration", "skip".yellow());
+                            continue;
+                        }
+                    } else {
+                        fs::remove_dir_all(&skills_link)?;
+                    }
+                }
+
+                linker::create_link(&skills_link, &central_skills, "skills", true)?;
+            }
+        }
+
+        // Link agents directory
+        if let Some(agents_link) = tool.resolved_link_path("agents") {
+            if !config.central.is_disabled("agents") {
+                if platform::is_dir_link(&agents_link) {
+                    let actual_target = fs::read_link(&agents_link)?;
+                    let expected_target = central_agents
+                        .canonicalize()
+                        .unwrap_or_else(|_| central_agents.clone());
+                    let resolved_actual = agents_link
+                        .parent()
+                        .map(|p: &std::path::Path| p.join(&actual_target))
+                        .unwrap_or_else(|| actual_target.clone());
+                    let resolved_actual = resolved_actual.canonicalize().unwrap_or(resolved_actual);
+
+                    if resolved_actual != expected_target {
+                        if yes
+                            || prompt_yes_no(&format!(
+                                "Agents already linked to {}. Re-link to AGM?",
+                                paths::contract_tilde(&resolved_actual)
+                            ))
+                        {
+                            platform::remove_link(&agents_link)?;
+                            println!("  {} Removed old agents link", " ok ".green());
+                        } else {
+                            println!("  {} Skipping agents link", "skip".yellow());
+                            continue;
+                        }
+                    }
+                } else if agents_link.is_dir() {
+                    let has_files = fs::read_dir(&agents_link)
+                        .map(|rd| rd.count() > 0)
+                        .unwrap_or(false);
+                    if has_files {
+                        if yes
+                            || prompt_yes_no(&format!(
+                                "Existing agents dir at {}. Remove and create link?",
+                                paths::contract_tilde(&agents_link)
+                            ))
+                        {
+                            fs::remove_dir_all(&agents_link)?;
+                        } else {
+                            println!("  {} Skipping agents link", "skip".yellow());
+                            continue;
+                        }
+                    } else {
+                        fs::remove_dir_all(&agents_link)?;
+                    }
+                }
+
+                linker::create_link(&agents_link, &central_agents, "agents", true)?;
+            }
+        }
+
+        // Link prompt file
+        if let Some(prompt_link) = tool.resolved_link_path("prompt") {
+            if !config.central.is_disabled("prompt") {
+                let already_linked = prompt_link.exists()
+                    && central_prompt.exists()
+                    && platform::same_file(&prompt_link, &central_prompt).unwrap_or(false);
+
+                if !already_linked && prompt_link.exists() {
+                    if fs::read_link(&prompt_link).is_ok() {
+                        let actual_target = fs::read_link(&prompt_link)?;
+                        let resolved_actual = prompt_link
+                            .parent()
+                            .map(|p: &std::path::Path| p.join(&actual_target))
+                            .unwrap_or_else(|| actual_target.clone());
+                        let resolved_actual =
+                            resolved_actual.canonicalize().unwrap_or(resolved_actual);
+
+                        if yes
+                            || prompt_yes_no(&format!(
+                                "Prompt already linked to {}. Re-link to AGM?",
+                                paths::contract_tilde(&resolved_actual)
+                            ))
+                        {
+                            fs::remove_file(&prompt_link)?;
+                            println!("  {} Removed old link", " ok ".green());
                         } else {
                             println!("  {} Skipping prompt link", "skip".yellow());
                             continue;
                         }
                     } else {
-                        // Empty file — safe to remove without backup
-                        fs::remove_file(&prompt_link)?;
+                        let content = fs::read_to_string(&prompt_link)?;
+                        if !content.trim().is_empty() {
+                            if yes
+                                || prompt_yes_no(&format!(
+                                    "Existing prompt file found at {}. Backup and create link?",
+                                    paths::contract_tilde(&prompt_link)
+                                ))
+                            {
+                                let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+                                let backup_path =
+                                    prompt_link.with_extension(format!("{}.bak", timestamp));
+                                fs::rename(&prompt_link, &backup_path)?;
+                                println!(
+                                    "  {} Backed up prompt to {}",
+                                    " ok ".green(),
+                                    paths::contract_tilde(&backup_path)
+                                );
+                            } else {
+                                println!("  {} Skipping prompt link", "skip".yellow());
+                                continue;
+                            }
+                        } else {
+                            fs::remove_file(&prompt_link)?;
+                        }
                     }
                 }
-            }
 
-            linker::create_link(&prompt_link, &central_prompt, "prompt", false)?;
+                linker::create_link(&prompt_link, &central_prompt, "prompt", false)?;
+            }
         }
     }
 
@@ -382,34 +377,31 @@ fn unlink_all(config: &config::Config) -> anyhow::Result<()> {
     for (key, tool_config) in tools_to_unlink {
         println!("Unlinking {} ({}):", key, tool_config.name);
 
-        // Remove skills link then copy central skills back
-        if !tool_config.skills_dir.is_empty() && !config.central.is_disabled("skills") {
-            let skills_link = tool_config
-                .resolved_config_dir()
-                .join(&tool_config.skills_dir);
-            if linker::remove_link(&skills_link, "skills", true)? && central_skills.is_dir() {
+        if let Some(skills_link) = tool_config.resolved_link_path("skills") {
+            if !config.central.is_disabled("skills")
+                && linker::remove_link(&skills_link, "skills", true)?
+                && central_skills.is_dir()
+            {
                 skills::copy_dir_all(&central_skills, &skills_link)?;
                 println!("  {} skills copied back", " ok ".green());
             }
         }
 
-        // Remove agents link then copy central agents back
-        if !tool_config.agents_dir.is_empty() && !config.central.is_disabled("agents") {
-            let agents_link = tool_config
-                .resolved_config_dir()
-                .join(&tool_config.agents_dir);
-            if linker::remove_link(&agents_link, "agents", true)? && central_agents.is_dir() {
+        if let Some(agents_link) = tool_config.resolved_link_path("agents") {
+            if !config.central.is_disabled("agents")
+                && linker::remove_link(&agents_link, "agents", true)?
+                && central_agents.is_dir()
+            {
                 skills::copy_dir_all(&central_agents, &agents_link)?;
                 println!("  {} agents copied back", " ok ".green());
             }
         }
 
-        // Remove prompt link then copy central prompt back
-        if !tool_config.prompt_filename.is_empty() && !config.central.is_disabled("prompt") {
-            let prompt_link = tool_config
-                .resolved_config_dir()
-                .join(&tool_config.prompt_filename);
-            if linker::remove_link(&prompt_link, "prompt", false)? && central_prompt.exists() {
+        if let Some(prompt_link) = tool_config.resolved_link_path("prompt") {
+            if !config.central.is_disabled("prompt")
+                && linker::remove_link(&prompt_link, "prompt", false)?
+                && central_prompt.exists()
+            {
                 fs::copy(&central_prompt, &prompt_link)?;
                 println!("  {} prompt copied back", " ok ".green());
             }

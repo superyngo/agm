@@ -1,8 +1,9 @@
+use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::paths::{expand_path, expand_tilde};
+use crate::paths::{contract_tilde, expand_path, expand_tilde};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -263,6 +264,61 @@ impl ToolConfig {
         }
     }
 
+    /// Check if a linkable field is configured (non-empty) for this tool.
+    pub fn is_field_configured(&self, field: &str) -> bool {
+        match field {
+            "prompt" => !self.prompt_filename.is_empty(),
+            "skills" => !self.skills_dir.is_empty(),
+            "agents" => !self.agents_dir.is_empty(),
+            "commands" => !self.commands_dir.is_empty(),
+            _ => false,
+        }
+    }
+
+    /// Resolve the link path for a given field, with safety checks.
+    ///
+    /// Returns `None` if:
+    /// - The field is not configured (empty string)
+    /// - The resolved path would collide with `config_dir` itself
+    ///   (e.g. field value is `""`, `"."`, or normalizes to the same path)
+    pub fn resolved_link_path(&self, field: &str) -> Option<PathBuf> {
+        if !self.is_field_configured(field) {
+            return None;
+        }
+        let relative = match field {
+            "prompt" => &self.prompt_filename,
+            "skills" => &self.skills_dir,
+            "agents" => &self.agents_dir,
+            "commands" => &self.commands_dir,
+            _ => return None,
+        };
+        let config_dir = self.resolved_config_dir();
+        let link_path = config_dir.join(relative);
+        let canonical_config = config_dir
+            .canonicalize()
+            .unwrap_or_else(|_| config_dir.clone());
+        let canonical_link = link_path.canonicalize().unwrap_or_else(|_| {
+            let parent = link_path.parent();
+            match parent {
+                Some(p) if p.exists() => p
+                    .canonicalize()
+                    .map(|c| c.join(link_path.file_name().unwrap_or_default()))
+                    .unwrap_or_else(|_| link_path.clone()),
+                _ => link_path.clone(),
+            }
+        });
+        if canonical_link == canonical_config {
+            eprintln!(
+                "  {} Skipping {}: link path resolves to config_dir ({})",
+                "warn".yellow(),
+                field,
+                contract_tilde(&config_dir)
+            );
+            return None;
+        }
+        Some(link_path)
+    }
+
     /// Check if the tool's config directory exists on disk
     pub fn is_installed(&self) -> bool {
         self.resolved_config_dir().is_dir()
@@ -481,5 +537,99 @@ mod tests {
                 key
             );
         }
+    }
+
+    #[test]
+    fn test_resolved_link_path_normal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".test-tool");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let tool = ToolConfig {
+            name: "Test".into(),
+            config_dir: config_dir.to_string_lossy().to_string(),
+            settings: vec![],
+            auth: vec![],
+            prompt_filename: "TEST.md".into(),
+            skills_dir: "skills".into(),
+            agents_dir: "agents".into(),
+            commands_dir: "commands".into(),
+            mcp: vec![],
+        };
+        assert_eq!(
+            tool.resolved_link_path("skills"),
+            Some(config_dir.join("skills"))
+        );
+        assert_eq!(
+            tool.resolved_link_path("agents"),
+            Some(config_dir.join("agents"))
+        );
+        assert_eq!(
+            tool.resolved_link_path("prompt"),
+            Some(config_dir.join("TEST.md"))
+        );
+        assert_eq!(
+            tool.resolved_link_path("commands"),
+            Some(config_dir.join("commands"))
+        );
+    }
+
+    #[test]
+    fn test_resolved_link_path_empty_field() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".test-tool");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let tool = ToolConfig {
+            name: "Test".into(),
+            config_dir: config_dir.to_string_lossy().to_string(),
+            settings: vec![],
+            auth: vec![],
+            prompt_filename: "".into(),
+            skills_dir: "".into(),
+            agents_dir: "".into(),
+            commands_dir: "".into(),
+            mcp: vec![],
+        };
+        assert_eq!(tool.resolved_link_path("skills"), None);
+        assert_eq!(tool.resolved_link_path("agents"), None);
+        assert_eq!(tool.resolved_link_path("prompt"), None);
+        assert_eq!(tool.resolved_link_path("commands"), None);
+    }
+
+    #[test]
+    fn test_resolved_link_path_dot_field() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".test-tool");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let tool = ToolConfig {
+            name: "Test".into(),
+            config_dir: config_dir.to_string_lossy().to_string(),
+            settings: vec![],
+            auth: vec![],
+            prompt_filename: "TEST.md".into(),
+            skills_dir: ".".into(),
+            agents_dir: "agents".into(),
+            commands_dir: "commands".into(),
+            mcp: vec![],
+        };
+        assert_eq!(tool.resolved_link_path("skills"), None);
+    }
+
+    #[test]
+    fn test_resolved_link_path_unknown_field() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config_dir = tmp.path().join(".test-tool");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let tool = ToolConfig {
+            name: "Test".into(),
+            config_dir: config_dir.to_string_lossy().to_string(),
+            settings: vec![],
+            auth: vec![],
+            prompt_filename: "TEST.md".into(),
+            skills_dir: "skills".into(),
+            agents_dir: "agents".into(),
+            commands_dir: "commands".into(),
+            mcp: vec![],
+        };
+        assert_eq!(tool.resolved_link_path("unknown"), None);
     }
 }

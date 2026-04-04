@@ -26,33 +26,25 @@ pub fn status() -> anyhow::Result<()> {
             continue;
         }
 
-        let prompt_ls = if !tool.prompt_filename.is_empty() {
-            let link = tool.resolved_config_dir().join(&tool.prompt_filename);
-            Some(check_link(&link, &central_prompt, false))
-        } else {
-            None
-        };
+        let prompt_link = tool.resolved_link_path("prompt");
+        let prompt_ls = prompt_link
+            .as_ref()
+            .map(|l| check_link(l, &central_prompt, false));
 
-        let skills_ls = if !tool.skills_dir.is_empty() {
-            let link = tool.resolved_config_dir().join(&tool.skills_dir);
-            Some(check_link(&link, &central_skills, true))
-        } else {
-            None
-        };
+        let skills_link = tool.resolved_link_path("skills");
+        let skills_ls = skills_link
+            .as_ref()
+            .map(|l| check_link(l, &central_skills, true));
 
-        let agents_ls = if !tool.agents_dir.is_empty() {
-            let link = tool.resolved_config_dir().join(&tool.agents_dir);
-            Some(check_link(&link, &central_agents, true))
-        } else {
-            None
-        };
+        let agents_link = tool.resolved_link_path("agents");
+        let agents_ls = agents_link
+            .as_ref()
+            .map(|l| check_link(l, &central_agents, true));
 
-        let commands_ls = if !tool.commands_dir.is_empty() {
-            let link = tool.resolved_config_dir().join(&tool.commands_dir);
-            Some(check_link(&link, &central_commands, true))
-        } else {
-            None
-        };
+        let commands_link = tool.resolved_link_path("commands");
+        let commands_ls = commands_link
+            .as_ref()
+            .map(|l| check_link(l, &central_commands, true));
 
         let config_dir = contract_tilde(&tool.resolved_config_dir());
         println!(
@@ -61,9 +53,7 @@ pub fn status() -> anyhow::Result<()> {
             config_dir.dimmed(),
         );
 
-        // Detail lines: prompt
         if let Some(ls) = prompt_ls {
-            let prompt_link = tool.resolved_config_dir().join(&tool.prompt_filename);
             print!("{}{:<8}", INDENT, "prompt");
             if config.central.is_disabled("prompt") {
                 println!("{}", "disabled".dimmed());
@@ -72,7 +62,7 @@ pub fn status() -> anyhow::Result<()> {
                     LinkStatus::Linked => println!(
                         "{} → {}",
                         "✓ linked".green(),
-                        contract_tilde(&prompt_link).dimmed()
+                        contract_tilde(prompt_link.as_ref().unwrap()).dimmed()
                     ),
                     LinkStatus::Missing => println!(
                         "{} → {}",
@@ -84,15 +74,13 @@ pub fn status() -> anyhow::Result<()> {
                     LinkStatus::Blocked => println!(
                         "{} → {}",
                         "✗ not linked".yellow(),
-                        contract_tilde(&prompt_link).dimmed()
+                        contract_tilde(prompt_link.as_ref().unwrap()).dimmed()
                     ),
                 }
             }
         }
 
-        // Detail lines: skills
         if let Some(ls) = skills_ls {
-            let skills_link = tool.resolved_config_dir().join(&tool.skills_dir);
             print!("{}{:<8}", INDENT, "skills");
             if config.central.is_disabled("skills") {
                 println!("{}", "disabled".dimmed());
@@ -101,7 +89,7 @@ pub fn status() -> anyhow::Result<()> {
                     LinkStatus::Linked => println!(
                         "{} → {}",
                         "✓ linked".green(),
-                        contract_tilde(&skills_link).dimmed()
+                        contract_tilde(skills_link.as_ref().unwrap()).dimmed()
                     ),
                     LinkStatus::Missing => println!(
                         "{} → {}",
@@ -113,15 +101,13 @@ pub fn status() -> anyhow::Result<()> {
                     LinkStatus::Blocked => println!(
                         "{} → {}",
                         "✗ not linked".yellow(),
-                        contract_tilde(&skills_link).dimmed()
+                        contract_tilde(skills_link.as_ref().unwrap()).dimmed()
                     ),
                 }
             }
         }
 
-        // Detail lines: agents
         if let Some(ls) = agents_ls {
-            let agents_link = tool.resolved_config_dir().join(&tool.agents_dir);
             print!("{}{:<8}", INDENT, "agents");
             if config.central.is_disabled("agents") {
                 println!("{}", "disabled".dimmed());
@@ -130,7 +116,7 @@ pub fn status() -> anyhow::Result<()> {
                     LinkStatus::Linked => println!(
                         "{} → {}",
                         "✓ linked".green(),
-                        contract_tilde(&agents_link).dimmed()
+                        contract_tilde(agents_link.as_ref().unwrap()).dimmed()
                     ),
                     LinkStatus::Missing => println!(
                         "{} → {}",
@@ -142,15 +128,13 @@ pub fn status() -> anyhow::Result<()> {
                     LinkStatus::Blocked => println!(
                         "{} → {}",
                         "✗ not linked".yellow(),
-                        contract_tilde(&agents_link).dimmed()
+                        contract_tilde(agents_link.as_ref().unwrap()).dimmed()
                     ),
                 }
             }
         }
 
-        // Detail lines: commands
         if let Some(ls) = commands_ls {
-            let commands_link = tool.resolved_config_dir().join(&tool.commands_dir);
             print!("{}{:<8}", INDENT, "commands");
             if config.central.is_disabled("commands") {
                 println!("{}", "disabled".dimmed());
@@ -159,7 +143,7 @@ pub fn status() -> anyhow::Result<()> {
                     LinkStatus::Linked => println!(
                         "{} → {}",
                         "✓ linked".green(),
-                        contract_tilde(&commands_link).dimmed()
+                        contract_tilde(commands_link.as_ref().unwrap()).dimmed()
                     ),
                     LinkStatus::Missing => println!(
                         "{} → {}",
@@ -171,7 +155,7 @@ pub fn status() -> anyhow::Result<()> {
                     LinkStatus::Blocked => println!(
                         "{} → {}",
                         "✗ not linked".yellow(),
-                        contract_tilde(&commands_link).dimmed()
+                        contract_tilde(commands_link.as_ref().unwrap()).dimmed()
                     ),
                 }
             }
