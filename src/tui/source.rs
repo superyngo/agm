@@ -175,7 +175,6 @@ impl App {
             &self.skills_dir,
             &self.agents_dir,
             &self.commands_dir,
-            &self.config.central.source_repos,
         );
         self.rebuild_rows();
         self.clamp_cursor();
@@ -546,10 +545,6 @@ impl App {
             &self.commands_dir,
         ) {
             Ok(()) => {
-                if let SourceKind::Repo { url: Some(ref url) } = group.kind {
-                    self.config.remove_source_repo(url);
-                    let _ = self.config.save();
-                }
                 self.log.push(
                     super::log::LogLevel::Success,
                     format!("Deleted source: {}", group.name),
@@ -733,13 +728,147 @@ impl App {
                 command_index,
             } => self.build_command_info_lines(group_index, command_index),
             ListRow::SourceHeader { group_index, .. } => self.build_source_info_lines(group_index),
-            ListRow::CategoryHeader { .. } => {
-                return; // No info for category headers
-            }
+            ListRow::CategoryHeader { category } => self.build_category_info_lines(category),
         };
 
         self.info_popup =
-            Some(super::popup::ScrollablePopup::new("Info", lines).with_close_hint("Esc:close"));
+            Some(super::popup::ScrollablePopup::new("Info", lines).with_close_hint("i/Esc:close"));
+    }
+
+    fn build_category_info_lines(&self, category: Category) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+
+        let (label, central_dir, feature_key) = match category {
+            Category::Skills => ("Skills", &self.skills_dir, "skills"),
+            Category::Agents => ("Agents", &self.agents_dir, "agents"),
+            Category::Commands => ("Commands", &self.commands_dir, "commands"),
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled("Category: ", Style::default().fg(Color::Yellow)),
+            Span::raw(label.to_string()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Central Dir: ", Style::default().fg(Color::Yellow)),
+            Span::raw(contract_tilde(central_dir).to_string()),
+        ]));
+        if self.config.central.is_disabled(feature_key) {
+            lines.push(Line::from(Span::styled(
+                "⚠ Feature disabled",
+                Style::default().fg(Color::Red),
+            )));
+        }
+
+        // Compute totals
+        let (total, installed): (usize, usize) = match category {
+            Category::Skills => (
+                self.groups.iter().map(|g| g.skills.len()).sum(),
+                self.groups
+                    .iter()
+                    .flat_map(|g| &g.skills)
+                    .filter(|s| s.install_status == SkillInstallStatus::Installed)
+                    .count(),
+            ),
+            Category::Agents => (
+                self.groups.iter().map(|g| g.agents.len()).sum(),
+                self.groups
+                    .iter()
+                    .flat_map(|g| &g.agents)
+                    .filter(|a| a.install_status == SkillInstallStatus::Installed)
+                    .count(),
+            ),
+            Category::Commands => (
+                self.groups.iter().map(|g| g.commands.len()).sum(),
+                self.groups
+                    .iter()
+                    .flat_map(|g| &g.commands)
+                    .filter(|c| c.install_status == SkillInstallStatus::Installed)
+                    .count(),
+            ),
+        };
+        lines.push(Line::from(vec![
+            Span::styled("Installed: ", Style::default().fg(Color::Yellow)),
+            Span::raw(format!("{installed} / {total}")),
+        ]));
+        lines.push(Line::default());
+
+        // List contributing sources
+        lines.push(Line::from(Span::styled(
+            "Sources:",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )));
+
+        for group in &self.groups {
+            let (item_total, item_installed) = match category {
+                Category::Skills => (
+                    group.skills.len(),
+                    group
+                        .skills
+                        .iter()
+                        .filter(|s| s.install_status == SkillInstallStatus::Installed)
+                        .count(),
+                ),
+                Category::Agents => (
+                    group.agents.len(),
+                    group
+                        .agents
+                        .iter()
+                        .filter(|a| a.install_status == SkillInstallStatus::Installed)
+                        .count(),
+                ),
+                Category::Commands => (
+                    group.commands.len(),
+                    group
+                        .commands
+                        .iter()
+                        .filter(|c| c.install_status == SkillInstallStatus::Installed)
+                        .count(),
+                ),
+            };
+            if item_total == 0 {
+                continue;
+            }
+
+            let icon = match &group.kind {
+                SourceKind::Repo { .. } => "📦",
+                SourceKind::Local => "📁",
+                SourceKind::Migrated { .. } => "🔄",
+            };
+            let kind_str = match &group.kind {
+                SourceKind::Repo { url: Some(url) } => format!("Repo: {url}"),
+                SourceKind::Repo { url: None } => "Repo".to_string(),
+                SourceKind::Local => "Local".to_string(),
+                SourceKind::Migrated { tool } => format!("Migrated from {tool}"),
+            };
+
+            lines.push(Line::from(vec![
+                Span::raw(format!("  {icon} ")),
+                Span::styled(
+                    group.name.clone(),
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("  [{item_installed}/{item_total}]"),
+                    Style::default().fg(Color::Green),
+                ),
+            ]));
+            lines.push(Line::from(vec![
+                Span::raw("    "),
+                Span::styled(kind_str, Style::default().fg(Color::DarkGray)),
+            ]));
+        }
+
+        if lines.len() <= 6 {
+            // Only header lines, no sources matched
+            lines.push(Line::from(Span::styled(
+                "  (no sources)",
+                Style::default().fg(Color::DarkGray),
+            )));
+        }
+
+        lines
     }
 
     fn build_skill_info_lines(&self, group_index: usize, skill_index: usize) -> Vec<Line<'static>> {
@@ -1102,7 +1231,6 @@ impl App {
                             agent_count += 1;
                         }
                     }
-                    let _ = self.config.add_source_repo(&source);
                     self.log.push(
                         super::log::LogLevel::Success,
                         format!("Added from URL: {count} skill(s), {agent_count} agent(s)"),
@@ -1151,7 +1279,7 @@ impl App {
         // Log popup intercepts all keys when visible
         if self.show_log {
             match code {
-                KeyCode::Char('l') | KeyCode::Esc => {
+                KeyCode::Char('o') | KeyCode::Esc => {
                     self.show_log = false;
                     self.log_popup = None;
                 }
@@ -1306,7 +1434,22 @@ impl App {
             }
             KeyCode::Char('e') => self.open_editor(terminal),
             KeyCode::Delete | KeyCode::Char('d') => self.start_delete(),
+            // Info popup: i
             KeyCode::Char('i') => {
+                let row = self.current_row().cloned();
+                match row {
+                    Some(ListRow::SkillItem { .. })
+                    | Some(ListRow::AgentItem { .. })
+                    | Some(ListRow::CommandItem { .. })
+                    | Some(ListRow::SourceHeader { .. })
+                    | Some(ListRow::CategoryHeader { .. }) => {
+                        self.show_info();
+                    }
+                    _ => {}
+                }
+            }
+            // Link/install toggle: l
+            KeyCode::Char('l') => {
                 let row = self.current_row().cloned();
                 match row {
                     Some(ListRow::SkillItem {
@@ -1378,11 +1521,11 @@ impl App {
                 // so user can continue editing their previous search
                 self.expand_all();
             }
-            KeyCode::Char('l') => {
+            KeyCode::Char('o') => {
                 self.show_log = true;
                 let lines = self.log.to_lines();
                 let mut popup =
-                    super::popup::ScrollablePopup::new("Log", lines).with_close_hint("l:close");
+                    super::popup::ScrollablePopup::new("Log", lines).with_close_hint("o:close");
                 // Auto-scroll to end
                 popup.scroll_offset = popup.lines.len().saturating_sub(1);
                 self.log_popup = Some(popup);
@@ -1921,50 +2064,52 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
     match row {
         Some(ListRow::CategoryHeader { .. }) => {
             spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
+            spans.extend([hint_key("i"), hint_text(" info  ")]);
             spans.extend([hint_key("a"), hint_text(" add  ")]);
             spans.extend([hint_key("u"), hint_text(" update  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
-            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
         Some(ListRow::SourceHeader { .. }) => {
             spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
-            spans.extend([hint_key("i"), hint_text(" install all  ")]);
+            spans.extend([hint_key("i"), hint_text(" info  ")]);
+            spans.extend([hint_key("l"), hint_text(" install all  ")]);
             spans.extend([hint_key("d"), hint_text(" del  ")]);
             spans.extend([hint_key("u"), hint_text(" update  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
-            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
         Some(ListRow::SkillItem { .. }) => {
-            spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
-            spans.extend([hint_key("i"), hint_text(" install  ")]);
+            spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
+            spans.extend([hint_key("l"), hint_text(" install  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
             spans.extend([hint_key("d"), hint_text(" del  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
-            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
         Some(ListRow::AgentItem { .. }) => {
-            spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
-            spans.extend([hint_key("i"), hint_text(" install  ")]);
+            spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
+            spans.extend([hint_key("l"), hint_text(" install  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
-            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
         Some(ListRow::CommandItem { .. }) => {
-            spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
-            spans.extend([hint_key("i"), hint_text(" install  ")]);
+            spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
+            spans.extend([hint_key("l"), hint_text(" install  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
-            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
         None => {
             spans.extend([hint_key("a"), hint_text(" add  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
-            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
     }
@@ -2120,7 +2265,6 @@ pub fn run(config: &mut Config) -> Result<()> {
         &skills_dir,
         &agents_dir,
         &commands_dir,
-        &config.central.source_repos,
     );
 
     if groups.is_empty() {
