@@ -170,7 +170,6 @@ pub fn status() -> anyhow::Result<()> {
         &central_skills,
         &central_agents,
         &central_commands,
-        &config.central.source_repos,
     );
     let installed_skills: usize = groups
         .iter()

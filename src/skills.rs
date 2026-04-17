@@ -708,12 +708,7 @@ pub fn update_all_with_progress<F>(
 }
 
 /// Try to resolve the git remote URL for a directory.
-fn resolve_repo_url(dir_name: &str, path: &Path, source_repos: &[String]) -> Option<String> {
-    for url in source_repos {
-        if repo_name_from_url(url) == dir_name {
-            return Some(url.clone());
-        }
-    }
+fn resolve_repo_url(path: &Path) -> Option<String> {
     std::process::Command::new("git")
         .args(["remote", "get-url", "origin"])
         .current_dir(path)
@@ -755,7 +750,6 @@ pub fn scan_all_sources(
     skills_dir: &Path,
     agents_dir: &Path,
     commands_dir: &Path,
-    source_repos: &[String],
 ) -> Vec<SourceGroup> {
     if !source_dir.is_dir() {
         return vec![];
@@ -869,7 +863,7 @@ pub fn scan_all_sources(
                 }
             }
         } else {
-            let url = resolve_repo_url(&dir_name, &path, source_repos);
+            let url = resolve_repo_url(&path);
             let skills = scan_skills(&path)
                 .into_iter()
                 .map(|(name, sp)| SkillInfo {
@@ -1161,6 +1155,7 @@ pub fn migrate_agents_dir_quiet(
     tool_agents_target: &Path,
     central_agents: &Path,
     tool_key: &str,
+    prompt_filename: &str,
 ) -> anyhow::Result<(usize, Vec<String>)> {
     use anyhow::Context;
 
@@ -1173,7 +1168,15 @@ pub fn migrate_agents_dir_quiet(
         .filter_map(|e| e.ok())
         .filter(|e| {
             let p = e.path();
-            p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("md")
+            if !p.is_file() || p.extension().and_then(|x| x.to_str()) != Some("md") {
+                return false;
+            }
+            let fname = e.file_name().to_string_lossy().to_string();
+            // Skip the tool's prompt file and common non-agent files
+            if !prompt_filename.is_empty() && fname == prompt_filename {
+                return false;
+            }
+            true
         })
         .collect();
 
@@ -1236,6 +1239,7 @@ pub fn migrate_commands_dir_quiet(
     tool_commands_target: &Path,
     central_commands: &Path,
     tool_key: &str,
+    prompt_filename: &str,
 ) -> anyhow::Result<(usize, Vec<String>)> {
     use anyhow::Context;
 
@@ -1248,7 +1252,15 @@ pub fn migrate_commands_dir_quiet(
         .filter_map(|e| e.ok())
         .filter(|e| {
             let p = e.path();
-            p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("md")
+            if !p.is_file() || p.extension().and_then(|x| x.to_str()) != Some("md") {
+                return false;
+            }
+            let fname = e.file_name().to_string_lossy().to_string();
+            // Skip the tool's prompt file and common non-command files
+            if !prompt_filename.is_empty() && fname == prompt_filename {
+                return false;
+            }
+            true
         })
         .collect();
 
@@ -1458,7 +1470,7 @@ mod tests {
         let skills_dir = dir.path().join("skills");
         let agents_dir = dir.path().join("agents");
         let commands_dir = dir.path().join("commands");
-        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir, &[]);
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir);
         assert!(groups.is_empty());
     }
 
@@ -1480,20 +1492,15 @@ mod tests {
         fs::write(skill_a.join("SKILL.md"), "# A").unwrap();
         fs::write(skill_b.join("SKILL.md"), "# B").unwrap();
 
-        let url = "https://github.com/user/my-repo.git".to_string();
-        let groups = scan_all_sources(
-            &source_dir,
-            &skills_dir,
-            &agents_dir,
-            &commands_dir,
-            &[url.clone()],
-        );
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir);
 
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].name, "my-repo");
         assert_eq!(groups[0].skills.len(), 2);
         match &groups[0].kind {
-            SourceKind::Repo { url: u } => assert_eq!(u.as_deref(), Some(url.as_str())),
+            SourceKind::Repo { url: _u } => {
+                // URL resolved from git remote; in test env it will be None (no real git repo)
+            }
             _ => panic!("Expected Repo"),
         }
         assert!(groups[0]
@@ -1517,7 +1524,7 @@ mod tests {
         fs::create_dir_all(&skill).unwrap();
         fs::write(skill.join("SKILL.md"), "# Local").unwrap();
 
-        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir, &[]);
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].name, "my-local");
         assert!(matches!(groups[0].kind, SourceKind::Local));
@@ -1538,7 +1545,7 @@ mod tests {
         fs::create_dir_all(&skill).unwrap();
         fs::write(skill.join("SKILL.md"), "# Migrated").unwrap();
 
-        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir, &[]);
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].name, "agm_tools/claude");
         match &groups[0].kind {
@@ -1564,7 +1571,7 @@ mod tests {
 
         install_skill("cool-skill", &skill_path, &skills_dir).unwrap();
 
-        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir, &[]);
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir);
         assert_eq!(
             groups[0].skills[0].install_status,
             SkillInstallStatus::Installed
@@ -1593,7 +1600,7 @@ mod tests {
 
         install_skill("common-skill", &skill_a, &skills_dir).unwrap();
 
-        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir, &[]);
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir);
         let group_a = groups.iter().find(|g| g.name == "repo-a").unwrap();
         let group_b = groups.iter().find(|g| g.name == "repo-b").unwrap();
         assert_eq!(
@@ -1830,7 +1837,7 @@ mod tests {
         fs::create_dir_all(&agent_dir).unwrap();
         fs::write(agent_dir.join("helper.md"), "# Helper").unwrap();
 
-        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir, &[]);
+        let groups = scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].skills.len(), 1);
         assert_eq!(groups[0].agents.len(), 1);
@@ -1985,7 +1992,7 @@ mod tests {
         let central = tmp.path().join("central_agents");
 
         let (count, msgs) =
-            migrate_agents_dir_quiet(&agents_dir, &store, &central, "test").unwrap();
+            migrate_agents_dir_quiet(&agents_dir, &store, &central, "test", "").unwrap();
 
         assert_eq!(count, 2);
         assert!(!msgs.is_empty());
@@ -2016,7 +2023,7 @@ mod tests {
         fs::write(central.join("shared.md"), "# existing agent").unwrap();
 
         let (count, msgs) =
-            migrate_agents_dir_quiet(&agents_dir, &store, &central, "mytool").unwrap();
+            migrate_agents_dir_quiet(&agents_dir, &store, &central, "mytool", "").unwrap();
 
         assert_eq!(count, 1);
         assert!(store.join("mytool_shared.md").exists());
@@ -2043,7 +2050,7 @@ mod tests {
         let central = tmp.path().join("central_agents");
 
         let (count, _msgs) =
-            migrate_agents_dir_quiet(&agents_dir, &store, &central, "test").unwrap();
+            migrate_agents_dir_quiet(&agents_dir, &store, &central, "test", "").unwrap();
         assert_eq!(count, 0);
         assert!(!agents_dir.exists());
     }
@@ -2118,7 +2125,8 @@ mod tests {
 
         // Step 1: Migrate
         let (count, _) =
-            migrate_agents_dir_quiet(&tool_agents, &store_agents, &central, "testtool").unwrap();
+            migrate_agents_dir_quiet(&tool_agents, &store_agents, &central, "testtool", "")
+                .unwrap();
         assert_eq!(count, 2);
         assert!(!tool_agents.exists());
         assert!(store_agents.join("coder.md").exists());
@@ -2314,7 +2322,7 @@ mod tests {
         fs::write(tool_commands.join("test.md"), "# Test").unwrap();
 
         let (count, msgs) =
-            migrate_commands_dir_quiet(&tool_commands, &store, &central, "claude").unwrap();
+            migrate_commands_dir_quiet(&tool_commands, &store, &central, "claude", "").unwrap();
         assert_eq!(count, 2);
         assert!(!msgs.is_empty());
 

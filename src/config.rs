@@ -24,8 +24,6 @@ pub struct CentralConfig {
     pub commands_source: String,
     pub source_dir: String,
     #[serde(default)]
-    pub source_repos: Vec<String>,
-    #[serde(default)]
     pub disabled: Vec<String>,
 }
 
@@ -217,26 +215,10 @@ impl Config {
                 agents_source: "~/.local/share/agm/agents".into(),
                 commands_source: "~/.local/share/agm/commands".into(),
                 source_dir: "~/.local/share/agm/source".into(),
-                source_repos: vec![],
                 disabled: vec![],
             },
             tools,
         }
-    }
-
-    /// Add a source repo URL if not already present, then save
-    pub fn add_source_repo(&mut self, url: &str) -> anyhow::Result<()> {
-        if !self.central.source_repos.contains(&url.to_string()) {
-            self.central.source_repos.push(url.to_string());
-            self.save()?;
-            println!("Added {} to config", url);
-        }
-        Ok(())
-    }
-
-    /// Remove a source repo URL if present
-    pub fn remove_source_repo(&mut self, url: &str) {
-        self.central.source_repos.retain(|u| u != url);
     }
 }
 
@@ -358,7 +340,6 @@ mod tests {
             "~/.local/share/agm/commands"
         );
         assert_eq!(config.central.source_dir, "~/.local/share/agm/source");
-        assert!(config.central.source_repos.is_empty());
     }
 
     #[test]
@@ -463,28 +444,6 @@ mod tests {
         let config = Config::default_config();
         let claude = config.tools.get("claude").unwrap();
         assert_eq!(claude.settings[0], "~/.claude.json");
-    }
-
-    #[test]
-    fn test_remove_source_repo() {
-        let dir = tempfile::tempdir().unwrap();
-        let config_path = dir.path().join("config.toml");
-        let mut config = Config::default_config();
-        config.central.source_repos = vec![
-            "https://github.com/user/repo1.git".to_string(),
-            "https://github.com/user/repo2.git".to_string(),
-        ];
-        config.save_to(&config_path).unwrap();
-
-        config.remove_source_repo("https://github.com/user/repo1.git");
-        assert_eq!(config.central.source_repos.len(), 1);
-        assert_eq!(
-            config.central.source_repos[0],
-            "https://github.com/user/repo2.git"
-        );
-
-        config.remove_source_repo("https://github.com/user/nonexistent.git");
-        assert_eq!(config.central.source_repos.len(), 1);
     }
 
     #[test]

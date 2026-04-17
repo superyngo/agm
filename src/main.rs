@@ -135,43 +135,6 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
         }
     }
 
-    // Process source_repos when linking
-    if !config.central.source_repos.is_empty() {
-        println!("\n{}", "Processing source repositories...".bold());
-        for url in &config.central.source_repos {
-            match skills::clone_or_pull(url, &source_dir) {
-                Ok((_repo_path, found_skills)) => {
-                    let mut count = 0;
-                    for (name, skill_path) in &found_skills {
-                        if let Ok(()) = skills::install_skill(name, skill_path, &central_skills) {
-                            count += 1;
-                        }
-                    }
-                    // Also install agents from the repo
-                    let found_agents = skills::scan_agents(&_repo_path);
-                    let mut agent_count = 0;
-                    for (name, agent_path) in &found_agents {
-                        if let Ok(()) = skills::install_agent(name, agent_path, &central_agents) {
-                            agent_count += 1;
-                        }
-                    }
-                    if count > 0 || agent_count > 0 {
-                        println!(
-                            "  {} {} skill(s), {} agent(s) from {}",
-                            " ok ".green(),
-                            count,
-                            agent_count,
-                            url
-                        );
-                    }
-                }
-                Err(e) => {
-                    println!("  {} Failed to process {}: {}", "warn".red(), url, e);
-                }
-            }
-        }
-    }
-
     // Link tools
     if !config.central.disabled.is_empty() {
         println!(
@@ -365,6 +328,7 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
 fn unlink_all(config: &config::Config) -> anyhow::Result<()> {
     let central_skills = paths::expand_tilde(&config.central.skills_source);
     let central_agents = paths::expand_tilde(&config.central.agents_source);
+    let central_commands = paths::expand_tilde(&config.central.commands_source);
     let central_prompt = paths::expand_tilde(&config.central.prompt_source);
 
     // Collect which tools to unlink (all installed tools)
@@ -394,6 +358,16 @@ fn unlink_all(config: &config::Config) -> anyhow::Result<()> {
             {
                 skills::copy_dir_all(&central_agents, &agents_link)?;
                 println!("  {} agents copied back", " ok ".green());
+            }
+        }
+
+        if let Some(commands_link) = tool_config.resolved_link_path("commands") {
+            if !config.central.is_disabled("commands")
+                && linker::remove_link(&commands_link, "commands", true)?
+                && central_commands.is_dir()
+            {
+                skills::copy_dir_all(&central_commands, &commands_link)?;
+                println!("  {} commands copied back", " ok ".green());
             }
         }
 
@@ -497,7 +471,6 @@ fn main() -> anyhow::Result<()> {
                 // --add: add a source repo or local path
                 if skills::is_url(&source) {
                     let (repo_path, found_skills) = skills::clone_or_pull(&source, &source_dir)?;
-                    config.add_source_repo(&source)?;
                     let to_install = select_skills_to_install(&found_skills, all)?;
                     let mut count = 0;
                     for (name, skill_path) in &to_install {
@@ -597,13 +570,8 @@ fn main() -> anyhow::Result<()> {
                         pruned_commands
                     );
                 }
-                let groups = skills::scan_all_sources(
-                    &source_dir,
-                    &skills_dir,
-                    &agents_dir,
-                    &commands_dir,
-                    &config.central.source_repos,
-                );
+                let groups =
+                    skills::scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir);
                 if groups.is_empty() {
                     println!("No sources found. Use 'agm source --add <url>' to add a source.");
                 } else {

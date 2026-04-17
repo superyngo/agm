@@ -247,6 +247,7 @@ pub enum PopupState {
         popup: super::popup::ScrollablePopup,
         editor_path: Option<PathBuf>,
         link_context: Option<LinkContext>,
+        central_field: Option<CentralField>,
     },
     PathEditor {
         field: CentralField,
@@ -408,7 +409,7 @@ impl ToolApp {
                 self.rebuild_rows();
             }
 
-            // Primary action: space/enter
+            // Primary action: space/enter — info or toggle fold
             KeyCode::Char(' ') | KeyCode::Enter => {
                 if let Some(row) = self.current_row().cloned() {
                     match &row {
@@ -418,54 +419,8 @@ impl ToolApp {
                             let sk = format!("{}:status", tool_key);
                             self.toggle_expanded(&sk);
                         }
-                        ToolRow::CentralItem(
-                            ref cf @ (CentralField::Skills
-                            | CentralField::Agents
-                            | CentralField::Commands
-                            | CentralField::Source),
-                        ) => {
-                            let feature_name = match cf {
-                                CentralField::Skills => Some("skills"),
-                                CentralField::Agents => Some("agents"),
-                                CentralField::Commands => Some("commands"),
-                                _ => None,
-                            };
-                            if let Some(name) = feature_name {
-                                if self.config.central.is_disabled(name) {
-                                    self.set_status(format!(
-                                        "{} is disabled — press i to enable",
-                                        name
-                                    ));
-                                    return;
-                                }
-                            }
-                            let current_value = match cf {
-                                CentralField::Skills => self.config.central.skills_source.clone(),
-                                CentralField::Agents => self.config.central.agents_source.clone(),
-                                CentralField::Commands => {
-                                    self.config.central.commands_source.clone()
-                                }
-                                CentralField::Source => self.config.central.source_dir.clone(),
-                                _ => unreachable!(),
-                            };
-                            let len = current_value.len();
-                            self.popup = Some(PopupState::PathEditor {
-                                field: cf.clone(),
-                                value: current_value,
-                                cursor_pos: len,
-                            });
-                        }
-                        ToolRow::CentralItem(CentralField::Config) => {
-                            self.show_central_info(&CentralField::Config);
-                        }
-                        ToolRow::CentralItem(CentralField::Prompt) => {
-                            if self.config.central.is_disabled("prompt") {
-                                self.set_status(
-                                    "prompt is disabled — press i to enable".to_string(),
-                                );
-                            } else {
-                                self.show_central_info(&CentralField::Prompt);
-                            }
+                        ToolRow::CentralItem(ref cf) => {
+                            self.show_central_info(cf);
                         }
                         ToolRow::LinkItem { tool_key, field } => {
                             self.show_link_info(&tool_key.clone(), &field.clone());
@@ -490,8 +445,33 @@ impl ToolApp {
                 }
             }
 
-            // Install/link action: i
+            // Info popup alias: i
             KeyCode::Char('i') => {
+                if let Some(row) = self.current_row().cloned() {
+                    match &row {
+                        ToolRow::CentralItem(ref cf) => {
+                            self.show_central_info(cf);
+                        }
+                        ToolRow::LinkItem { tool_key, field } => {
+                            self.show_link_info(&tool_key.clone(), &field.clone());
+                        }
+                        ToolRow::FileGroupHeader { tool_key, group } => {
+                            self.show_file_info(&tool_key.clone(), &group.clone(), 0);
+                        }
+                        ToolRow::FileItem {
+                            tool_key,
+                            group,
+                            index,
+                        } => {
+                            self.show_file_info(&tool_key.clone(), &group.clone(), *index);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            // Link/toggle action: l
+            KeyCode::Char('l') => {
                 if let Some(row) = self.current_row().cloned() {
                     match &row {
                         ToolRow::CentralItem(
@@ -523,18 +503,42 @@ impl ToolApp {
                 }
             }
 
-            // Edit — open editor
+            // Edit — open editor or path editor
             KeyCode::Char('e') => {
                 if let Some(row) = self.current_row().cloned() {
-                    self.handle_edit(&row, terminal);
+                    match &row {
+                        ToolRow::CentralItem(
+                            ref cf @ (CentralField::Skills
+                            | CentralField::Agents
+                            | CentralField::Commands
+                            | CentralField::Source),
+                        ) => {
+                            let current_value = match cf {
+                                CentralField::Skills => self.config.central.skills_source.clone(),
+                                CentralField::Agents => self.config.central.agents_source.clone(),
+                                CentralField::Commands => {
+                                    self.config.central.commands_source.clone()
+                                }
+                                CentralField::Source => self.config.central.source_dir.clone(),
+                                _ => unreachable!(),
+                            };
+                            let len = current_value.len();
+                            self.popup = Some(PopupState::PathEditor {
+                                field: cf.clone(),
+                                value: current_value,
+                                cursor_pos: len,
+                            });
+                        }
+                        _ => self.handle_edit(&row, terminal),
+                    }
                 }
             }
 
             // Log popup
-            KeyCode::Char('l') => {
+            KeyCode::Char('o') => {
                 let lines = self.log.to_lines();
                 let mut popup =
-                    super::popup::ScrollablePopup::new("Log", lines).with_close_hint("l:close");
+                    super::popup::ScrollablePopup::new("Log", lines).with_close_hint("o:close");
                 popup.scroll_offset = popup.lines.len().saturating_sub(1);
                 self.popup = Some(PopupState::Log(popup));
             }
@@ -562,7 +566,7 @@ impl ToolApp {
         if is_log {
             if let Some(PopupState::Log(ref mut popup)) = self.popup {
                 match code {
-                    KeyCode::Char('l') | KeyCode::Esc => self.popup = None,
+                    KeyCode::Char('o') | KeyCode::Esc => self.popup = None,
                     _ => {
                         popup.handle_key(code);
                     }
@@ -660,12 +664,17 @@ impl ToolApp {
         }
 
         // Extract context for action keys
-        let (editor_path, link_ctx) = match &self.popup {
+        let (editor_path, link_ctx, central_ctx) = match &self.popup {
             Some(PopupState::Info {
                 editor_path,
                 link_context,
+                central_field,
                 ..
-            }) => (editor_path.clone(), link_context.clone()),
+            }) => (
+                editor_path.clone(),
+                link_context.clone(),
+                central_field.clone(),
+            ),
             _ => return,
         };
 
@@ -677,6 +686,10 @@ impl ToolApp {
                 }
             }
             KeyCode::Char('i') => {
+                // Close info popup
+                self.popup = None;
+            }
+            KeyCode::Char('l') => {
                 if let Some(ctx) = link_ctx {
                     let feature = match &ctx.field {
                         LinkField::Prompt => "prompt",
@@ -694,6 +707,9 @@ impl ToolApp {
                         self.toggle_link(&tk, &f);
                         self.show_link_info(&tk, &f);
                     }
+                } else if let Some(cf) = central_ctx {
+                    self.popup = None;
+                    self.show_toggle_feature_confirm(&cf);
                 }
             }
             _ => {}
@@ -847,20 +863,34 @@ impl ToolApp {
             let result = match field {
                 LinkField::Agents => {
                     let agents_target = tool_target.join("agents");
+                    let prompt_fn = self
+                        .config
+                        .tools
+                        .get(tool_key)
+                        .map(|t| t.prompt_filename.as_str())
+                        .unwrap_or("");
                     skills::migrate_agents_dir_quiet(
                         link_path,
                         &agents_target,
                         central_dir,
                         tool_key,
+                        prompt_fn,
                     )
                 }
                 LinkField::Commands => {
                     let commands_target = tool_target.join("commands");
+                    let prompt_fn = self
+                        .config
+                        .tools
+                        .get(tool_key)
+                        .map(|t| t.prompt_filename.as_str())
+                        .unwrap_or("");
                     skills::migrate_commands_dir_quiet(
                         link_path,
                         &commands_target,
                         central_dir,
                         tool_key,
+                        prompt_fn,
                     )
                 }
                 _ => skills::migrate_tool_dir_quiet(link_path, &tool_target, central_dir, tool_key),
@@ -1020,24 +1050,42 @@ impl ToolApp {
             LinkField::Agents => {
                 let agents_store = tool_store.join("agents");
                 if agents_store.exists() {
-                    // Restore from agm_tools store
-                    match std::fs::rename(&agents_store, link_path) {
-                        Ok(()) => {
-                            self.log.push(
-                                LogLevel::Info,
-                                format!("[{}] Restored agents directory", tool_key),
-                            );
+                    // Selectively restore .md files from store
+                    if let Err(e) = std::fs::create_dir_all(link_path) {
+                        self.log.push(
+                            LogLevel::Warning,
+                            format!("[{}] Failed to create agents dir: {}", tool_key, e),
+                        );
+                        return;
+                    }
+                    let mut count = 0usize;
+                    if let Ok(entries) = std::fs::read_dir(&agents_store) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if !path.is_file() {
+                                continue;
+                            }
+                            let name = entry.file_name().to_string_lossy().to_string();
+                            if !name.ends_with(".md") {
+                                continue;
+                            }
+                            let dest = link_path.join(&name);
+                            if dest.exists() {
+                                continue;
+                            }
+                            if std::fs::rename(&path, &dest).is_ok() {
+                                count += 1;
+                            }
                         }
-                        Err(e) => {
-                            self.log.push(
-                                LogLevel::Warning,
-                                format!("[{}] Failed to restore agents: {}", tool_key, e),
-                            );
-                        }
+                    }
+                    if count > 0 {
+                        self.log.push(
+                            LogLevel::Info,
+                            format!("[{}] Restored {} agent(s)", tool_key, count),
+                        );
                     }
                     self.cleanup_empty_tool_store(&tool_store);
                 } else {
-                    // No store — create empty dir so tool can use it individually
                     match std::fs::create_dir_all(link_path) {
                         Ok(()) => {
                             self.log.push(
@@ -1057,19 +1105,39 @@ impl ToolApp {
             LinkField::Commands => {
                 let commands_store = tool_store.join("commands");
                 if commands_store.exists() {
-                    match std::fs::rename(&commands_store, link_path) {
-                        Ok(()) => {
-                            self.log.push(
-                                LogLevel::Info,
-                                format!("[{}] Restored commands directory", tool_key),
-                            );
+                    // Selectively restore .md files from store
+                    if let Err(e) = std::fs::create_dir_all(link_path) {
+                        self.log.push(
+                            LogLevel::Warning,
+                            format!("[{}] Failed to create commands dir: {}", tool_key, e),
+                        );
+                        return;
+                    }
+                    let mut count = 0usize;
+                    if let Ok(entries) = std::fs::read_dir(&commands_store) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if !path.is_file() {
+                                continue;
+                            }
+                            let name = entry.file_name().to_string_lossy().to_string();
+                            if !name.ends_with(".md") {
+                                continue;
+                            }
+                            let dest = link_path.join(&name);
+                            if dest.exists() {
+                                continue;
+                            }
+                            if std::fs::rename(&path, &dest).is_ok() {
+                                count += 1;
+                            }
                         }
-                        Err(e) => {
-                            self.log.push(
-                                LogLevel::Warning,
-                                format!("[{}] Failed to restore commands: {}", tool_key, e),
-                            );
-                        }
+                    }
+                    if count > 0 {
+                        self.log.push(
+                            LogLevel::Info,
+                            format!("[{}] Restored {} command(s)", tool_key, count),
+                        );
                     }
                     self.cleanup_empty_tool_store(&tool_store);
                 } else {
@@ -1411,30 +1479,87 @@ impl ToolApp {
     // ------------------------------------------------------------------
 
     fn show_central_info(&mut self, field: &CentralField) {
-        let (title, path) = match field {
+        let (title, path, is_dir, is_feature) = match field {
             CentralField::Config => {
                 let p = self
                     .config_path
                     .clone()
                     .unwrap_or_else(|| expand_tilde("~/.config/agm/config.toml"));
-                ("Config".to_string(), p)
+                ("Config".to_string(), p, false, false)
             }
             CentralField::Prompt => {
                 let p = expand_tilde(&self.config.central.prompt_source);
-                ("Prompt".to_string(), p)
+                ("Prompt".to_string(), p, false, true)
             }
-            _ => return,
+            CentralField::Skills => {
+                let p = expand_tilde(&self.config.central.skills_source);
+                ("Skills".to_string(), p, true, true)
+            }
+            CentralField::Agents => {
+                let p = expand_tilde(&self.config.central.agents_source);
+                ("Agents".to_string(), p, true, true)
+            }
+            CentralField::Commands => {
+                let p = expand_tilde(&self.config.central.commands_source);
+                ("Commands".to_string(), p, true, true)
+            }
+            CentralField::Source => {
+                let p = expand_tilde(&self.config.central.source_dir);
+                ("Source".to_string(), p, true, false)
+            }
         };
 
-        let mut content_lines = vec![
-            Line::from(vec![
-                Span::styled("Path: ", Style::default().fg(Color::DarkGray)),
-                Span::raw(contract_tilde(&path)),
-            ]),
-            Line::from(""),
-        ];
+        let mut content_lines = vec![Line::from(vec![
+            Span::styled("Path: ", Style::default().fg(Color::DarkGray)),
+            Span::raw(contract_tilde(&path)),
+        ])];
 
-        if path.exists() {
+        // Show disabled status for features
+        if is_feature {
+            let feature_name = match field {
+                CentralField::Prompt => "prompt",
+                CentralField::Skills => "skills",
+                CentralField::Agents => "agents",
+                CentralField::Commands => "commands",
+                _ => "",
+            };
+            if !feature_name.is_empty() {
+                let disabled = self.config.central.is_disabled(feature_name);
+                content_lines.push(Line::from(vec![
+                    Span::styled("Status: ", Style::default().fg(Color::DarkGray)),
+                    if disabled {
+                        Span::styled("Disabled", Style::default().fg(Color::Yellow))
+                    } else {
+                        Span::styled("Enabled", Style::default().fg(Color::Green))
+                    },
+                ]));
+            }
+        }
+        content_lines.push(Line::from(""));
+
+        if is_dir {
+            if path.exists() && path.is_dir() {
+                let mut entries = Vec::new();
+                if let Ok(rd) = std::fs::read_dir(&path) {
+                    for entry in rd.flatten() {
+                        entries.push(entry.file_name().to_string_lossy().to_string());
+                    }
+                }
+                entries.sort();
+                content_lines.push(Line::from(Span::styled(
+                    format!("Contents: {} item(s)", entries.len()),
+                    Style::default().fg(Color::DarkGray),
+                )));
+                for e in &entries {
+                    content_lines.push(Line::from(format!("  {}", e)));
+                }
+            } else {
+                content_lines.push(Line::from(Span::styled(
+                    "Directory not found",
+                    Style::default().fg(Color::Yellow),
+                )));
+            }
+        } else if path.exists() {
             match std::fs::read_to_string(&path) {
                 Ok(content) => {
                     for line in content.lines().take(super::popup::MAX_CONTENT_LINES) {
@@ -1455,16 +1580,33 @@ impl ToolApp {
             )));
         }
 
-        let editor_path = if path.exists() { Some(path) } else { None };
-        let hint = if editor_path.is_some() {
-            "Esc:close  e:edit"
+        let editor_path = if !is_dir && path.exists() {
+            Some(path)
         } else {
-            "Esc:close"
+            None
         };
+
+        let mut hints = Vec::new();
+        hints.push("i/Esc:close");
+        if editor_path.is_some() {
+            hints.push("e:edit");
+        }
+        if is_feature {
+            hints.push("l:toggle");
+        }
+        let hint = hints.join("  ");
+
+        let cf_for_popup = if is_feature {
+            Some(field.clone())
+        } else {
+            None
+        };
+
         self.popup = Some(PopupState::Info {
-            popup: super::popup::ScrollablePopup::new(&title, content_lines).with_close_hint(hint),
+            popup: super::popup::ScrollablePopup::new(&title, content_lines).with_close_hint(&hint),
             editor_path,
             link_context: None,
+            central_field: cf_for_popup,
         });
     }
 
@@ -1577,12 +1719,13 @@ impl ToolApp {
         let title = format!("{} — {}", tool_key, label);
         self.popup = Some(PopupState::Info {
             popup: super::popup::ScrollablePopup::new(&title, lines)
-                .with_close_hint("Esc:close  i:toggle link"),
+                .with_close_hint("i/Esc:close  l:toggle link"),
             editor_path: None,
             link_context: Some(LinkContext {
                 tool_key: tool_key.to_string(),
                 field: field.clone(),
             }),
+            central_field: None,
         });
     }
 
@@ -1625,14 +1768,15 @@ impl ToolApp {
         let title = format!("{} — {}", tool_key, group_label(group));
         let editor_path = if path.exists() { Some(path) } else { None };
         let hint = if editor_path.is_some() {
-            "Esc:close  e:edit"
+            "i/Esc:close  e:edit"
         } else {
-            "Esc:close"
+            "i/Esc:close"
         };
         self.popup = Some(PopupState::Info {
             popup: super::popup::ScrollablePopup::new(&title, lines).with_close_hint(hint),
             editor_path,
             link_context: None,
+            central_field: None,
         });
     }
 
@@ -1980,60 +2124,62 @@ fn build_tool_hints(row: Option<&ToolRow>, config: &Config) -> Line<'static> {
     match row {
         Some(ToolRow::CentralHeader) => {
             spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
-            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
         Some(ToolRow::ToolHeader { .. }) => {
             spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
-            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
         Some(ToolRow::CentralItem(CentralField::Config)) => {
-            spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
+            spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
-            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
         Some(ToolRow::CentralItem(CentralField::Source)) => {
-            spans.extend([hint_key("␣/⏎"), hint_text(" edit path  ")]);
-            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
+            spans.extend([hint_key("e"), hint_text(" edit path  ")]);
+            spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
         Some(ToolRow::CentralItem(CentralField::Prompt)) => {
-            spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
+            spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
-            spans.extend([hint_key("i"), hint_text(" toggle  ")]);
-            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("l"), hint_text(" toggle  ")]);
+            spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
         Some(ToolRow::CentralItem(_)) => {
             // Skills, Agents, Commands
-            spans.extend([hint_key("␣/⏎"), hint_text(" edit path  ")]);
-            spans.extend([hint_key("i"), hint_text(" toggle  ")]);
-            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
+            spans.extend([hint_key("e"), hint_text(" edit path  ")]);
+            spans.extend([hint_key("l"), hint_text(" toggle  ")]);
+            spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
         Some(ToolRow::StatusHeader { .. }) => {
             spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
-            spans.extend([hint_key("i"), hint_text(" link  ")]);
-            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("l"), hint_text(" link all  ")]);
+            spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
         Some(ToolRow::LinkItem {
             field: LinkField::Prompt,
             ..
         }) => {
-            spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
+            spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
-            spans.extend([hint_key("i"), hint_text(" link  ")]);
-            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("l"), hint_text(" link  ")]);
+            spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
         Some(ToolRow::LinkItem { .. }) => {
-            spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
-            spans.extend([hint_key("i"), hint_text(" link  ")]);
-            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
+            spans.extend([hint_key("l"), hint_text(" link  ")]);
+            spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
         Some(ToolRow::FileGroupHeader { tool_key, group }) => {
@@ -2046,22 +2192,22 @@ fn build_tool_hints(row: Option<&ToolRow>, config: &Config) -> Line<'static> {
                 None => &[],
             };
             if files.len() <= 1 {
-                spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
+                spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
                 spans.extend([hint_key("e"), hint_text(" edit  ")]);
             } else {
                 spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
             }
-            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
         Some(ToolRow::FileItem { .. }) => {
-            spans.extend([hint_key("␣/⏎"), hint_text(" info  ")]);
+            spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
-            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
         None => {
-            spans.extend([hint_key("l"), hint_text(" log  ")]);
+            spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
     }
@@ -2599,7 +2745,6 @@ mod tests {
                 agents_source: "~/.local/share/agm/agents".to_string(),
                 commands_source: "~/.local/share/agm/commands".to_string(),
                 source_dir: "~/.local/share/agm/source".to_string(),
-                source_repos: vec![],
                 disabled: vec![],
             },
             tools: tools_map,
