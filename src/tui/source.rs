@@ -2260,12 +2260,7 @@ pub fn run(config: &mut Config) -> Result<()> {
     let _ = skills::prune_broken_commands(&commands_dir);
 
     // Load groups
-    let groups = skills::scan_all_sources(
-        &source_dir,
-        &skills_dir,
-        &agents_dir,
-        &commands_dir,
-    );
+    let groups = skills::scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir);
 
     if groups.is_empty() {
         println!("No sources found. Use `agm source --add <url>` to add sources.");

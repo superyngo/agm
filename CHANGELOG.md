@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.8.0] - 2026-04-17
+
+### Added
+- Info popup for CategoryHeader in source TUI (i key)
+- Refactored tool TUI view with improved layout and rendering
+
+### Changed
+- Remove `source_repos` config field and related methods (`add_source_repo`, `remove_source_repo`)
+- Simplify CLI by removing source repo management commands
+
 ## [v0.7.4] - 2026-04-04
 
 ### Fixed
