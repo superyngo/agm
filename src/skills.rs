@@ -417,6 +417,37 @@ pub fn is_url(source: &str) -> bool {
     source.starts_with("http://") || source.starts_with("https://") || source.starts_with("git@")
 }
 
+/// Normalise a source argument into a canonical git URL.
+///
+/// Accepted input forms (all result in a full URL that `git clone` understands):
+/// - Full HTTPS:   `https://github.com/user/repo`
+/// - Full SSH:     `git@github.com:user/repo.git`
+/// - Shorthand:    `user/repo`  →  `https://github.com/user/repo`
+/// - Local path:   returned unchanged
+pub fn normalize_git_source(source: &str) -> String {
+    let s = source.trim();
+    // Already a full URL or SSH remote — leave untouched
+    if is_url(s) {
+        return s.to_string();
+    }
+    // Shorthand "user/repo": exactly one '/', no spaces, no protocol, no backslash,
+    // and neither component starts with '.' or '/'
+    let parts: Vec<&str> = s.splitn(3, '/').collect();
+    if parts.len() == 2
+        && !parts[0].is_empty()
+        && !parts[1].is_empty()
+        && !parts[0].starts_with('.')
+        && !parts[0].starts_with('/')
+        && !s.contains(' ')
+        && !s.contains('\\')
+        && !s.contains(':')
+    {
+        return format!("https://github.com/{}", s);
+    }
+    // Local path — return as-is
+    s.to_string()
+}
+
 /// Derive repo name from URL
 pub fn repo_name_from_url(url: &str) -> String {
     // e.g. "https://github.com/user/my-skills.git" → "my-skills"
@@ -1351,6 +1382,47 @@ mod tests {
     use super::*;
     use crate::linker;
     use tempfile::TempDir;
+
+    #[test]
+    fn test_normalize_git_source_https() {
+        assert_eq!(
+            normalize_git_source("https://github.com/user/repo"),
+            "https://github.com/user/repo"
+        );
+    }
+
+    #[test]
+    fn test_normalize_git_source_ssh() {
+        assert_eq!(
+            normalize_git_source("git@github.com:user/repo.git"),
+            "git@github.com:user/repo.git"
+        );
+    }
+
+    #[test]
+    fn test_normalize_git_source_shorthand() {
+        assert_eq!(
+            normalize_git_source("superyngo/Wenget"),
+            "https://github.com/superyngo/Wenget"
+        );
+    }
+
+    #[test]
+    fn test_normalize_git_source_local_path() {
+        assert_eq!(
+            normalize_git_source("/home/user/my-skills"),
+            "/home/user/my-skills"
+        );
+        assert_eq!(normalize_git_source("./skills"), "./skills");
+        assert_eq!(normalize_git_source("../skills"), "../skills");
+    }
+
+    #[test]
+    fn test_normalize_git_source_no_false_positive() {
+        // Paths with spaces or backslashes are NOT treated as shorthand
+        let p = "C:\\Users\\foo\\repo";
+        assert_eq!(normalize_git_source(p), p);
+    }
 
     #[test]
     fn test_scan_skills_single() {

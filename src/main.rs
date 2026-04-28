@@ -468,7 +468,9 @@ fn main() -> anyhow::Result<()> {
             let source_dir = paths::expand_tilde(&config.central.source_dir);
 
             if let Some(source) = add {
-                // --add: add a source repo or local path
+                // --add: add a source repo or local path.
+                // Normalise shorthand (e.g. "user/repo") to a full HTTPS URL first.
+                let source = skills::normalize_git_source(&source);
                 if skills::is_url(&source) {
                     let (repo_path, found_skills) = skills::clone_or_pull(&source, &source_dir)?;
                     let to_install = select_skills_to_install(&found_skills, all)?;

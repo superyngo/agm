@@ -1,8 +1,19 @@
 use std::path::{Path, PathBuf};
 
-/// Expand ~ to home directory in path strings
+/// Expand ~ to home directory in path strings.
+/// Handles `~/` (Unix), `~\` (Windows), and bare `~`.
 pub fn expand_tilde(path: &str) -> PathBuf {
-    if let Some(rest) = path.strip_prefix("~/") {
+    // Bare "~" → home directory itself
+    if path == "~" {
+        if let Some(home) = dirs::home_dir() {
+            return home;
+        }
+    }
+    // "~/" or "~\" prefix → join remainder with home
+    let rest = path
+        .strip_prefix("~/")
+        .or_else(|| path.strip_prefix("~\\"));
+    if let Some(rest) = rest {
         if let Some(home) = dirs::home_dir() {
             return home.join(rest);
         }
@@ -93,6 +104,18 @@ mod tests {
     fn test_expand_tilde() {
         let home = dirs::home_dir().unwrap();
         assert_eq!(expand_tilde("~/.config/agm"), home.join(".config/agm"));
+    }
+
+    #[test]
+    fn test_expand_tilde_bare() {
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(expand_tilde("~"), home);
+    }
+
+    #[test]
+    fn test_expand_tilde_backslash() {
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(expand_tilde("~\\.config\\agm"), home.join(".config\\agm"));
     }
 
     #[test]

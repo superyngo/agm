@@ -1214,6 +1214,8 @@ impl App {
                 return;
             }
         };
+        // Normalise shorthand (e.g. "user/repo") to a full HTTPS URL
+        let source = skills::normalize_git_source(&source);
 
         if skills::is_url(&source) {
             match skills::clone_or_pull(&source, &self.source_dir) {
@@ -1297,6 +1299,10 @@ impl App {
             match code {
                 KeyCode::Char('i') | KeyCode::Esc => {
                     self.info_popup = None;
+                }
+                KeyCode::Char('e') => {
+                    self.info_popup = None;
+                    self.open_editor(terminal);
                 }
                 _ => {
                     if popup.handle_key(code) == super::popup::PopupAction::Close {
