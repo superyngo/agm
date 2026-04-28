@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.8.1] - 2026-04-28
+
+### Fixed
+- Windows tilde expansion, git shorthand URLs, source info popup 'e' key
+
 ## [v0.8.0] - 2026-04-17
 
 ### Added
