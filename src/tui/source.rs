@@ -105,6 +105,9 @@ struct App {
     log_popup: Option<super::popup::ScrollablePopup>,
     background_task: Option<super::background::BackgroundTask>,
     info_popup: Option<super::popup::ScrollablePopup>,
+    add_mode: bool,
+    add_input: String,
+    add_cursor: usize,
 }
 
 impl App {
@@ -143,6 +146,9 @@ impl App {
             log_popup: None,
             background_task: None,
             info_popup: None,
+            add_mode: false,
+            add_input: String::new(),
+            add_cursor: 0,
         };
         app.rebuild_rows();
         app
@@ -1194,27 +1200,24 @@ impl App {
         self.set_status("⟳ Updating...");
     }
 
-    fn do_add(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) {
-        let _ = disable_raw_mode();
-        let _ = stdout().execute(LeaveAlternateScreen);
+    fn do_add(&mut self) {
+        self.add_mode = true;
+        self.add_input.clear();
+        self.add_cursor = 0;
+        self.set_status("Add source: URL or local path (Enter to confirm, Esc to cancel)");
+    }
 
-        use dialoguer::Input;
-        let source: Result<String, _> = Input::new()
-            .with_prompt("URL or local path")
-            .interact_text();
+    fn do_add_submit(&mut self) {
+        self.add_mode = false;
+        let source = self.add_input.trim().to_string();
+        self.add_input.clear();
+        self.add_cursor = 0;
 
-        let _ = stdout().execute(EnterAlternateScreen);
-        let _ = enable_raw_mode();
-        let _ = terminal.clear();
+        if source.is_empty() {
+            self.set_status("Add cancelled");
+            return;
+        }
 
-        let source = match source {
-            Ok(s) if !s.trim().is_empty() => s.trim().to_string(),
-            _ => {
-                self.set_status("Add cancelled");
-                return;
-            }
-        };
-        // Normalise shorthand (e.g. "user/repo") to a full HTTPS URL
         let source = skills::normalize_git_source(&source);
 
         if skills::is_url(&source) {
@@ -1370,6 +1373,61 @@ impl App {
             return;
         }
 
+        // Add mode — inline input box
+        if self.add_mode {
+            match code {
+                KeyCode::Esc => {
+                    self.add_mode = false;
+                    self.add_input.clear();
+                    self.add_cursor = 0;
+                    self.set_status("Add cancelled");
+                }
+                KeyCode::Enter => {
+                    self.do_add_submit();
+                }
+                KeyCode::Home => {
+                    self.add_cursor = 0;
+                }
+                KeyCode::End => {
+                    self.add_cursor = self.add_input.chars().count();
+                }
+                KeyCode::Left => {
+                    if self.add_cursor > 0 {
+                        self.add_cursor -= 1;
+                    }
+                }
+                KeyCode::Right => {
+                    if self.add_cursor < self.add_input.chars().count() {
+                        self.add_cursor += 1;
+                    }
+                }
+                KeyCode::Backspace => {
+                    if self.add_cursor > 0 {
+                        let mut chars: Vec<char> = self.add_input.chars().collect();
+                        chars.remove(self.add_cursor - 1);
+                        self.add_input = chars.into_iter().collect();
+                        self.add_cursor -= 1;
+                    }
+                }
+                KeyCode::Delete => {
+                    let len = self.add_input.chars().count();
+                    if self.add_cursor < len {
+                        let mut chars: Vec<char> = self.add_input.chars().collect();
+                        chars.remove(self.add_cursor);
+                        self.add_input = chars.into_iter().collect();
+                    }
+                }
+                KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
+                    let mut chars: Vec<char> = self.add_input.chars().collect();
+                    chars.insert(self.add_cursor, c);
+                    self.add_input = chars.into_iter().collect();
+                    self.add_cursor += 1;
+                }
+                _ => {}
+            }
+            return;
+        }
+
         // Search mode
         if self.search_mode {
             match code {
@@ -1512,7 +1570,7 @@ impl App {
                 self.set_status("Refreshed");
             }
             KeyCode::Char('u') => self.do_update(),
-            KeyCode::Char('a') => self.do_add(terminal),
+            KeyCode::Char('a') => self.do_add(),
             KeyCode::Char('0') => {
                 self.collapse_all();
                 self.set_status("Collapsed all");
@@ -1687,15 +1745,6 @@ fn status_label(status: &SkillInstallStatus) -> &'static str {
         SkillInstallStatus::Installed => "installed",
         SkillInstallStatus::NotInstalled => "not installed",
         SkillInstallStatus::Conflict => "conflict",
-    }
-}
-
-fn count_label(items: &[impl std::any::Any], kind: &str) -> String {
-    let n = items.len();
-    if n == 1 {
-        format!("1 {kind}")
-    } else {
-        format!("{n} {kind}s")
     }
 }
 
@@ -1935,25 +1984,40 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                 let label = kind_label(&group.kind);
                 let (item_count, expanded) = match category {
                     Category::Skills => {
-                        let c = count_label(
-                            &group.skills.iter().map(|_| 0u8).collect::<Vec<_>>(),
-                            "skill",
-                        );
-                        (c, app.expanded_skills_sources.contains(group_index))
+                        let total = group.skills.len();
+                        let installed = group
+                            .skills
+                            .iter()
+                            .filter(|s| s.install_status == SkillInstallStatus::Installed)
+                            .count();
+                        (
+                            format!("{installed}/{total}"),
+                            app.expanded_skills_sources.contains(group_index),
+                        )
                     }
                     Category::Agents => {
-                        let c = count_label(
-                            &group.agents.iter().map(|_| 0u8).collect::<Vec<_>>(),
-                            "agent",
-                        );
-                        (c, app.expanded_agents_sources.contains(group_index))
+                        let total = group.agents.len();
+                        let installed = group
+                            .agents
+                            .iter()
+                            .filter(|a| a.install_status == SkillInstallStatus::Installed)
+                            .count();
+                        (
+                            format!("{installed}/{total}"),
+                            app.expanded_agents_sources.contains(group_index),
+                        )
                     }
                     Category::Commands => {
-                        let c = count_label(
-                            &group.commands.iter().map(|_| 0u8).collect::<Vec<_>>(),
-                            "command",
-                        );
-                        (c, app.expanded_commands_sources.contains(group_index))
+                        let total = group.commands.len();
+                        let installed = group
+                            .commands
+                            .iter()
+                            .filter(|c| c.install_status == SkillInstallStatus::Installed)
+                            .count();
+                        (
+                            format!("{installed}/{total}"),
+                            app.expanded_commands_sources.contains(group_index),
+                        )
                     }
                 };
                 let arrow = if expanded { "▼" } else { "▶" };
@@ -2207,6 +2271,37 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         )));
         frame.render_widget(p, inner);
+    } else if app.add_mode {
+        let prefix = "Add source: ";
+        let input = &app.add_input;
+        // Build spans: prefix + text before cursor + cursor block + text after cursor
+        let chars: Vec<char> = input.chars().collect();
+        let before: String = chars[..app.add_cursor].iter().collect();
+        let cursor_char: String = chars
+            .get(app.add_cursor)
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| " ".to_string());
+        let after_start = if chars.get(app.add_cursor).is_some() {
+            app.add_cursor + 1
+        } else {
+            app.add_cursor
+        };
+        let after: String = chars[after_start..].iter().collect();
+        let line = Line::from(vec![
+            Span::styled(
+                prefix,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(before, Style::default().fg(Color::White)),
+            Span::styled(
+                cursor_char,
+                Style::default().fg(Color::Black).bg(Color::White),
+            ),
+            Span::styled(after, Style::default().fg(Color::White)),
+        ]);
+        frame.render_widget(Paragraph::new(line), inner);
     } else if app.search_mode {
         let prompt = format!("/{}", app.search_query);
         let p = Paragraph::new(Line::from(Span::styled(

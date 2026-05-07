@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.8.2] - 2026-05-07
+
+### Added
+- Source repo entries in TUI now show installed/total count (e.g. `[7/7]`) instead of just `[7 skills]`
+- Source TUI 'a' (add) now uses an inline input box instead of leaving the TUI; supports Home/End, Left/Right, Delete, Enter to confirm, Esc to cancel
+
+### Fixed
+- Update no longer re-installs skills that were explicitly uninstalled; a blocklist file (`.agm_uninstalled`) tracks intentional uninstalls and is respected during updates
+
 ## [v0.8.1] - 2026-04-28
 
 ### Fixed

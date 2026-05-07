@@ -187,6 +187,7 @@ fn scan_skills_recursive(
 /// Errors if a skill with the same name from a different source already exists.
 pub fn install_skill(name: &str, source_path: &Path, skills_dir: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(skills_dir)?;
+    blocklist_remove(skills_dir, name);
     let link_path = skills_dir.join(name);
 
     if link_path.exists() || link_path.symlink_metadata().is_ok() {
@@ -213,6 +214,7 @@ pub fn install_skill(name: &str, source_path: &Path, skills_dir: &Path) -> anyho
 
 /// Uninstall a single skill by removing its symlink from the central skills directory.
 /// No-op if the skill is not installed. Source directory is NOT deleted.
+/// Records the name in the uninstalled blocklist so updates don't re-install it.
 pub fn uninstall_skill(name: &str, skills_dir: &Path) -> anyhow::Result<()> {
     let link_path = skills_dir.join(name);
     if link_path.symlink_metadata().is_err() {
@@ -221,6 +223,7 @@ pub fn uninstall_skill(name: &str, skills_dir: &Path) -> anyhow::Result<()> {
     if platform::is_dir_link(&link_path) {
         platform::remove_link(&link_path)?;
     }
+    blocklist_add(skills_dir, name);
     Ok(())
 }
 
@@ -370,6 +373,50 @@ pub fn prune_broken_commands(commands_dir: &Path) -> anyhow::Result<usize> {
         }
     }
     Ok(removed)
+}
+
+/// Path to the uninstalled-skills blocklist file, stored alongside the skills dir.
+fn blocklist_path(skills_dir: &Path) -> PathBuf {
+    let parent = skills_dir.parent().unwrap_or(skills_dir);
+    parent.join(".agm_uninstalled")
+}
+
+/// Read the blocklist, returning a set of skill names.
+pub fn blocklist_read(skills_dir: &Path) -> std::collections::HashSet<String> {
+    let path = blocklist_path(skills_dir);
+    match fs::read_to_string(&path) {
+        Ok(contents) => contents
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect(),
+        Err(_) => std::collections::HashSet::new(),
+    }
+}
+
+/// Add a skill name to the blocklist.
+fn blocklist_add(skills_dir: &Path, name: &str) {
+    let mut set = blocklist_read(skills_dir);
+    if set.insert(name.to_string()) {
+        let mut sorted: Vec<_> = set.into_iter().collect();
+        sorted.sort();
+        let _ = fs::write(blocklist_path(skills_dir), sorted.join("\n") + "\n");
+    }
+}
+
+/// Remove a skill name from the blocklist (called on explicit install).
+fn blocklist_remove(skills_dir: &Path, name: &str) {
+    let mut set = blocklist_read(skills_dir);
+    if set.remove(name) {
+        let mut sorted: Vec<_> = set.into_iter().collect();
+        sorted.sort();
+        let content = if sorted.is_empty() {
+            String::new()
+        } else {
+            sorted.join("\n") + "\n"
+        };
+        let _ = fs::write(blocklist_path(skills_dir), content);
+    }
 }
 
 /// Check the install status of an agent by examining the central agents directory.
@@ -538,12 +585,13 @@ pub fn update_all(skills_dir: &Path, agents_dir: &Path, source_dir: &Path) -> an
     }
 
     // Re-sync: for each repo, find new skills/agents not yet installed
+    let uninstalled = blocklist_read(skills_dir);
     for git_root in &git_roots {
         let new_skills = scan_skills(git_root);
         let mut added = 0;
         for (name, skill_path) in new_skills {
             let link_path = skills_dir.join(&name);
-            if link_path.symlink_metadata().is_err() {
+            if link_path.symlink_metadata().is_err() && !uninstalled.contains(&name) {
                 if let Err(e) = install_skill(&name, &skill_path, skills_dir) {
                     println!("  {} {}: {}", "warn".yellow(), name, e);
                 } else {
@@ -563,7 +611,7 @@ pub fn update_all(skills_dir: &Path, agents_dir: &Path, source_dir: &Path) -> an
         for (name, agent_path) in new_agents {
             let link_name = format!("{}.md", name);
             let link_path = agents_dir.join(&link_name);
-            if link_path.symlink_metadata().is_err() {
+            if link_path.symlink_metadata().is_err() && !uninstalled.contains(&name) {
                 if let Err(e) = install_agent(&name, &agent_path, agents_dir) {
                     println!("  {} agent {}: {}", "warn".yellow(), name, e);
                 } else {
@@ -694,12 +742,14 @@ pub fn update_all_with_progress<F>(
     let _ = prune_broken_agents(agents_dir);
     let _ = prune_broken_commands(commands_dir);
 
-    // Re-sync new skills/agents
+    // Re-sync new skills/agents/commands, skipping explicitly uninstalled ones
+    let uninstalled = blocklist_read(skills_dir);
     for git_root in &git_roots {
         let new_skills = scan_skills(git_root);
         for (name, skill_path) in new_skills {
             let link_path = skills_dir.join(&name);
             if link_path.symlink_metadata().is_err()
+                && !uninstalled.contains(&name)
                 && install_skill(&name, &skill_path, skills_dir).is_ok()
             {
                 new_skills_total += 1;
@@ -711,6 +761,7 @@ pub fn update_all_with_progress<F>(
             let link_name = format!("{}.md", name);
             let link_path = agents_dir.join(&link_name);
             if link_path.symlink_metadata().is_err()
+                && !uninstalled.contains(&name)
                 && install_agent(&name, &agent_path, agents_dir).is_ok()
             {
                 new_agents_total += 1;
@@ -722,6 +773,7 @@ pub fn update_all_with_progress<F>(
             let link_name = format!("{}.md", name);
             let link_path = commands_dir.join(&link_name);
             if link_path.symlink_metadata().is_err()
+                && !uninstalled.contains(&name)
                 && install_command(&name, &cmd_path, commands_dir).is_ok()
             {
                 new_commands_total += 1;
