@@ -108,6 +108,10 @@ struct App {
     add_mode: bool,
     add_input: String,
     add_cursor: usize,
+    rename_mode: bool,
+    rename_input: String,
+    rename_cursor: usize,
+    rename_target_group_index: Option<usize>,
 }
 
 impl App {
@@ -149,6 +153,10 @@ impl App {
             add_mode: false,
             add_input: String::new(),
             add_cursor: 0,
+            rename_mode: false,
+            rename_input: String::new(),
+            rename_cursor: 0,
+            rename_target_group_index: None,
         };
         app.rebuild_rows();
         app
@@ -1280,6 +1288,68 @@ impl App {
         self.refresh();
     }
 
+    fn start_rename(&mut self) {
+        let row = match self.current_row() {
+            Some(r) => r.clone(),
+            None => {
+                self.set_status("Rename: select a source row first");
+                return;
+            }
+        };
+        let group_index = match row {
+            ListRow::SourceHeader { group_index, .. } => group_index,
+            _ => {
+                self.set_status("Rename: select a source row first");
+                return;
+            }
+        };
+        let current = self.groups[group_index].name.clone();
+        self.rename_mode = true;
+        self.rename_input = current.clone();
+        self.rename_cursor = current.chars().count();
+        self.rename_target_group_index = Some(group_index);
+        self.set_status("Rename: edit name (Enter to confirm, Esc to cancel)");
+    }
+
+    fn do_rename_submit(&mut self) {
+        let group_index = match self.rename_target_group_index.take() {
+            Some(i) => i,
+            None => {
+                self.rename_mode = false;
+                return;
+            }
+        };
+        let new_name = self.rename_input.trim().to_string();
+        self.rename_mode = false;
+        self.rename_input.clear();
+        self.rename_cursor = 0;
+
+        let old_name = self.groups[group_index].name.clone();
+        if new_name.is_empty() || new_name == old_name {
+            self.set_status("Rename cancelled");
+            return;
+        }
+
+        let log = &mut self.log;
+        match skills::rename_source(
+            &old_name,
+            &new_name,
+            &self.source_dir,
+            &self.skills_dir,
+            &self.agents_dir,
+            &self.commands_dir,
+            |evt| push_clone_progress(log, &evt),
+        ) {
+            Ok(_) => self.set_status(format!("Renamed {} → {}", old_name, new_name)),
+            Err(e) => {
+                self.log
+                    .push(super::log::LogLevel::Error, format!("Rename: {}", e));
+                self.set_status(format!("Rename error: {}", e));
+            }
+        }
+        self.refresh();
+    }
+
     fn handle_key(
         &mut self,
         code: KeyCode,
@@ -1375,6 +1445,35 @@ impl App {
                         self.set_status("Cancelled");
                     }
                 },
+            }
+            return;
+        }
+
+        // Rename mode — inline input box
+        if self.rename_mode {
+            match code {
+                KeyCode::Esc => {
+                    self.rename_mode = false;
+                    self.rename_input.clear();
+                    self.rename_target_group_index = None;
+                    self.set_status("Rename cancelled");
+                }
+                KeyCode::Enter => self.do_rename_submit(),
+                KeyCode::Backspace => {
+                    if self.rename_cursor > 0 {
+                        let mut chars: Vec<char> = self.rename_input.chars().collect();
+                        chars.remove(self.rename_cursor - 1);
+                        self.rename_input = chars.into_iter().collect();
+                        self.rename_cursor -= 1;
+                    }
+                }
+                KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
+                    let mut chars: Vec<char> = self.rename_input.chars().collect();
+                    chars.insert(self.rename_cursor, c);
+                    self.rename_input = chars.into_iter().collect();
+                    self.rename_cursor += 1;
+                }
+                _ => {}
             }
             return;
         }
@@ -1570,10 +1669,13 @@ impl App {
                     _ => {}
                 }
             }
-            KeyCode::Char('r') => {
+            KeyCode::F(5) => {
                 self.refresh();
                 self.log.push(super::log::LogLevel::Info, "Refreshed");
                 self.set_status("Refreshed");
+            }
+            KeyCode::Char('r') => {
+                self.start_rename();
             }
             KeyCode::Char('u') => self.do_update(),
             KeyCode::Char('a') => self.do_add(),
@@ -2143,6 +2245,8 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("i"), hint_text(" info  ")]);
             spans.extend([hint_key("a"), hint_text(" add  ")]);
             spans.extend([hint_key("u"), hint_text(" update  ")]);
+            spans.extend([hint_key("r"), hint_text(" rename  ")]);
+            spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
@@ -2152,7 +2256,9 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("i"), hint_text(" info  ")]);
             spans.extend([hint_key("l"), hint_text(" install all  ")]);
             spans.extend([hint_key("d"), hint_text(" del  ")]);
+            spans.extend([hint_key("r"), hint_text(" rename  ")]);
             spans.extend([hint_key("u"), hint_text(" update  ")]);
+            spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
@@ -2162,6 +2268,8 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("l"), hint_text(" install  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
             spans.extend([hint_key("d"), hint_text(" del  ")]);
+            spans.extend([hint_key("r"), hint_text(" rename  ")]);
+            spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
@@ -2170,6 +2278,8 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
             spans.extend([hint_key("l"), hint_text(" install  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
+            spans.extend([hint_key("r"), hint_text(" rename  ")]);
+            spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
@@ -2178,12 +2288,16 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
             spans.extend([hint_key("l"), hint_text(" install  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
+            spans.extend([hint_key("r"), hint_text(" rename  ")]);
+            spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
         None => {
             spans.extend([hint_key("a"), hint_text(" add  ")]);
+            spans.extend([hint_key("r"), hint_text(" rename  ")]);
+            spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
@@ -2291,6 +2405,36 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             app.add_cursor + 1
         } else {
             app.add_cursor
+        };
+        let after: String = chars[after_start..].iter().collect();
+        let line = Line::from(vec![
+            Span::styled(
+                prefix,
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(before, Style::default().fg(Color::White)),
+            Span::styled(
+                cursor_char,
+                Style::default().fg(Color::Black).bg(Color::White),
+            ),
+            Span::styled(after, Style::default().fg(Color::White)),
+        ]);
+        frame.render_widget(Paragraph::new(line), inner);
+    } else if app.rename_mode {
+        let prefix = "Rename → ";
+        let input = &app.rename_input;
+        let chars: Vec<char> = input.chars().collect();
+        let before: String = chars[..app.rename_cursor].iter().collect();
+        let cursor_char: String = chars
+            .get(app.rename_cursor)
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| " ".to_string());
+        let after_start = if chars.get(app.rename_cursor).is_some() {
+            app.rename_cursor + 1
+        } else {
+            app.rename_cursor
         };
         let after: String = chars[after_start..].iter().collect();
         let line = Line::from(vec![
