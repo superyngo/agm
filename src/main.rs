@@ -80,6 +80,35 @@ fn select_skills_to_install(
     Ok(selected.into_iter().map(|i| skills[i].clone()).collect())
 }
 
+fn print_clone_progress(evt: &skills::CloneProgress) {
+    use skills::CloneProgress::*;
+    match evt {
+        Start { name, url, action } => {
+            let verb = match action {
+                skills::CloneAction::Clone => "Cloning",
+                skills::CloneAction::Pull => "Updating",
+            };
+            println!("{} {} from {}...", verb, name, url);
+        }
+        GitLine { line, is_err } => {
+            if *is_err {
+                eprintln!("{}", line);
+            } else {
+                println!("{}", line);
+            }
+        }
+        Done {
+            success, message, ..
+        } => {
+            if *success {
+                println!("{} {}", " ok ".green(), message);
+            } else {
+                println!("{} {}", "fail".red(), message);
+            }
+        }
+    }
+}
+
 fn prompt_yes_no(prompt: &str) -> bool {
     print!("{} [y/N]: ", prompt);
     io::stdout().flush().unwrap();
@@ -464,7 +493,10 @@ fn main() -> anyhow::Result<()> {
                 // Normalise shorthand (e.g. "user/repo") to a full HTTPS URL first.
                 let source = skills::normalize_git_source(&source);
                 if skills::is_url(&source) {
-                    let (repo_path, found_skills) = skills::clone_or_pull(&source, &source_dir)?;
+                    let (repo_path, found_skills) =
+                        skills::clone_or_pull(&source, &source_dir, None, |evt| {
+                            print_clone_progress(&evt);
+                        })?;
                     let to_install = select_skills_to_install(&found_skills, all)?;
                     let mut count = 0;
                     for (name, skill_path) in &to_install {

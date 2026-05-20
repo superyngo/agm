@@ -1221,7 +1221,7 @@ impl App {
         let source = skills::normalize_git_source(&source);
 
         if skills::is_url(&source) {
-            match skills::clone_or_pull(&source, &self.source_dir) {
+            match skills::clone_or_pull(&source, &self.source_dir, None, |_evt| {}) {
                 Ok((repo_path, found_skills)) => {
                     let mut count = 0;
                     for (name, skill_path) in &found_skills {

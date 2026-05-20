@@ -114,3 +114,53 @@ fn file_char_count_basic() {
 fn file_char_count_missing() {
     assert_eq!(file_char_count(std::path::Path::new("/nope/nope")), 0);
 }
+
+use agm::skills::validate_source_name;
+
+#[test]
+fn validate_names() {
+    assert!(validate_source_name("foo").is_ok());
+    assert!(validate_source_name("").is_err());
+    assert!(validate_source_name(".").is_err());
+    assert!(validate_source_name("..").is_err());
+    assert!(validate_source_name("a/b").is_err());
+    assert!(validate_source_name("a\\b").is_err());
+}
+
+#[test]
+#[ignore] // requires network to fail-resolve the broken hostname
+fn clone_or_pull_routes_errors_through_callback_not_stdout() {
+    use agm::skills::{clone_or_pull, CloneProgress};
+    use std::sync::{Arc, Mutex};
+
+    let d = tempdir().unwrap();
+    let source_dir = d.path().join("src");
+
+    // Deliberately broken URL — git will fail. We assert:
+    //   (a) function returns Err
+    //   (b) at least one GitLine { is_err: true } was emitted
+    //   (c) a failing Done event was received
+    let events = Arc::new(Mutex::new(Vec::<CloneProgress>::new()));
+    let events_clone = events.clone();
+    let res = clone_or_pull(
+        "https://invalid.example.invalid/no/such/repo.git",
+        &source_dir,
+        None,
+        move |evt| {
+            events_clone.lock().unwrap().push(evt);
+        },
+    );
+    assert!(res.is_err());
+    let evts = events.lock().unwrap();
+    assert!(
+        evts.iter()
+            .any(|e| matches!(e, CloneProgress::GitLine { is_err: true, .. })),
+        "expected at least one stderr GitLine event, got: {:?}",
+        evts
+    );
+    assert!(
+        evts.iter()
+            .any(|e| matches!(e, CloneProgress::Done { success: false, .. })),
+        "expected a failing Done event"
+    );
+}

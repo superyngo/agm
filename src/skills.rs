@@ -1069,16 +1069,29 @@ pub fn add_local_copy(
 
 /// Clone a git repo (or pull if it already exists) into source_dir/{repo_name}/.
 /// Returns the repo path and list of skills found. Does NOT install skills.
+/// Progress is reported via `on_progress` callback; git stdio is piped (not inherited).
 pub fn clone_or_pull(
     url: &str,
     source_dir: &Path,
+    target_name: Option<&str>,
+    mut on_progress: impl FnMut(CloneProgress),
 ) -> anyhow::Result<(PathBuf, Vec<(String, PathBuf)>)> {
-    let name = repo_name_from_url(url);
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    use std::sync::mpsc;
+    use std::thread;
+
+    let name = match target_name {
+        Some(n) => {
+            validate_source_name(n)?;
+            n.to_string()
+        }
+        None => repo_name_from_url(url),
+    };
     let repo_path = source_dir.join(&name);
 
-    if repo_path.is_dir() {
-        // Check if it belongs to a different remote
-        let existing_url = std::process::Command::new("git")
+    let action = if repo_path.is_dir() {
+        let existing_url = Command::new("git")
             .args(["remote", "get-url", "origin"])
             .current_dir(&repo_path)
             .output()
@@ -1092,7 +1105,6 @@ pub fn clone_or_pull(
                     None
                 }
             });
-
         if let Some(ref existing) = existing_url {
             if normalize_git_url(existing) != normalize_git_url(url) {
                 anyhow::bail!(
@@ -1103,32 +1115,92 @@ pub fn clone_or_pull(
                 );
             }
         }
-
-        println!("Updating {} from {}...", name, url);
-        let status = std::process::Command::new("git")
-            .args(["pull"])
-            .current_dir(&repo_path)
-            .status()?;
-        if !status.success() {
-            anyhow::bail!("git pull failed for {}", name);
-        }
+        CloneAction::Pull
     } else {
-        println!("Cloning {} from {}...", name, url);
         fs::create_dir_all(source_dir)?;
-        let status = std::process::Command::new("git")
-            .args(["clone", url, &repo_path.display().to_string()])
-            .status()?;
-        if !status.success() {
-            anyhow::bail!("git clone failed for {}", url);
+        CloneAction::Clone
+    };
+
+    on_progress(CloneProgress::Start {
+        name: name.clone(),
+        url: url.to_string(),
+        action,
+    });
+
+    let mut cmd = Command::new("git");
+    match action {
+        CloneAction::Pull => {
+            cmd.args(["pull"]).current_dir(&repo_path);
         }
+        CloneAction::Clone => {
+            cmd.args(["clone", url, &repo_path.display().to_string()]);
+        }
+    }
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().context("failed to spawn git")?;
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+
+    let (tx, rx) = mpsc::channel::<(bool, String)>();
+    let tx_err = tx.clone();
+    let t_out = thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().flatten() {
+            let _ = tx.send((false, line));
+        }
+    });
+    let t_err = thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().flatten() {
+            let _ = tx_err.send((true, line));
+        }
+    });
+
+    let status = child.wait().context("git wait failed")?;
+    let _ = t_out.join();
+    let _ = t_err.join();
+    for (is_err, line) in rx.iter() {
+        on_progress(CloneProgress::GitLine { line, is_err });
+    }
+
+    let (success, message) = if status.success() {
+        (
+            true,
+            match action {
+                CloneAction::Pull => "Updated".to_string(),
+                CloneAction::Clone => "Cloned".to_string(),
+            },
+        )
+    } else {
+        (
+            false,
+            format!(
+                "git {} exited with {}",
+                match action {
+                    CloneAction::Pull => "pull",
+                    CloneAction::Clone => "clone",
+                },
+                status
+            ),
+        )
+    };
+
+    on_progress(CloneProgress::Done {
+        name: name.clone(),
+        success,
+        message: message.clone(),
+    });
+
+    if !success {
+        anyhow::bail!("{}", message);
     }
 
     let skills = scan_skills(&repo_path);
     if skills.is_empty() {
-        fs::remove_dir_all(&repo_path)?;
+        if action == CloneAction::Clone {
+            let _ = fs::remove_dir_all(&repo_path);
+        }
         anyhow::bail!("No skills found in {}. Clone removed.", url);
     }
-
     Ok((repo_path, skills))
 }
 
@@ -2583,4 +2655,18 @@ pub fn file_char_count(path: &Path) -> usize {
     fs::read_to_string(path)
         .map(|s| s.chars().count())
         .unwrap_or(0)
+}
+
+/// Validate a user-supplied source directory name.
+pub fn validate_source_name(name: &str) -> anyhow::Result<()> {
+    if name.is_empty() {
+        anyhow::bail!("source name must not be empty");
+    }
+    if name == "." || name == ".." {
+        anyhow::bail!("source name must not be '.' or '..'");
+    }
+    if name.contains('/') || name.contains('\\') {
+        anyhow::bail!("source name must not contain '/' or '\\\\'");
+    }
+    Ok(())
 }
