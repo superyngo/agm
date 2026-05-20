@@ -2552,7 +2552,8 @@ pub fn resolve_source_target(
     }
 
     // Step 2: URL match (Repo only).
-    let target_norm = normalize_git_url(target);
+    let target_canonical = normalize_git_source(target);
+    let target_norm = normalize_git_url(&target_canonical);
     let by_url: Vec<&SourceGroup> = groups
         .iter()
         .filter(|g| match &g.kind {

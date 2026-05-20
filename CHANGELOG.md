@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `resolve_source_target` now canonicalizes shorthand `user/repo` URLs via `normalize_git_source` before matching, so `agm source del user/repo` correctly resolves repos cloned from `https://github.com/user/repo` (2026-05-20)
+
 ## [v0.8.2] - 2026-05-07
 
 ### Added
