@@ -303,3 +303,109 @@ fn clone_or_pull_routes_errors_through_callback_not_stdout() {
         "expected a failing Done event"
     );
 }
+
+use agm::skills::{install_skill, rename_source};
+
+#[test]
+fn rename_relinks_installed_skill_only() {
+    let d = tempdir().unwrap();
+    let source_dir = d.path().join("src");
+    let skills_dir = d.path().join("sk");
+    let agents_dir = d.path().join("ag");
+    let commands_dir = d.path().join("cm");
+    fs::create_dir_all(&source_dir).unwrap();
+    fs::create_dir_all(&skills_dir).unwrap();
+    fs::create_dir_all(&agents_dir).unwrap();
+    fs::create_dir_all(&commands_dir).unwrap();
+
+    // Repo "old" with TWO skills: "dummy" (installed) and "ignored" (not installed).
+    let repo = source_dir.join("old");
+    for n in ["dummy", "ignored"] {
+        fs::create_dir_all(repo.join("skills").join(n)).unwrap();
+        fs::write(
+            repo.join("skills").join(n).join("SKILL.md"),
+            format!("---\nname: {}\ndescription: d\n---\n", n),
+        )
+        .unwrap();
+    }
+    install_skill("dummy", &repo.join("skills").join("dummy"), &skills_dir).unwrap();
+    assert!(skills_dir.join("dummy").symlink_metadata().is_ok());
+    assert!(skills_dir.join("ignored").symlink_metadata().is_err());
+
+    let r = rename_source(
+        "old",
+        "new",
+        &source_dir,
+        &skills_dir,
+        &agents_dir,
+        &commands_dir,
+        |_| {},
+    )
+    .unwrap();
+    assert_eq!(r.skills_relinked, 1);
+
+    // Installed link now resolves to new path; non-installed stays absent.
+    let target = fs::read_link(skills_dir.join("dummy")).unwrap();
+    assert!(target.to_string_lossy().contains("/new/"));
+    assert!(skills_dir.join("ignored").symlink_metadata().is_err());
+}
+
+#[test]
+fn rename_with_invalid_new_name_errors() {
+    let d = tempdir().unwrap();
+    let source_dir = d.path().join("src");
+    fs::create_dir_all(source_dir.join("old").join("skills").join("dummy")).unwrap();
+    fs::write(
+        source_dir
+            .join("old")
+            .join("skills")
+            .join("dummy")
+            .join("SKILL.md"),
+        "---\nname: dummy\ndescription: d\n---\n",
+    )
+    .unwrap();
+    let skills_dir = d.path().join("sk");
+    let agents_dir = d.path().join("ag");
+    let commands_dir = d.path().join("cm");
+    fs::create_dir_all(&skills_dir).unwrap();
+    fs::create_dir_all(&agents_dir).unwrap();
+    fs::create_dir_all(&commands_dir).unwrap();
+
+    assert!(rename_source(
+        "old", "a/b", &source_dir, &skills_dir, &agents_dir, &commands_dir, |_| {},
+    )
+    .is_err());
+    // Source dir untouched.
+    assert!(source_dir.join("old").exists());
+}
+
+#[test]
+fn rename_target_exists_errors() {
+    let d = tempdir().unwrap();
+    let source_dir = d.path().join("src");
+    fs::create_dir_all(source_dir.join("old").join("skills").join("dummy")).unwrap();
+    fs::write(
+        source_dir
+            .join("old")
+            .join("skills")
+            .join("dummy")
+            .join("SKILL.md"),
+        "---\nname: dummy\ndescription: d\n---\n",
+    )
+    .unwrap();
+    fs::create_dir_all(source_dir.join("new")).unwrap();
+
+    let skills_dir = d.path().join("sk");
+    let agents_dir = d.path().join("ag");
+    let commands_dir = d.path().join("cm");
+    fs::create_dir_all(&skills_dir).unwrap();
+    fs::create_dir_all(&agents_dir).unwrap();
+    fs::create_dir_all(&commands_dir).unwrap();
+
+    let err = rename_source(
+        "old", "new", &source_dir, &skills_dir, &agents_dir, &commands_dir, |_| {},
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("already exists"));
+    assert!(source_dir.join("old").exists()); // unchanged
+}

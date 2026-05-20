@@ -2594,3 +2594,146 @@ pub fn validate_source_name(name: &str) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+#[derive(Debug, Default, Clone)]
+pub struct RenameReport {
+    pub skills_relinked: usize,
+    pub agents_relinked: usize,
+    pub commands_relinked: usize,
+    pub rollback_failures: Vec<String>,
+}
+
+pub fn rename_source(
+    old: &str,
+    new: &str,
+    source_dir: &Path,
+    skills_dir: &Path,
+    agents_dir: &Path,
+    commands_dir: &Path,
+    mut on_progress: impl FnMut(CloneProgress),
+) -> anyhow::Result<RenameReport> {
+    validate_source_name(new)?;
+
+    let group = resolve_source_target(old, source_dir, skills_dir, agents_dir, commands_dir)?;
+
+    // Determine old/new paths, including the local/ prefix if applicable.
+    let (old_path, new_path) = match &group.kind {
+        SourceKind::Local => (
+            source_dir.join("local").join(&group.name),
+            source_dir.join("local").join(new),
+        ),
+        _ => (
+            source_dir.join(&group.name),
+            source_dir.join(new),
+        ),
+    };
+
+    if new_path.exists() {
+        anyhow::bail!(
+            "Target '{}' already exists at {}",
+            new,
+            contract_tilde(&new_path)
+        );
+    }
+
+    on_progress(CloneProgress::Start {
+        name: group.name.clone(),
+        url: format!("→ {}", new),
+        action: CloneAction::Pull,
+    });
+
+    // Snapshot installed items.
+    let installed_skills: Vec<String> = group
+        .skills
+        .iter()
+        .filter(|s| s.install_status == SkillInstallStatus::Installed)
+        .map(|s| s.name.clone())
+        .collect();
+    let installed_agents: Vec<String> = group
+        .agents
+        .iter()
+        .filter(|a| a.install_status == SkillInstallStatus::Installed)
+        .map(|a| a.name.clone())
+        .collect();
+    let installed_commands: Vec<String> = group
+        .commands
+        .iter()
+        .filter(|c| c.install_status == SkillInstallStatus::Installed)
+        .map(|c| c.name.clone())
+        .collect();
+
+    // Uninstall from central store.
+    for n in &installed_skills { let _ = uninstall_skill(n, skills_dir); }
+    for n in &installed_agents { let _ = uninstall_agent(n, agents_dir); }
+    for n in &installed_commands { let _ = uninstall_command(n, commands_dir); }
+
+    // fs::rename
+    if let Err(e) = fs::rename(&old_path, &new_path) {
+        // Best-effort rollback: re-install against old path.
+        let mut report = RenameReport::default();
+        for n in &installed_skills {
+            let p = old_path.join("skills").join(n);
+            if install_skill(n, &p, skills_dir).is_err() {
+                report.rollback_failures.push(format!("skill {}", n));
+            }
+        }
+        for n in &installed_agents {
+            let p = old_path.join("agents").join(format!("{}.md", n));
+            if install_agent(n, &p, agents_dir).is_err() {
+                report.rollback_failures.push(format!("agent {}", n));
+            }
+        }
+        for n in &installed_commands {
+            let p = old_path.join("commands").join(format!("{}.md", n));
+            if install_command(n, &p, commands_dir).is_err() {
+                report.rollback_failures.push(format!("command {}", n));
+            }
+        }
+        on_progress(CloneProgress::Done {
+            name: group.name.clone(),
+            success: false,
+            message: format!("rename failed: {}", e),
+        });
+        anyhow::bail!(
+            "fs::rename failed: {}. Rollback failures: {:?}",
+            e,
+            report.rollback_failures
+        );
+    }
+
+    // Re-scan and re-install.
+    let mut report = RenameReport::default();
+    let new_skills = scan_skills(&new_path);
+    for (n, sp) in &new_skills {
+        if installed_skills.contains(n) && install_skill(n, sp, skills_dir).is_ok() {
+            report.skills_relinked += 1;
+        }
+    }
+    let new_agents = scan_agents(&new_path);
+    for (n, sp) in &new_agents {
+        if installed_agents.contains(n) && install_agent(n, sp, agents_dir).is_ok() {
+            report.agents_relinked += 1;
+        }
+    }
+    let new_cmds = scan_commands(&new_path);
+    for (n, sp) in &new_cmds {
+        if installed_commands.contains(n) && install_command(n, sp, commands_dir).is_ok() {
+            report.commands_relinked += 1;
+        }
+    }
+
+    on_progress(CloneProgress::Done {
+        name: new.to_string(),
+        success: true,
+        message: format!(
+            "Renamed {} → {}; relinked {} skill(s), {} agent(s), {} command(s)",
+            group.name,
+            new,
+            report.skills_relinked,
+            report.agents_relinked,
+            report.commands_relinked
+        ),
+    });
+
+    Ok(report)
+}
