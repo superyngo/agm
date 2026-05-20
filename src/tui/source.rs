@@ -1221,7 +1221,10 @@ impl App {
         let source = skills::normalize_git_source(&source);
 
         if skills::is_url(&source) {
-            match skills::clone_or_pull(&source, &self.source_dir, None, |_evt| {}) {
+            let log = &mut self.log;
+            match skills::clone_or_pull(&source, &self.source_dir, None, |evt| {
+                push_clone_progress(log, &evt);
+            }) {
                 Ok((repo_path, found_skills)) => {
                     let mut count = 0;
                     for (name, skill_path) in &found_skills {
@@ -1250,7 +1253,10 @@ impl App {
             }
         } else {
             let source_path = expand_tilde(&source);
-            match skills::add_local_copy(&source_path, &self.source_dir, None, |_evt| {}) {
+            let log = &mut self.log;
+            match skills::add_local_copy(&source_path, &self.source_dir, None, |evt| {
+                push_clone_progress(log, &evt);
+            }) {
                 Ok((_dest, found_skills)) => {
                     let mut count = 0;
                     for (name, skill_path) in &found_skills {
@@ -2476,4 +2482,45 @@ pub fn run(config: &mut Config) -> Result<()> {
     *config = app.config;
 
     Ok(())
+}
+
+fn push_clone_progress(log: &mut super::log::LogBuffer, evt: &skills::CloneProgress) {
+    use super::log::LogLevel;
+    use skills::CloneProgress::*;
+    match evt {
+        Start { name, url, action } => {
+            let verb = match action {
+                skills::CloneAction::Clone => "Cloning",
+                skills::CloneAction::Pull => "Updating",
+            };
+            log.push(LogLevel::Info, format!("{} {} from {}", verb, name, url));
+        }
+        GitLine { line, is_err } => {
+            // git often prints normal progress to stderr (e.g. "Cloning into ...").
+            // We still surface it as Warning to make it visually distinct from
+            // stdout, but reserve Error for the final failing Done event.
+            log.push(
+                if *is_err {
+                    LogLevel::Warning
+                } else {
+                    LogLevel::Info
+                },
+                line.clone(),
+            );
+        }
+        Done {
+            name,
+            success,
+            message,
+        } => {
+            log.push(
+                if *success {
+                    LogLevel::Success
+                } else {
+                    LogLevel::Error
+                },
+                format!("{}: {}", name, message),
+            );
+        }
+    }
 }
