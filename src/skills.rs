@@ -52,6 +52,32 @@ pub enum SourceKind {
     Migrated { tool: String },
 }
 
+/// Whether `clone_or_pull` is performing a fresh clone or pulling an existing repo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloneAction {
+    Clone,
+    Pull,
+}
+
+/// Progress events from `clone_or_pull` / `add_local_copy` / `rename_source`.
+#[derive(Debug, Clone)]
+pub enum CloneProgress {
+    /// Operation started.
+    Start {
+        name: String,
+        url: String,
+        action: CloneAction,
+    },
+    /// A single line from the underlying git subprocess.
+    GitLine { line: String, is_err: bool },
+    /// Operation finished. `success=false` means the caller should treat this as a failure.
+    Done {
+        name: String,
+        success: bool,
+        message: String,
+    },
+}
+
 /// A source and all skills/agents it contains
 #[derive(Debug, Clone)]
 pub struct SourceGroup {

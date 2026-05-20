@@ -1,12 +1,4 @@
-mod config;
-mod editor;
-mod init;
-mod linker;
-mod paths;
-mod platform;
-mod skills;
-mod status;
-mod tui;
+use agm::{config, editor, init, linker, paths, platform, skills, status, tui};
 
 use clap::{CommandFactory, Parser, Subcommand};
 use colored::Colorize;

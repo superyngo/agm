@@ -6,6 +6,14 @@ version = "0.8.2"
 edition = "2021"
 description = "AI Agent Manager - centralized config management for AI CLI tools"
 
+[lib]
+name = "agm"
+path = "src/lib.rs"
+
+[[bin]]
+name = "agm"
+path = "src/main.rs"
+
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
