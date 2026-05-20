@@ -106,8 +106,10 @@ struct App {
     background_task: Option<super::background::BackgroundTask>,
     info_popup: Option<super::popup::ScrollablePopup>,
     add_mode: bool,
-    add_input: String,
-    add_cursor: usize,
+    add_input: super::text_input::TextInput,
+    rename_mode: bool,
+    rename_input: super::text_input::TextInput,
+    rename_target_group_index: Option<usize>,
 }
 
 impl App {
@@ -147,8 +149,10 @@ impl App {
             background_task: None,
             info_popup: None,
             add_mode: false,
-            add_input: String::new(),
-            add_cursor: 0,
+            add_input: super::text_input::TextInput::new(),
+            rename_mode: false,
+            rename_input: super::text_input::TextInput::new(),
+            rename_target_group_index: None,
         };
         app.rebuild_rows();
         app
@@ -874,6 +878,45 @@ impl App {
             )));
         }
 
+        // Total preload chars for this category (installed vs not-installed).
+        let (installed_chars, uninstalled_chars) = match category {
+            Category::Skills => {
+                let i: usize = self.groups.iter().flat_map(|g| &g.skills)
+                    .filter(|s| s.install_status == SkillInstallStatus::Installed)
+                    .map(|s| s.preload_chars).sum();
+                let u: usize = self.groups.iter().flat_map(|g| &g.skills)
+                    .filter(|s| s.install_status != SkillInstallStatus::Installed)
+                    .map(|s| s.preload_chars).sum();
+                (i, u)
+            }
+            Category::Agents => {
+                let i: usize = self.groups.iter().flat_map(|g| &g.agents)
+                    .filter(|a| a.install_status == SkillInstallStatus::Installed)
+                    .map(|a| a.preload_chars).sum();
+                let u: usize = self.groups.iter().flat_map(|g| &g.agents)
+                    .filter(|a| a.install_status != SkillInstallStatus::Installed)
+                    .map(|a| a.preload_chars).sum();
+                (i, u)
+            }
+            Category::Commands => {
+                let i: usize = self.groups.iter().flat_map(|g| &g.commands)
+                    .filter(|c| c.install_status == SkillInstallStatus::Installed)
+                    .map(|c| c.preload_chars).sum();
+                let u: usize = self.groups.iter().flat_map(|g| &g.commands)
+                    .filter(|c| c.install_status != SkillInstallStatus::Installed)
+                    .map(|c| c.preload_chars).sum();
+                (i, u)
+            }
+        };
+
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            "Total preload chars:",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(format!("  installed:     {}", installed_chars)));
+        lines.push(Line::from(format!("  not-installed: {}", uninstalled_chars)));
+
         lines
     }
 
@@ -898,6 +941,10 @@ impl App {
         lines.push(Line::from(vec![
             Span::styled("Status: ", Style::default().fg(Color::Yellow)),
             Span::raw(format!("{:?}", skill.install_status)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Preload chars: ", Style::default().fg(Color::Yellow)),
+            Span::raw(skill.preload_chars.to_string()),
         ]));
         lines.push(Line::default()); // blank line
 
@@ -970,6 +1017,10 @@ impl App {
             Span::styled("Status: ", Style::default().fg(Color::Yellow)),
             Span::raw(format!("{:?}", agent.install_status)),
         ]));
+        lines.push(Line::from(vec![
+            Span::styled("Char count: ", Style::default().fg(Color::Yellow)),
+            Span::raw(agent.preload_chars.to_string()),
+        ]));
         lines.push(Line::default());
 
         // Agent .md content
@@ -1026,6 +1077,10 @@ impl App {
         lines.push(Line::from(vec![
             Span::styled("Status: ", Style::default().fg(Color::Yellow)),
             Span::raw(format!("{:?}", command.install_status)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Char count: ", Style::default().fg(Color::Yellow)),
+            Span::raw(command.preload_chars.to_string()),
         ]));
         lines.push(Line::default());
 
@@ -1097,6 +1152,42 @@ impl App {
             Span::styled("Commands: ", Style::default().fg(Color::Yellow)),
             Span::raw(format!("{}", group.commands.len())),
         ]));
+
+        // Preload chars summary per-category
+        let sum = |installed: bool, items_chars: &[(bool, usize)]| -> usize {
+            items_chars.iter().filter(|(i, _)| *i == installed).map(|(_, c)| *c).sum()
+        };
+
+        let skill_data: Vec<(bool, usize)> = group
+            .skills
+            .iter()
+            .map(|s| (s.install_status == skills::SkillInstallStatus::Installed, s.preload_chars))
+            .collect();
+        let agent_data: Vec<(bool, usize)> = group
+            .agents
+            .iter()
+            .map(|a| (a.install_status == skills::SkillInstallStatus::Installed, a.preload_chars))
+            .collect();
+        let cmd_data: Vec<(bool, usize)> = group
+            .commands
+            .iter()
+            .map(|c| (c.install_status == skills::SkillInstallStatus::Installed, c.preload_chars))
+            .collect();
+
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            "Preload chars:",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )));
+        for (label, data) in [("Skills", &skill_data), ("Agents", &agent_data), ("Commands", &cmd_data)] {
+            if data.is_empty() { continue; }
+            lines.push(Line::from(format!(
+                "  {:<8} — installed {}  not-installed {}",
+                label,
+                sum(true, data),
+                sum(false, data),
+            )));
+        }
 
         lines.push(Line::default());
 
@@ -1203,15 +1294,13 @@ impl App {
     fn do_add(&mut self) {
         self.add_mode = true;
         self.add_input.clear();
-        self.add_cursor = 0;
         self.set_status("Add source: URL or local path (Enter to confirm, Esc to cancel)");
     }
 
     fn do_add_submit(&mut self) {
         self.add_mode = false;
-        let source = self.add_input.trim().to_string();
+        let source = self.add_input.text().trim().to_string();
         self.add_input.clear();
-        self.add_cursor = 0;
 
         if source.is_empty() {
             self.set_status("Add cancelled");
@@ -1221,7 +1310,10 @@ impl App {
         let source = skills::normalize_git_source(&source);
 
         if skills::is_url(&source) {
-            match skills::clone_or_pull(&source, &self.source_dir) {
+            let log = &mut self.log;
+            match skills::clone_or_pull(&source, &self.source_dir, None, |evt| {
+                push_clone_progress(log, &evt);
+            }) {
                 Ok((repo_path, found_skills)) => {
                     let mut count = 0;
                     for (name, skill_path) in &found_skills {
@@ -1250,7 +1342,10 @@ impl App {
             }
         } else {
             let source_path = expand_tilde(&source);
-            match skills::add_local_copy(&source_path, &self.source_dir) {
+            let log = &mut self.log;
+            match skills::add_local_copy(&source_path, &self.source_dir, None, |evt| {
+                push_clone_progress(log, &evt);
+            }) {
                 Ok((_dest, found_skills)) => {
                     let mut count = 0;
                     for (name, skill_path) in &found_skills {
@@ -1269,6 +1364,66 @@ impl App {
                         .push(super::log::LogLevel::Error, format!("Add error: {e}"));
                     self.set_status(format!("Error: {e}"));
                 }
+            }
+        }
+        self.refresh();
+    }
+
+    fn start_rename(&mut self) {
+        let row = match self.current_row() {
+            Some(r) => r.clone(),
+            None => {
+                self.set_status("Rename: select a source row first");
+                return;
+            }
+        };
+        let group_index = match row {
+            ListRow::SourceHeader { group_index, .. } => group_index,
+            _ => {
+                self.set_status("Rename: select a source row first");
+                return;
+            }
+        };
+        let current = self.groups[group_index].name.clone();
+        self.rename_mode = true;
+        self.rename_input = super::text_input::TextInput::with_text(current);
+        self.rename_target_group_index = Some(group_index);
+        self.set_status("Rename: edit name (Enter to confirm, Esc to cancel)");
+    }
+
+    fn do_rename_submit(&mut self) {
+        let group_index = match self.rename_target_group_index.take() {
+            Some(i) => i,
+            None => {
+                self.rename_mode = false;
+                return;
+            }
+        };
+        let new_name = self.rename_input.text().trim().to_string();
+        self.rename_mode = false;
+        self.rename_input.clear();
+
+        let old_name = self.groups[group_index].name.clone();
+        if new_name.is_empty() || new_name == old_name {
+            self.set_status("Rename cancelled");
+            return;
+        }
+
+        let log = &mut self.log;
+        match skills::rename_source(
+            &old_name,
+            &new_name,
+            &self.source_dir,
+            &self.skills_dir,
+            &self.agents_dir,
+            &self.commands_dir,
+            |evt| push_clone_progress(log, &evt),
+        ) {
+            Ok(_) => self.set_status(format!("Renamed {} → {}", old_name, new_name)),
+            Err(e) => {
+                self.log
+                    .push(super::log::LogLevel::Error, format!("Rename: {}", e));
+                self.set_status(format!("Rename error: {}", e));
             }
         }
         self.refresh();
@@ -1373,57 +1528,37 @@ impl App {
             return;
         }
 
+        // Rename mode — inline input box
+        if self.rename_mode {
+            match code {
+                KeyCode::Esc => {
+                    self.rename_mode = false;
+                    self.rename_input.clear();
+                    self.rename_target_group_index = None;
+                    self.set_status("Rename cancelled");
+                }
+                KeyCode::Enter => self.do_rename_submit(),
+                _ => {
+                    self.rename_input.handle_key(code, modifiers);
+                }
+            }
+            return;
+        }
+
         // Add mode — inline input box
         if self.add_mode {
             match code {
                 KeyCode::Esc => {
                     self.add_mode = false;
                     self.add_input.clear();
-                    self.add_cursor = 0;
                     self.set_status("Add cancelled");
                 }
                 KeyCode::Enter => {
                     self.do_add_submit();
                 }
-                KeyCode::Home => {
-                    self.add_cursor = 0;
+                _ => {
+                    self.add_input.handle_key(code, modifiers);
                 }
-                KeyCode::End => {
-                    self.add_cursor = self.add_input.chars().count();
-                }
-                KeyCode::Left => {
-                    if self.add_cursor > 0 {
-                        self.add_cursor -= 1;
-                    }
-                }
-                KeyCode::Right => {
-                    if self.add_cursor < self.add_input.chars().count() {
-                        self.add_cursor += 1;
-                    }
-                }
-                KeyCode::Backspace => {
-                    if self.add_cursor > 0 {
-                        let mut chars: Vec<char> = self.add_input.chars().collect();
-                        chars.remove(self.add_cursor - 1);
-                        self.add_input = chars.into_iter().collect();
-                        self.add_cursor -= 1;
-                    }
-                }
-                KeyCode::Delete => {
-                    let len = self.add_input.chars().count();
-                    if self.add_cursor < len {
-                        let mut chars: Vec<char> = self.add_input.chars().collect();
-                        chars.remove(self.add_cursor);
-                        self.add_input = chars.into_iter().collect();
-                    }
-                }
-                KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
-                    let mut chars: Vec<char> = self.add_input.chars().collect();
-                    chars.insert(self.add_cursor, c);
-                    self.add_input = chars.into_iter().collect();
-                    self.add_cursor += 1;
-                }
-                _ => {}
             }
             return;
         }
@@ -1564,10 +1699,13 @@ impl App {
                     _ => {}
                 }
             }
-            KeyCode::Char('r') => {
+            KeyCode::F(5) => {
                 self.refresh();
                 self.log.push(super::log::LogLevel::Info, "Refreshed");
                 self.set_status("Refreshed");
+            }
+            KeyCode::Char('r') => {
+                self.start_rename();
             }
             KeyCode::Char('u') => self.do_update(),
             KeyCode::Char('a') => self.do_add(),
@@ -2137,6 +2275,8 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("i"), hint_text(" info  ")]);
             spans.extend([hint_key("a"), hint_text(" add  ")]);
             spans.extend([hint_key("u"), hint_text(" update  ")]);
+            spans.extend([hint_key("r"), hint_text(" rename  ")]);
+            spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
@@ -2146,7 +2286,9 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("i"), hint_text(" info  ")]);
             spans.extend([hint_key("l"), hint_text(" install all  ")]);
             spans.extend([hint_key("d"), hint_text(" del  ")]);
+            spans.extend([hint_key("r"), hint_text(" rename  ")]);
             spans.extend([hint_key("u"), hint_text(" update  ")]);
+            spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
@@ -2156,6 +2298,8 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("l"), hint_text(" install  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
             spans.extend([hint_key("d"), hint_text(" del  ")]);
+            spans.extend([hint_key("r"), hint_text(" rename  ")]);
+            spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
@@ -2164,6 +2308,8 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
             spans.extend([hint_key("l"), hint_text(" install  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
+            spans.extend([hint_key("r"), hint_text(" rename  ")]);
+            spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
@@ -2172,12 +2318,16 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
             spans.extend([hint_key("l"), hint_text(" install  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
+            spans.extend([hint_key("r"), hint_text(" rename  ")]);
+            spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
         None => {
             spans.extend([hint_key("a"), hint_text(" add  ")]);
+            spans.extend([hint_key("r"), hint_text(" rename  ")]);
+            spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
@@ -2272,35 +2422,18 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
         )));
         frame.render_widget(p, inner);
     } else if app.add_mode {
-        let prefix = "Add source: ";
-        let input = &app.add_input;
-        // Build spans: prefix + text before cursor + cursor block + text after cursor
-        let chars: Vec<char> = input.chars().collect();
-        let before: String = chars[..app.add_cursor].iter().collect();
-        let cursor_char: String = chars
-            .get(app.add_cursor)
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| " ".to_string());
-        let after_start = if chars.get(app.add_cursor).is_some() {
-            app.add_cursor + 1
-        } else {
-            app.add_cursor
-        };
-        let after: String = chars[after_start..].iter().collect();
-        let line = Line::from(vec![
-            Span::styled(
-                prefix,
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(before, Style::default().fg(Color::White)),
-            Span::styled(
-                cursor_char,
-                Style::default().fg(Color::Black).bg(Color::White),
-            ),
-            Span::styled(after, Style::default().fg(Color::White)),
-        ]);
+        let prefix_style = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD);
+        let text_style = Style::default().fg(Color::White);
+        let line = app.add_input.render_line("Add source: ", prefix_style, text_style);
+        frame.render_widget(Paragraph::new(line), inner);
+    } else if app.rename_mode {
+        let prefix_style = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD);
+        let text_style = Style::default().fg(Color::White);
+        let line = app.rename_input.render_line("Rename → ", prefix_style, text_style);
         frame.render_widget(Paragraph::new(line), inner);
     } else if app.search_mode {
         let prompt = format!("/{}", app.search_query);
@@ -2476,4 +2609,45 @@ pub fn run(config: &mut Config) -> Result<()> {
     *config = app.config;
 
     Ok(())
+}
+
+fn push_clone_progress(log: &mut super::log::LogBuffer, evt: &skills::CloneProgress) {
+    use super::log::LogLevel;
+    use skills::CloneProgress::*;
+    match evt {
+        Start { name, url, action } => {
+            let verb = match action {
+                skills::CloneAction::Clone => "Cloning",
+                skills::CloneAction::Pull => "Updating",
+            };
+            log.push(LogLevel::Info, format!("{} {} from {}", verb, name, url));
+        }
+        GitLine { line, is_err } => {
+            // git often prints normal progress to stderr (e.g. "Cloning into ...").
+            // We still surface it as Warning to make it visually distinct from
+            // stdout, but reserve Error for the final failing Done event.
+            log.push(
+                if *is_err {
+                    LogLevel::Warning
+                } else {
+                    LogLevel::Info
+                },
+                line.clone(),
+            );
+        }
+        Done {
+            name,
+            success,
+            message,
+        } => {
+            log.push(
+                if *success {
+                    LogLevel::Success
+                } else {
+                    LogLevel::Error
+                },
+                format!("{}: {}", name, message),
+            );
+        }
+    }
 }

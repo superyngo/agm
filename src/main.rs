@@ -1,12 +1,4 @@
-mod config;
-mod editor;
-mod init;
-mod linker;
-mod paths;
-mod platform;
-mod skills;
-mod status;
-mod tui;
+use agm::{config, editor, init, linker, paths, platform, skills, status, tui};
 
 use clap::{CommandFactory, Parser, Subcommand};
 use colored::Colorize;
@@ -35,33 +27,46 @@ enum Commands {
     Init,
     /// Manage tools, links, and configuration
     Tool {
-        /// Link all tools (non-interactive)
-        #[arg(short = 'l', long)]
-        link: bool,
-
-        /// Unlink all tools (non-interactive)
-        #[arg(short = 'u', long)]
-        unlink: bool,
-
-        /// Show status table (non-interactive)
-        #[arg(short = 's', long)]
-        status: bool,
+        #[command(subcommand)]
+        action: Option<ToolAction>,
     },
     /// Manage source repos, skills, and agents
     Source {
-        /// Add a source (URL or local path)
-        #[arg(short = 'a', long = "add")]
-        add: Option<String>,
-        /// Update all source repos (git pull)
-        #[arg(short = 'u', long = "update")]
-        update: bool,
-        /// List all skills and agents grouped by source
-        #[arg(short = 'l', long = "list")]
-        list: bool,
-        /// Install all skills without prompting (used with --add)
-        #[arg(long = "all")]
+        #[command(subcommand)]
+        action: Option<SourceAction>,
+    },
+}
+
+#[derive(Subcommand)]
+enum ToolAction {
+    /// Link all installed tools (non-interactive)
+    Link,
+    /// Unlink all installed tools (non-interactive)
+    Unlink,
+    /// Show status table (non-interactive)
+    Status,
+}
+
+#[derive(Subcommand)]
+enum SourceAction {
+    /// Add a source (URL or local path)
+    Add {
+        source: String,
+        /// Override target directory name
+        #[arg(short = 'n', long)]
+        name: Option<String>,
+        /// Install all skills without prompting
+        #[arg(long)]
         all: bool,
     },
+    /// Update all source repos (git pull)
+    Update,
+    /// List all skills/agents grouped by source
+    List,
+    /// Delete a source by folder name or repo URL
+    Del { target: String },
+    /// Rename a source folder
+    Rename { old: String, new: String },
 }
 
 /// If there is only 1 skill, return it directly. If multiple and `all` is true, return all.
@@ -86,6 +91,35 @@ fn select_skills_to_install(
         .interact()?;
 
     Ok(selected.into_iter().map(|i| skills[i].clone()).collect())
+}
+
+fn print_clone_progress(evt: &skills::CloneProgress) {
+    use skills::CloneProgress::*;
+    match evt {
+        Start { name, url, action } => {
+            let verb = match action {
+                skills::CloneAction::Clone => "Cloning",
+                skills::CloneAction::Pull => "Updating",
+            };
+            println!("{} {} from {}...", verb, name, url);
+        }
+        GitLine { line, is_err } => {
+            if *is_err {
+                eprintln!("{}", line);
+            } else {
+                println!("{}", line);
+            }
+        }
+        Done {
+            success, message, ..
+        } => {
+            if *success {
+                println!("{} {}", " ok ".green(), message);
+            } else {
+                println!("{} {}", "fail".red(), message);
+            }
+        }
+    }
 }
 
 fn prompt_yes_no(prompt: &str) -> bool {
@@ -185,12 +219,15 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
                             ))
                         {
                             let tool_skills_target = source_dir.join("agm_tools").join(key);
-                            let added = skills::migrate_tool_dir(
+                            let (added, msgs) = skills::migrate_tool_dir_quiet(
                                 &skills_link,
                                 &tool_skills_target,
                                 &central_skills,
                                 key,
                             )?;
+                            for m in &msgs {
+                                println!("{}", m);
+                            }
                             if added > 0 {
                                 println!("  {} Migrated {} skill(s)", " ok ".green(), added);
                             }
@@ -385,6 +422,278 @@ fn unlink_all(config: &config::Config) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn source_add(
+    source: &str,
+    name: Option<&str>,
+    all: bool,
+    source_dir: &std::path::Path,
+    skills_dir: &std::path::Path,
+    agents_dir: &std::path::Path,
+) -> anyhow::Result<()> {
+    let normalized = skills::normalize_git_source(source);
+    if skills::is_url(&normalized) {
+        let (repo_path, found_skills) =
+            skills::clone_or_pull(&normalized, source_dir, name, |evt| {
+                print_clone_progress(&evt)
+            })?;
+        let to_install = select_skills_to_install(&found_skills, all)?;
+        let mut count = 0;
+        for (n, p) in &to_install {
+            match skills::install_skill(n, p, skills_dir) {
+                Ok(()) => {
+                    println!("  {} {} → {}", " ok ".green(), n, paths::contract_tilde(p));
+                    count += 1;
+                }
+                Err(e) => println!("  {} {}: {}", "warn".yellow(), n, e),
+            }
+        }
+        let mut agent_count = 0;
+        for (n, p) in &skills::scan_agents(&repo_path) {
+            match skills::install_agent(n, p, agents_dir) {
+                Ok(()) => {
+                    println!(
+                        "  {} agent {} → {}",
+                        " ok ".green(),
+                        n,
+                        paths::contract_tilde(p)
+                    );
+                    agent_count += 1;
+                }
+                Err(e) => println!("  {} agent {}: {}", "warn".yellow(), n, e),
+            }
+        }
+        println!(
+            "\n{} skill(s), {} agent(s) installed from {}.",
+            count,
+            agent_count,
+            paths::contract_tilde(&repo_path)
+        );
+    } else {
+        let source_path = paths::expand_tilde(source);
+        println!(
+            "Adding skills from {}...",
+            paths::contract_tilde(&source_path)
+        );
+        let (dest, found_skills) = skills::add_local_copy(&source_path, source_dir, name, |evt| {
+            print_clone_progress(&evt)
+        })?;
+        let to_install = select_skills_to_install(&found_skills, all)?;
+        let mut count = 0;
+        for (n, p) in &to_install {
+            match skills::install_skill(n, p, skills_dir) {
+                Ok(()) => {
+                    println!("  {} {} → {}", " ok ".green(), n, paths::contract_tilde(p));
+                    count += 1;
+                }
+                Err(e) => println!("  {} {}: {}", "warn".yellow(), n, e),
+            }
+        }
+        println!(
+            "\n{} skill(s) installed from {}.",
+            count,
+            paths::contract_tilde(&dest)
+        );
+    }
+    Ok(())
+}
+
+fn source_update(
+    skills_dir: &std::path::Path,
+    agents_dir: &std::path::Path,
+    commands_dir: &std::path::Path,
+    source_dir: &std::path::Path,
+) -> anyhow::Result<()> {
+    use skills::UpdateProgress::*;
+    skills::update_all_with_progress(
+        skills_dir,
+        agents_dir,
+        commands_dir,
+        source_dir,
+        |p| match p {
+            RepoStart { name } => println!("Updating {}...", name),
+            RepoComplete {
+                name,
+                success,
+                message,
+            } => {
+                let tag = if success {
+                    " ok ".green()
+                } else {
+                    "fail".red()
+                };
+                println!("  {} {}: {}", tag, name, message);
+            }
+            AllDone {
+                total,
+                updated,
+                new_skills,
+                new_agents,
+                new_commands,
+            } => {
+                println!(
+                    "\nUpdated {}/{}; {} new skill(s), {} new agent(s), {} new command(s).",
+                    updated, total, new_skills, new_agents, new_commands
+                );
+            }
+        },
+    );
+    Ok(())
+}
+
+fn source_list(
+    skills_dir: &std::path::Path,
+    agents_dir: &std::path::Path,
+    commands_dir: &std::path::Path,
+    source_dir: &std::path::Path,
+) -> anyhow::Result<()> {
+    let pruned = skills::prune_broken_skills(skills_dir)?;
+    if pruned > 0 {
+        println!(
+            "  {} Removed {} broken skill link(s)",
+            "warn".yellow(),
+            pruned
+        );
+    }
+    let pruned_agents = skills::prune_broken_agents(agents_dir)?;
+    if pruned_agents > 0 {
+        println!(
+            "  {} Removed {} broken agent link(s)",
+            "warn".yellow(),
+            pruned_agents
+        );
+    }
+    let pruned_commands = skills::prune_broken_commands(commands_dir)?;
+    if pruned_commands > 0 {
+        println!(
+            "  {} Removed {} broken command link(s)",
+            "warn".yellow(),
+            pruned_commands
+        );
+    }
+    let groups = skills::scan_all_sources(source_dir, skills_dir, agents_dir, commands_dir);
+    if groups.is_empty() {
+        println!("No sources found. Use 'agm source add <url>' to add a source.");
+    } else {
+        println!();
+        let mut total_skills = 0;
+        let mut installed_skills = 0;
+        let mut total_agents = 0;
+        let mut installed_agents = 0;
+        for group in &groups {
+            let icon = match &group.kind {
+                skills::SourceKind::Repo { .. } => "📦",
+                skills::SourceKind::Local => "📁",
+                skills::SourceKind::Migrated { .. } => "📁",
+            };
+            let detail = match &group.kind {
+                skills::SourceKind::Repo { url } => url
+                    .as_deref()
+                    .map(|u| format!("repo: {}", u))
+                    .unwrap_or_else(|| "repo".into()),
+                skills::SourceKind::Local => "local".into(),
+                skills::SourceKind::Migrated { tool } => {
+                    format!("migrated from {}", tool)
+                }
+            };
+            println!("{} {} ({})", icon, group.name.bold(), detail);
+
+            if !group.skills.is_empty() {
+                println!("  {}", "Skills:".dimmed());
+                for skill in &group.skills {
+                    total_skills += 1;
+                    let (indicator, status_text) = match skill.install_status {
+                        skills::SkillInstallStatus::Installed => {
+                            installed_skills += 1;
+                            ("✓".green().to_string(), "installed".green().to_string())
+                        }
+                        skills::SkillInstallStatus::NotInstalled => (
+                            "✗".dimmed().to_string(),
+                            "not installed".dimmed().to_string(),
+                        ),
+                        skills::SkillInstallStatus::Conflict => {
+                            ("⚡".yellow().to_string(), "conflict".yellow().to_string())
+                        }
+                    };
+                    println!("   {} {:<24} {}", indicator, skill.name, status_text);
+                }
+            }
+
+            if !group.agents.is_empty() {
+                println!("  {}", "Agents:".dimmed());
+                for agent in &group.agents {
+                    total_agents += 1;
+                    let (indicator, status_text) = match agent.install_status {
+                        skills::SkillInstallStatus::Installed => {
+                            installed_agents += 1;
+                            ("✓".green().to_string(), "installed".green().to_string())
+                        }
+                        skills::SkillInstallStatus::NotInstalled => (
+                            "✗".dimmed().to_string(),
+                            "not installed".dimmed().to_string(),
+                        ),
+                        skills::SkillInstallStatus::Conflict => {
+                            ("⚡".yellow().to_string(), "conflict".yellow().to_string())
+                        }
+                    };
+                    println!("   {} {:<24} {}", indicator, agent.name, status_text);
+                }
+            }
+            println!();
+        }
+        println!(
+            "── {} ──",
+            format!(
+                "{} source(s), {} skill(s) ({} installed), {} agent(s) ({} installed)",
+                groups.len(),
+                total_skills,
+                installed_skills,
+                total_agents,
+                installed_agents,
+            )
+            .bold()
+        );
+    }
+    Ok(())
+}
+
+fn source_del(
+    target: &str,
+    source_dir: &std::path::Path,
+    skills_dir: &std::path::Path,
+    agents_dir: &std::path::Path,
+    commands_dir: &std::path::Path,
+) -> anyhow::Result<()> {
+    let group =
+        skills::resolve_source_target(target, source_dir, skills_dir, agents_dir, commands_dir)?;
+    skills::delete_source(&group, skills_dir, agents_dir, commands_dir)?;
+    println!("{} Deleted source {}", " ok ".green(), group.name);
+    Ok(())
+}
+
+fn source_rename(
+    old: &str,
+    new: &str,
+    source_dir: &std::path::Path,
+    skills_dir: &std::path::Path,
+    agents_dir: &std::path::Path,
+    commands_dir: &std::path::Path,
+) -> anyhow::Result<()> {
+    let report = skills::rename_source(
+        old,
+        new,
+        source_dir,
+        skills_dir,
+        agents_dir,
+        commands_dir,
+        |evt| print_clone_progress(&evt),
+    )?;
+    println!(
+        "Relinked: {} skill(s), {} agent(s), {} command(s)",
+        report.skills_relinked, report.agents_relinked, report.commands_relinked
+    );
+    Ok(())
+}
+
 fn main() -> anyhow::Result<()> {
     // Parse CLI with custom error handling
     let cli = match Cli::try_parse() {
@@ -429,238 +738,55 @@ fn main() -> anyhow::Result<()> {
 
     match command {
         Commands::Init => init::run(cli.config.clone()),
-        Commands::Tool {
-            link,
-            unlink,
-            status,
-        } => {
-            // Enforce mutual exclusivity
-            let flag_count = [link, unlink, status].iter().filter(|&&x| x).count();
-            if flag_count > 1 {
-                anyhow::bail!("Only one of --link, --unlink, --status can be specified");
-            }
-
-            if link {
-                // Reuse existing link-all logic
+        Commands::Tool { action } => match action {
+            None => tui::tool::run(cli.config.clone()),
+            Some(ToolAction::Link) => {
                 let config = config::Config::load_from(cli.config.clone())?;
-                link_all(&config, cli.config.as_deref())?;
-            } else if unlink {
-                let config = config::Config::load_from(cli.config.clone())?;
-                unlink_all(&config)?;
-            } else if status {
-                status::status()?;
-            } else {
-                // No flags → launch TUI
-                tui::tool::run(cli.config.clone())?;
+                link_all(&config, cli.config.as_deref())
             }
-            Ok(())
-        }
-        Commands::Source {
-            add,
-            update,
-            list,
-            all,
-        } => {
+            Some(ToolAction::Unlink) => {
+                let config = config::Config::load_from(cli.config.clone())?;
+                unlink_all(&config)
+            }
+            Some(ToolAction::Status) => status::status(),
+        },
+        Commands::Source { action } => {
             let mut config = config::Config::load_from(cli.config.clone())?;
             let skills_dir = paths::expand_tilde(&config.central.skills_source);
             let agents_dir = paths::expand_tilde(&config.central.agents_source);
             let commands_dir = paths::expand_tilde(&config.central.commands_source);
             let source_dir = paths::expand_tilde(&config.central.source_dir);
-
-            if let Some(source) = add {
-                // --add: add a source repo or local path.
-                // Normalise shorthand (e.g. "user/repo") to a full HTTPS URL first.
-                let source = skills::normalize_git_source(&source);
-                if skills::is_url(&source) {
-                    let (repo_path, found_skills) = skills::clone_or_pull(&source, &source_dir)?;
-                    let to_install = select_skills_to_install(&found_skills, all)?;
-                    let mut count = 0;
-                    for (name, skill_path) in &to_install {
-                        match skills::install_skill(name, skill_path, &skills_dir) {
-                            Ok(()) => {
-                                println!(
-                                    "  {} {} → {}",
-                                    " ok ".green(),
-                                    name,
-                                    paths::contract_tilde(skill_path)
-                                );
-                                count += 1;
-                            }
-                            Err(e) => println!("  {} {}: {}", "warn".yellow(), name, e),
-                        }
-                    }
-                    // Auto-install agents from the repo
-                    let found_agents = skills::scan_agents(&repo_path);
-                    let mut agent_count = 0;
-                    for (name, agent_path) in &found_agents {
-                        match skills::install_agent(name, agent_path, &agents_dir) {
-                            Ok(()) => {
-                                println!(
-                                    "  {} agent {} → {}",
-                                    " ok ".green(),
-                                    name,
-                                    paths::contract_tilde(agent_path)
-                                );
-                                agent_count += 1;
-                            }
-                            Err(e) => println!("  {} agent {}: {}", "warn".yellow(), name, e),
-                        }
-                    }
-                    println!(
-                        "\n{} skill(s), {} agent(s) installed from {}.",
-                        count,
-                        agent_count,
-                        paths::contract_tilde(&repo_path)
-                    );
-                } else {
-                    let source_path = paths::expand_tilde(&source);
-                    println!(
-                        "Adding skills from {}...",
-                        paths::contract_tilde(&source_path)
-                    );
-                    let (dest, found_skills) = skills::add_local_copy(&source_path, &source_dir)?;
-                    let to_install = select_skills_to_install(&found_skills, all)?;
-                    let mut count = 0;
-                    for (name, skill_path) in &to_install {
-                        match skills::install_skill(name, skill_path, &skills_dir) {
-                            Ok(()) => {
-                                println!(
-                                    "  {} {} → {}",
-                                    " ok ".green(),
-                                    name,
-                                    paths::contract_tilde(skill_path)
-                                );
-                                count += 1;
-                            }
-                            Err(e) => println!("  {} {}: {}", "warn".yellow(), name, e),
-                        }
-                    }
-                    println!(
-                        "\n{} skill(s) installed from {}.",
-                        count,
-                        paths::contract_tilde(&dest)
-                    );
+            match action {
+                None => tui::source::run(&mut config),
+                Some(SourceAction::Add { source, name, all }) => source_add(
+                    &source,
+                    name.as_deref(),
+                    all,
+                    &source_dir,
+                    &skills_dir,
+                    &agents_dir,
+                ),
+                Some(SourceAction::Update) => {
+                    source_update(&skills_dir, &agents_dir, &commands_dir, &source_dir)
                 }
-                Ok(())
-            } else if update {
-                // --update: git pull all repos
-                skills::update_all(&skills_dir, &agents_dir, &source_dir)?;
-                Ok(())
-            } else if list {
-                // --list: show all skills and agents
-                let pruned = skills::prune_broken_skills(&skills_dir)?;
-                if pruned > 0 {
-                    println!(
-                        "  {} Removed {} broken skill link(s)",
-                        "warn".yellow(),
-                        pruned
-                    );
+                Some(SourceAction::List) => {
+                    source_list(&skills_dir, &agents_dir, &commands_dir, &source_dir)
                 }
-                let pruned_agents = skills::prune_broken_agents(&agents_dir)?;
-                if pruned_agents > 0 {
-                    println!(
-                        "  {} Removed {} broken agent link(s)",
-                        "warn".yellow(),
-                        pruned_agents
-                    );
-                }
-                let pruned_commands = skills::prune_broken_commands(&commands_dir)?;
-                if pruned_commands > 0 {
-                    println!(
-                        "  {} Removed {} broken command link(s)",
-                        "warn".yellow(),
-                        pruned_commands
-                    );
-                }
-                let groups =
-                    skills::scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir);
-                if groups.is_empty() {
-                    println!("No sources found. Use 'agm source --add <url>' to add a source.");
-                } else {
-                    println!();
-                    let mut total_skills = 0;
-                    let mut installed_skills = 0;
-                    let mut total_agents = 0;
-                    let mut installed_agents = 0;
-                    for group in &groups {
-                        let icon = match &group.kind {
-                            skills::SourceKind::Repo { .. } => "📦",
-                            skills::SourceKind::Local => "📁",
-                            skills::SourceKind::Migrated { .. } => "📁",
-                        };
-                        let detail = match &group.kind {
-                            skills::SourceKind::Repo { url } => url
-                                .as_deref()
-                                .map(|u| format!("repo: {}", u))
-                                .unwrap_or_else(|| "repo".into()),
-                            skills::SourceKind::Local => "local".into(),
-                            skills::SourceKind::Migrated { tool } => {
-                                format!("migrated from {}", tool)
-                            }
-                        };
-                        println!("{} {} ({})", icon, group.name.bold(), detail);
-
-                        if !group.skills.is_empty() {
-                            println!("  {}", "Skills:".dimmed());
-                            for skill in &group.skills {
-                                total_skills += 1;
-                                let (indicator, status_text) = match skill.install_status {
-                                    skills::SkillInstallStatus::Installed => {
-                                        installed_skills += 1;
-                                        ("✓".green().to_string(), "installed".green().to_string())
-                                    }
-                                    skills::SkillInstallStatus::NotInstalled => (
-                                        "✗".dimmed().to_string(),
-                                        "not installed".dimmed().to_string(),
-                                    ),
-                                    skills::SkillInstallStatus::Conflict => {
-                                        ("⚡".yellow().to_string(), "conflict".yellow().to_string())
-                                    }
-                                };
-                                println!("   {} {:<24} {}", indicator, skill.name, status_text);
-                            }
-                        }
-
-                        if !group.agents.is_empty() {
-                            println!("  {}", "Agents:".dimmed());
-                            for agent in &group.agents {
-                                total_agents += 1;
-                                let (indicator, status_text) = match agent.install_status {
-                                    skills::SkillInstallStatus::Installed => {
-                                        installed_agents += 1;
-                                        ("✓".green().to_string(), "installed".green().to_string())
-                                    }
-                                    skills::SkillInstallStatus::NotInstalled => (
-                                        "✗".dimmed().to_string(),
-                                        "not installed".dimmed().to_string(),
-                                    ),
-                                    skills::SkillInstallStatus::Conflict => {
-                                        ("⚡".yellow().to_string(), "conflict".yellow().to_string())
-                                    }
-                                };
-                                println!("   {} {:<24} {}", indicator, agent.name, status_text);
-                            }
-                        }
-                        println!();
-                    }
-                    println!(
-                        "── {} ──",
-                        format!(
-                            "{} source(s), {} skill(s) ({} installed), {} agent(s) ({} installed)",
-                            groups.len(),
-                            total_skills,
-                            installed_skills,
-                            total_agents,
-                            installed_agents,
-                        )
-                        .bold()
-                    );
-                }
-                Ok(())
-            } else {
-                // No flags — enter TUI
-                tui::source::run(&mut config)?;
-                Ok(())
+                Some(SourceAction::Del { target }) => source_del(
+                    &target,
+                    &source_dir,
+                    &skills_dir,
+                    &agents_dir,
+                    &commands_dir,
+                ),
+                Some(SourceAction::Rename { old, new }) => source_rename(
+                    &old,
+                    &new,
+                    &source_dir,
+                    &skills_dir,
+                    &agents_dir,
+                    &commands_dir,
+                ),
             }
         }
     }

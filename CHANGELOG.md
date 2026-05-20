@@ -5,7 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## Unreleased
+
+### Breaking
+- CLI restructured to use explicit subcommands. Removed: `agm tool -l/-u/-s`, `agm source -a/-u/-l/--add/--update/--list`. Replacements: `agm tool link|unlink|status`, `agm source add|update|list`.
+
+### Added
+- `agm source del <name|url>` — delete a source.
+- `agm source rename <old> <new>` — rename a source folder and relink installed items.
+- `agm source add -n,--name <name>` — override the cloned/copied directory name.
+- TUI: `r` opens rename for the focused source row; `F5` refreshes the list.
+- TUI info popups now display preload-char counts (`name` + `description` for skills; whole file for agents/commands) with rollups at source and category levels.
+
+### Fixed
+- `resolve_source_target` now canonicalizes shorthand `user/repo` URLs via `normalize_git_source` before matching, so `agm source del user/repo` correctly resolves repos cloned from `https://github.com/user/repo` (2026-05-20)
+- TUI screen tearing when adding a source. All git stdout/stderr now flows through `LogBuffer`.
+- TUI source rename input now supports the same keys as add input (Home/End, Left/Right, Delete); both share a new `TextInput` widget (2026-05-20)
 
 ## [v0.8.2] - 2026-05-07
 

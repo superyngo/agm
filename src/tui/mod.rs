@@ -2,6 +2,7 @@ pub mod background;
 pub mod log;
 pub mod popup;
 pub mod source;
+pub mod text_input;
 pub mod tool;
 
 use ratatui::layout::Rect;

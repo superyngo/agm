@@ -1,5 +1,4 @@
 use anyhow::Context;
-use colored::Colorize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -23,6 +22,7 @@ pub struct SkillInfo {
     pub name: String,
     pub source_path: PathBuf,
     pub install_status: SkillInstallStatus,
+    pub preload_chars: usize,
 }
 
 /// Full info about a single agent (.md file)
@@ -31,6 +31,7 @@ pub struct AgentInfo {
     pub name: String,
     pub source_path: PathBuf,
     pub install_status: SkillInstallStatus,
+    pub preload_chars: usize,
 }
 
 /// Full info about a single command (.md file in commands/ folder)
@@ -39,6 +40,7 @@ pub struct CommandInfo {
     pub name: String,
     pub source_path: PathBuf,
     pub install_status: SkillInstallStatus,
+    pub preload_chars: usize,
 }
 
 /// What kind of source this is
@@ -50,6 +52,32 @@ pub enum SourceKind {
     Local,
     /// Migrated from tool during agm link (source_dir/agm_tools/{tool}/)
     Migrated { tool: String },
+}
+
+/// Whether `clone_or_pull` is performing a fresh clone or pulling an existing repo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloneAction {
+    Clone,
+    Pull,
+}
+
+/// Progress events from `clone_or_pull` / `add_local_copy` / `rename_source`.
+#[derive(Debug, Clone)]
+pub enum CloneProgress {
+    /// Operation started.
+    Start {
+        name: String,
+        url: String,
+        action: CloneAction,
+    },
+    /// A single line from the underlying git subprocess.
+    GitLine { line: String, is_err: bool },
+    /// Operation finished. `success=false` means the caller should treat this as a failure.
+    Done {
+        name: String,
+        success: bool,
+        message: String,
+    },
 }
 
 /// A source and all skills/agents it contains
@@ -305,12 +333,7 @@ pub fn prune_broken_skills(skills_dir: &Path) -> anyhow::Result<usize> {
         if platform::is_dir_link(&path) {
             // Follow the link; if target doesn't exist the link is broken
             if !path.exists() {
-                let name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("<unknown>");
                 platform::remove_link(&path)?;
-                println!("  {} {} (broken skill link removed)", "warn".yellow(), name);
                 removed += 1;
             }
         }
@@ -333,12 +356,7 @@ pub fn prune_broken_agents(agents_dir: &Path) -> anyhow::Result<usize> {
             && path.symlink_metadata().is_ok()
             && !path.exists()
         {
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("<unknown>");
             platform::remove_link(&path)?;
-            println!("  {} {} (broken agent link removed)", "warn".yellow(), name);
             removed += 1;
         }
     }
@@ -359,16 +377,7 @@ pub fn prune_broken_commands(commands_dir: &Path) -> anyhow::Result<usize> {
             && path.symlink_metadata().is_ok()
             && !path.exists()
         {
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("<unknown>");
             platform::remove_link(&path)?;
-            println!(
-                "  {} {} (broken command link removed)",
-                "warn".yellow(),
-                name
-            );
             removed += 1;
         }
     }
@@ -517,130 +526,7 @@ fn normalize_git_url(url: &str) -> String {
 }
 
 /// Git pull all skill source repos (deduplicating by git root), then re-sync symlinks
-pub fn update_all(skills_dir: &Path, agents_dir: &Path, source_dir: &Path) -> anyhow::Result<()> {
-    if !skills_dir.is_dir() {
-        anyhow::bail!("Skills directory does not exist: {}", skills_dir.display());
-    }
-
-    // Collect git roots from source_dir (not from skills symlinks)
-    let mut git_roots = std::collections::HashSet::new();
-    if source_dir.is_dir() {
-        if let Ok(entries) = fs::read_dir(source_dir) {
-            for entry in entries.filter_map(|e| e.ok()) {
-                let path = entry.path();
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                // Skip local/ and agm_tools/ — they aren't git repos
-                if name == "local" || name == "agm_tools" {
-                    continue;
-                }
-                if path.is_dir() && path.join(".git").exists() {
-                    git_roots.insert(path);
-                }
-            }
-        }
-    }
-
-    if git_roots.is_empty() {
-        println!("No git repositories found in source directory.");
-        return Ok(());
-    }
-
-    println!("Updating {} git repositories...\n", git_roots.len());
-
-    for git_root in &git_roots {
-        println!("Updating {}...", contract_tilde(git_root));
-        let status = std::process::Command::new("git")
-            .args(["pull"])
-            .current_dir(git_root)
-            .status()?;
-
-        if status.success() {
-            println!("{} Updated {}\n", " ok ".green(), contract_tilde(git_root));
-        } else {
-            println!(
-                "{} Failed to update {}\n",
-                "fail".red(),
-                contract_tilde(git_root)
-            );
-        }
-    }
-
-    // Prune broken links (consistent with list/manage behavior)
-    println!("{}", "Syncing central skills symlinks...".bold());
-    let pruned = prune_broken_skills(skills_dir)?;
-    if pruned > 0 {
-        println!(
-            "  {} Removed {} broken skill link(s)",
-            "warn".yellow(),
-            pruned
-        );
-    }
-    let pruned_agents = prune_broken_agents(agents_dir)?;
-    if pruned_agents > 0 {
-        println!(
-            "  {} Removed {} broken agent link(s)",
-            "warn".yellow(),
-            pruned_agents
-        );
-    }
-
-    // Re-sync: for each repo, find new skills/agents not yet installed
-    let uninstalled = blocklist_read(skills_dir);
-    for git_root in &git_roots {
-        let new_skills = scan_skills(git_root);
-        let mut added = 0;
-        for (name, skill_path) in new_skills {
-            let link_path = skills_dir.join(&name);
-            if link_path.symlink_metadata().is_err() && !uninstalled.contains(&name) {
-                if let Err(e) = install_skill(&name, &skill_path, skills_dir) {
-                    println!("  {} {}: {}", "warn".yellow(), name, e);
-                } else {
-                    println!(
-                        "  {} {} → {}",
-                        " ok ".green(),
-                        name,
-                        contract_tilde(&skill_path)
-                    );
-                    added += 1;
-                }
-            }
-        }
-
-        let new_agents = scan_agents(git_root);
-        let mut agents_added = 0;
-        for (name, agent_path) in new_agents {
-            let link_name = format!("{}.md", name);
-            let link_path = agents_dir.join(&link_name);
-            if link_path.symlink_metadata().is_err() && !uninstalled.contains(&name) {
-                if let Err(e) = install_agent(&name, &agent_path, agents_dir) {
-                    println!("  {} agent {}: {}", "warn".yellow(), name, e);
-                } else {
-                    println!(
-                        "  {} agent {} → {}",
-                        " ok ".green(),
-                        name,
-                        contract_tilde(&agent_path)
-                    );
-                    agents_added += 1;
-                }
-            }
-        }
-
-        if added > 0 || agents_added > 0 {
-            println!(
-                "  {} {} new skill(s), {} new agent(s) from {}",
-                " ok ".green(),
-                added,
-                agents_added,
-                contract_tilde(git_root)
-            );
-        }
-    }
-
-    Ok(())
-}
-
-/// Like update_all, but reports progress through a callback.
+/// Reports progress through a callback.
 /// Used by the TUI for non-blocking background updates.
 pub fn update_all_with_progress<F>(
     skills_dir: &Path,
@@ -651,7 +537,7 @@ pub fn update_all_with_progress<F>(
 ) where
     F: FnMut(UpdateProgress),
 {
-    // Collect git roots (same logic as update_all)
+    // Collect git roots from source_dir (skip local/ and agm_tools/)
     let mut git_roots = std::collections::HashSet::new();
     if source_dir.is_dir() {
         if let Ok(entries) = fs::read_dir(source_dir) {
@@ -870,6 +756,7 @@ pub fn scan_all_sources(
                         .into_iter()
                         .map(|(name, sp)| SkillInfo {
                             install_status: check_install_status(&name, &sp, skills_dir),
+                            preload_chars: skill_preload_chars(&sp),
                             name,
                             source_path: sp,
                         })
@@ -878,6 +765,7 @@ pub fn scan_all_sources(
                         .into_iter()
                         .map(|(name, sp)| AgentInfo {
                             install_status: check_agent_install_status(&name, &sp, agents_dir),
+                            preload_chars: file_char_count(&sp),
                             name,
                             source_path: sp,
                         })
@@ -886,6 +774,7 @@ pub fn scan_all_sources(
                         .into_iter()
                         .map(|(name, sp)| CommandInfo {
                             install_status: check_command_install_status(&name, &sp, commands_dir),
+                            preload_chars: file_char_count(&sp),
                             name,
                             source_path: sp,
                         })
@@ -915,6 +804,7 @@ pub fn scan_all_sources(
                         .into_iter()
                         .map(|(name, sp)| SkillInfo {
                             install_status: check_install_status(&name, &sp, skills_dir),
+                            preload_chars: skill_preload_chars(&sp),
                             name,
                             source_path: sp,
                         })
@@ -923,6 +813,7 @@ pub fn scan_all_sources(
                         .into_iter()
                         .map(|(name, sp)| AgentInfo {
                             install_status: check_agent_install_status(&name, &sp, agents_dir),
+                            preload_chars: file_char_count(&sp),
                             name,
                             source_path: sp,
                         })
@@ -931,6 +822,7 @@ pub fn scan_all_sources(
                         .into_iter()
                         .map(|(name, sp)| CommandInfo {
                             install_status: check_command_install_status(&name, &sp, commands_dir),
+                            preload_chars: file_char_count(&sp),
                             name,
                             source_path: sp,
                         })
@@ -951,6 +843,7 @@ pub fn scan_all_sources(
                 .into_iter()
                 .map(|(name, sp)| SkillInfo {
                     install_status: check_install_status(&name, &sp, skills_dir),
+                    preload_chars: skill_preload_chars(&sp),
                     name,
                     source_path: sp,
                 })
@@ -959,6 +852,7 @@ pub fn scan_all_sources(
                 .into_iter()
                 .map(|(name, sp)| AgentInfo {
                     install_status: check_agent_install_status(&name, &sp, agents_dir),
+                    preload_chars: file_char_count(&sp),
                     name,
                     source_path: sp,
                 })
@@ -967,6 +861,7 @@ pub fn scan_all_sources(
                 .into_iter()
                 .map(|(name, sp)| CommandInfo {
                     install_status: check_command_install_status(&name, &sp, commands_dir),
+                    preload_chars: file_char_count(&sp),
                     name,
                     source_path: sp,
                 })
@@ -988,15 +883,17 @@ pub fn scan_all_sources(
 
 /// Copy a local directory into source_dir/local/{name}/ and return the list of skills found.
 /// Scans BEFORE copying — errors if no skills found. Original directory preserved.
+/// Progress is reported via `on_progress` callback.
 pub fn add_local_copy(
     source: &Path,
     source_dir: &Path,
+    target_name: Option<&str>,
+    mut on_progress: impl FnMut(CloneProgress),
 ) -> anyhow::Result<(PathBuf, Vec<(String, PathBuf)>)> {
     if !source.exists() {
         anyhow::bail!("Source path does not exist: {}", source.display());
     }
 
-    // Scan before copying
     let pre_skills = scan_skills(source);
     if pre_skills.is_empty() {
         anyhow::bail!(
@@ -1005,42 +902,71 @@ pub fn add_local_copy(
         );
     }
 
-    let source_name = source
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unnamed")
-        .to_string();
+    let name = match target_name {
+        Some(n) => {
+            validate_source_name(n)?;
+            n.to_string()
+        }
+        None => source
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unnamed")
+            .to_string(),
+    };
 
-    let dest = source_dir.join("local").join(&source_name);
+    let dest = source_dir.join("local").join(&name);
     if dest.exists() {
         anyhow::bail!(
             "Source '{}' already exists at {}. Remove it first or choose a different name.",
-            source_name,
+            name,
             contract_tilde(&dest)
         );
     }
 
-    // Copy
+    on_progress(CloneProgress::Start {
+        name: name.clone(),
+        url: source.display().to_string(),
+        action: CloneAction::Clone,
+    });
+
     fs::create_dir_all(dest.parent().unwrap())?;
     copy_dir_recursive(source, &dest)?;
 
-    // Re-scan the copied location
+    on_progress(CloneProgress::Done {
+        name: name.clone(),
+        success: true,
+        message: format!("Copied to {}", contract_tilde(&dest)),
+    });
+
     let skills = scan_skills(&dest);
     Ok((dest, skills))
 }
 
 /// Clone a git repo (or pull if it already exists) into source_dir/{repo_name}/.
 /// Returns the repo path and list of skills found. Does NOT install skills.
+/// Progress is reported via `on_progress` callback; git stdio is piped (not inherited).
 pub fn clone_or_pull(
     url: &str,
     source_dir: &Path,
+    target_name: Option<&str>,
+    mut on_progress: impl FnMut(CloneProgress),
 ) -> anyhow::Result<(PathBuf, Vec<(String, PathBuf)>)> {
-    let name = repo_name_from_url(url);
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command, Stdio};
+    use std::sync::mpsc;
+    use std::thread;
+
+    let name = match target_name {
+        Some(n) => {
+            validate_source_name(n)?;
+            n.to_string()
+        }
+        None => repo_name_from_url(url),
+    };
     let repo_path = source_dir.join(&name);
 
-    if repo_path.is_dir() {
-        // Check if it belongs to a different remote
-        let existing_url = std::process::Command::new("git")
+    let action = if repo_path.is_dir() {
+        let existing_url = Command::new("git")
             .args(["remote", "get-url", "origin"])
             .current_dir(&repo_path)
             .output()
@@ -1054,7 +980,6 @@ pub fn clone_or_pull(
                     None
                 }
             });
-
         if let Some(ref existing) = existing_url {
             if normalize_git_url(existing) != normalize_git_url(url) {
                 anyhow::bail!(
@@ -1065,32 +990,96 @@ pub fn clone_or_pull(
                 );
             }
         }
-
-        println!("Updating {} from {}...", name, url);
-        let status = std::process::Command::new("git")
-            .args(["pull"])
-            .current_dir(&repo_path)
-            .status()?;
-        if !status.success() {
-            anyhow::bail!("git pull failed for {}", name);
-        }
+        CloneAction::Pull
     } else {
-        println!("Cloning {} from {}...", name, url);
         fs::create_dir_all(source_dir)?;
-        let status = std::process::Command::new("git")
-            .args(["clone", url, &repo_path.display().to_string()])
-            .status()?;
-        if !status.success() {
-            anyhow::bail!("git clone failed for {}", url);
+        CloneAction::Clone
+    };
+
+    on_progress(CloneProgress::Start {
+        name: name.clone(),
+        url: url.to_string(),
+        action,
+    });
+
+    let mut cmd = Command::new("git");
+    match action {
+        CloneAction::Pull => {
+            cmd.args(["pull"]).current_dir(&repo_path);
         }
+        CloneAction::Clone => {
+            cmd.args(["clone", url, &repo_path.display().to_string()]);
+        }
+    }
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+    let mut child = cmd.spawn().context("failed to spawn git")?;
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+
+    let (tx, rx) = mpsc::channel::<(bool, String)>();
+    let tx_err = tx.clone();
+    let t_out = thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().flatten() {
+            let _ = tx.send((false, line));
+        }
+    });
+    let t_err = thread::spawn(move || {
+        for line in BufReader::new(stderr).lines().flatten() {
+            let _ = tx_err.send((true, line));
+        }
+    });
+
+    // Drain the channel while readers + git are still running.
+    // rx.iter() blocks until both senders (t_out, t_err) are dropped,
+    // which happens when both reader threads finish — i.e. when git's
+    // stdout/stderr both close (typically when the child exits).
+    for (is_err, line) in rx.iter() {
+        on_progress(CloneProgress::GitLine { line, is_err });
+    }
+    let _ = t_out.join();
+    let _ = t_err.join();
+    let status = child.wait().context("git wait failed")?;
+
+    let (success, message) = if status.success() {
+        (
+            true,
+            match action {
+                CloneAction::Pull => "Updated".to_string(),
+                CloneAction::Clone => "Cloned".to_string(),
+            },
+        )
+    } else {
+        (
+            false,
+            format!(
+                "git {} exited with {}",
+                match action {
+                    CloneAction::Pull => "pull",
+                    CloneAction::Clone => "clone",
+                },
+                status
+            ),
+        )
+    };
+
+    on_progress(CloneProgress::Done {
+        name: name.clone(),
+        success,
+        message: message.clone(),
+    });
+
+    if !success {
+        anyhow::bail!("{}", message);
     }
 
     let skills = scan_skills(&repo_path);
     if skills.is_empty() {
-        fs::remove_dir_all(&repo_path)?;
+        if action == CloneAction::Clone {
+            let _ = fs::remove_dir_all(&repo_path);
+        }
         anyhow::bail!("No skills found in {}. Clone removed.", url);
     }
-
     Ok((repo_path, skills))
 }
 
@@ -1147,24 +1136,10 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Migrate a tool's skills directory to the central store.
+/// Migrate a tool's skills directory to the central store (TUI-safe).
 /// Moves skills from `skills_link` into `tool_skills_target` (under source_dir/agm_tools/{tool}/),
 /// then creates central links pointing to the migrated locations.
-pub fn migrate_tool_dir(
-    skills_link: &Path,
-    tool_skills_target: &Path,
-    central_skills: &Path,
-    tool_key: &str,
-) -> anyhow::Result<usize> {
-    let (count, msgs) =
-        migrate_tool_dir_quiet(skills_link, tool_skills_target, central_skills, tool_key)?;
-    for m in &msgs {
-        println!("{}", m);
-    }
-    Ok(count)
-}
-
-/// Like `migrate_tool_dir` but returns messages instead of printing (TUI-safe).
+/// Returns the count and human-readable messages instead of printing.
 pub fn migrate_tool_dir_quiet(
     skills_link: &Path,
     tool_skills_target: &Path,
@@ -1748,7 +1723,7 @@ mod tests {
         let source_dir = dir.path().join("source");
         fs::create_dir_all(&source_dir).unwrap();
 
-        let (dest, skills) = add_local_copy(&original, &source_dir).unwrap();
+        let (dest, skills) = add_local_copy(&original, &source_dir, None, |_| {}).unwrap();
 
         // Copied to source_dir/local/{name}
         assert!(dest.starts_with(source_dir.join("local")));
@@ -1767,7 +1742,7 @@ mod tests {
         let source_dir = dir.path().join("source");
         fs::create_dir_all(&source_dir).unwrap();
 
-        let result = add_local_copy(&empty, &source_dir);
+        let result = add_local_copy(&empty, &source_dir, None, |_| {});
         assert!(result.is_err());
         // Should not have created any directory
         assert!(!source_dir.join("local").exists());
@@ -1785,7 +1760,7 @@ mod tests {
         let existing = source_dir.join("local").join("original");
         fs::create_dir_all(&existing).unwrap();
 
-        let result = add_local_copy(&original, &source_dir);
+        let result = add_local_copy(&original, &source_dir, None, |_| {});
         assert!(result.is_err()); // Already exists
     }
 
@@ -1818,11 +1793,13 @@ mod tests {
                     name: "skill-a".to_string(),
                     source_path: skill_a,
                     install_status: SkillInstallStatus::Installed,
+                    preload_chars: 0,
                 },
                 SkillInfo {
                     name: "skill-b".to_string(),
                     source_path: skill_b,
                     install_status: SkillInstallStatus::Installed,
+                    preload_chars: 0,
                 },
             ],
             agents: vec![],
@@ -2461,4 +2438,326 @@ mod tests {
         assert!(central.join("build.md").symlink_metadata().is_ok());
         assert!(central.join("test.md").symlink_metadata().is_ok());
     }
+}
+
+/// Count unicode chars in the value of a top-level YAML key inside the slice of
+/// frontmatter lines (lines between the two `---` markers, excluding markers).
+fn extract_key_value_chars(lines: &[&str], key: &str) -> usize {
+    let prefix = format!("{}:", key);
+    for (i, line) in lines.iter().enumerate() {
+        if !line.starts_with(&prefix) {
+            continue;
+        }
+        let rest = &line[prefix.len()..];
+        let rest_trim = rest.trim();
+        if rest_trim == "|" || rest_trim == ">" {
+            // Block scalar — collect subsequent indented lines
+            let mut acc = String::new();
+            for cont in &lines[i + 1..] {
+                if cont.trim().is_empty() {
+                    if !acc.is_empty() {
+                        acc.push('\n');
+                    }
+                    continue;
+                }
+                let leading = cont.len() - cont.trim_start().len();
+                if leading == 0 {
+                    break;
+                }
+                if !acc.is_empty() {
+                    acc.push('\n');
+                }
+                acc.push_str(cont.trim_start());
+            }
+            return acc.chars().count();
+        }
+        // Inline scalar, possibly quoted
+        let mut v = rest_trim.to_string();
+        if (v.starts_with('"') && v.ends_with('"') && v.len() >= 2)
+            || (v.starts_with('\'') && v.ends_with('\'') && v.len() >= 2)
+        {
+            v = v[1..v.len() - 1].to_string();
+        }
+        return v.chars().count();
+    }
+    0
+}
+
+/// Compute the preload-char count for a skill: sum of `name` + `description`
+/// values in the SKILL.md YAML frontmatter. Returns 0 on any failure.
+pub fn skill_preload_chars(skill_path: &Path) -> usize {
+    let md = skill_path.join("SKILL.md");
+    let content = match fs::read_to_string(&md) {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+    let mut iter = content.lines();
+    let first = match iter.next() {
+        Some(l) => l,
+        None => return 0,
+    };
+    if first.trim() != "---" {
+        return 0;
+    }
+    let mut fm_lines: Vec<&str> = Vec::new();
+    let mut terminated = false;
+    for line in iter.take(200) {
+        let t = line.trim();
+        if t == "---" || t == "..." {
+            terminated = true;
+            break;
+        }
+        fm_lines.push(line);
+    }
+    if !terminated {
+        return 0;
+    }
+    extract_key_value_chars(&fm_lines, "name") + extract_key_value_chars(&fm_lines, "description")
+}
+
+/// Count unicode chars in the whole file. Returns 0 on read error.
+pub fn file_char_count(path: &Path) -> usize {
+    fs::read_to_string(path)
+        .map(|s| s.chars().count())
+        .unwrap_or(0)
+}
+
+/// Resolve a `<target>` string to exactly one `SourceGroup`.
+/// Match priority: (1) exact directory name match; (2) normalized git URL match
+/// against repo origins (local sources skipped in step 2).
+pub fn resolve_source_target(
+    target: &str,
+    source_dir: &Path,
+    skills_dir: &Path,
+    agents_dir: &Path,
+    commands_dir: &Path,
+) -> anyhow::Result<SourceGroup> {
+    let groups = scan_all_sources(source_dir, skills_dir, agents_dir, commands_dir);
+    if groups.is_empty() {
+        anyhow::bail!("No sources found under {}", contract_tilde(source_dir));
+    }
+
+    // Step 1: exact directory-name match.
+    let by_name: Vec<&SourceGroup> = groups.iter().filter(|g| g.name == target).collect();
+    if by_name.len() == 1 {
+        return Ok(by_name[0].clone());
+    }
+    if by_name.len() > 1 {
+        let names: Vec<&str> = by_name.iter().map(|g| g.name.as_str()).collect();
+        anyhow::bail!(
+            "Ambiguous target '{}'; matches: {}",
+            target,
+            names.join(", ")
+        );
+    }
+
+    // Step 2: URL match (Repo only).
+    let target_canonical = normalize_git_source(target);
+    let target_norm = normalize_git_url(&target_canonical);
+    let by_url: Vec<&SourceGroup> = groups
+        .iter()
+        .filter(|g| match &g.kind {
+            SourceKind::Repo { url: Some(u) } => normalize_git_url(u) == target_norm,
+            _ => false,
+        })
+        .collect();
+    if by_url.len() == 1 {
+        return Ok(by_url[0].clone());
+    }
+    if by_url.len() > 1 {
+        let names: Vec<&str> = by_url.iter().map(|g| g.name.as_str()).collect();
+        anyhow::bail!(
+            "Multiple repos match URL '{}'; disambiguate by name: {}",
+            target,
+            names.join(", ")
+        );
+    }
+
+    let available: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
+    anyhow::bail!(
+        "No source matches '{}'. Available: {}",
+        target,
+        available.join(", ")
+    );
+}
+
+/// Validate a user-supplied source directory name.
+pub fn validate_source_name(name: &str) -> anyhow::Result<()> {
+    if name.is_empty() {
+        anyhow::bail!("source name must not be empty");
+    }
+    if name == "." || name == ".." {
+        anyhow::bail!("source name must not be '.' or '..'");
+    }
+    if name.contains('/') || name.contains('\\') {
+        anyhow::bail!("source name must not contain '/' or '\\\\'");
+    }
+    Ok(())
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct RenameReport {
+    pub skills_relinked: usize,
+    pub agents_relinked: usize,
+    pub commands_relinked: usize,
+    pub rollback_failures: Vec<String>,
+    pub relink_failures: Vec<String>,
+}
+
+pub fn rename_source(
+    old: &str,
+    new: &str,
+    source_dir: &Path,
+    skills_dir: &Path,
+    agents_dir: &Path,
+    commands_dir: &Path,
+    mut on_progress: impl FnMut(CloneProgress),
+) -> anyhow::Result<RenameReport> {
+    validate_source_name(new)?;
+
+    let group = resolve_source_target(old, source_dir, skills_dir, agents_dir, commands_dir)?;
+
+    // Determine old/new paths, including the local/ prefix if applicable.
+    let (old_path, new_path) = match &group.kind {
+        SourceKind::Local => (
+            source_dir.join("local").join(&group.name),
+            source_dir.join("local").join(new),
+        ),
+        _ => (source_dir.join(&group.name), source_dir.join(new)),
+    };
+
+    if new_path.exists() {
+        anyhow::bail!(
+            "Target '{}' already exists at {}",
+            new,
+            contract_tilde(&new_path)
+        );
+    }
+
+    on_progress(CloneProgress::Start {
+        name: group.name.clone(),
+        url: format!("→ {}", new),
+        action: CloneAction::Pull,
+    });
+
+    // Snapshot installed items.
+    let installed_skills: Vec<String> = group
+        .skills
+        .iter()
+        .filter(|s| s.install_status == SkillInstallStatus::Installed)
+        .map(|s| s.name.clone())
+        .collect();
+    let installed_agents: Vec<String> = group
+        .agents
+        .iter()
+        .filter(|a| a.install_status == SkillInstallStatus::Installed)
+        .map(|a| a.name.clone())
+        .collect();
+    let installed_commands: Vec<String> = group
+        .commands
+        .iter()
+        .filter(|c| c.install_status == SkillInstallStatus::Installed)
+        .map(|c| c.name.clone())
+        .collect();
+
+    // Uninstall from central store.
+    for n in &installed_skills {
+        let _ = uninstall_skill(n, skills_dir);
+    }
+    for n in &installed_agents {
+        let _ = uninstall_agent(n, agents_dir);
+    }
+    for n in &installed_commands {
+        let _ = uninstall_command(n, commands_dir);
+    }
+
+    // uninstall_skill adds to the blocklist as a side-effect; clear it so
+    // that an interrupt between here and re-install can't leave skills
+    // silently blocklisted. install_skill on the rebuild will be a no-op
+    // w.r.t. the blocklist since the names are no longer present.
+    for n in &installed_skills {
+        blocklist_remove(skills_dir, n);
+    }
+
+    // fs::rename
+    if let Err(e) = fs::rename(&old_path, &new_path) {
+        // Best-effort rollback: re-install against old path.
+        let mut report = RenameReport::default();
+        for n in &installed_skills {
+            let p = old_path.join("skills").join(n);
+            if install_skill(n, &p, skills_dir).is_err() {
+                report.rollback_failures.push(format!("skill {}", n));
+            }
+        }
+        for n in &installed_agents {
+            let p = old_path.join("agents").join(format!("{}.md", n));
+            if install_agent(n, &p, agents_dir).is_err() {
+                report.rollback_failures.push(format!("agent {}", n));
+            }
+        }
+        for n in &installed_commands {
+            let p = old_path.join("commands").join(format!("{}.md", n));
+            if install_command(n, &p, commands_dir).is_err() {
+                report.rollback_failures.push(format!("command {}", n));
+            }
+        }
+        on_progress(CloneProgress::Done {
+            name: group.name.clone(),
+            success: false,
+            message: format!("rename failed: {}", e),
+        });
+        anyhow::bail!(
+            "fs::rename failed: {}. Rollback failures: {:?}",
+            e,
+            report.rollback_failures
+        );
+    }
+
+    // Re-scan and re-install.
+    let mut report = RenameReport::default();
+    let new_skills = scan_skills(&new_path);
+    for (n, sp) in &new_skills {
+        if installed_skills.contains(n) {
+            match install_skill(n, sp, skills_dir) {
+                Ok(()) => report.skills_relinked += 1,
+                Err(_) => report.relink_failures.push(format!("skill {}", n)),
+            }
+        }
+    }
+    let new_agents = scan_agents(&new_path);
+    for (n, sp) in &new_agents {
+        if installed_agents.contains(n) {
+            match install_agent(n, sp, agents_dir) {
+                Ok(()) => report.agents_relinked += 1,
+                Err(_) => report.relink_failures.push(format!("agent {}", n)),
+            }
+        }
+    }
+    let new_cmds = scan_commands(&new_path);
+    for (n, sp) in &new_cmds {
+        if installed_commands.contains(n) {
+            match install_command(n, sp, commands_dir) {
+                Ok(()) => report.commands_relinked += 1,
+                Err(_) => report.relink_failures.push(format!("command {}", n)),
+            }
+        }
+    }
+
+    let mut done_msg = format!(
+        "Renamed {} → {}; relinked {} skill(s), {} agent(s), {} command(s)",
+        group.name, new, report.skills_relinked, report.agents_relinked, report.commands_relinked
+    );
+    if !report.relink_failures.is_empty() {
+        done_msg.push_str(&format!(
+            "; relink failures: {}",
+            report.relink_failures.join(", ")
+        ));
+    }
+    on_progress(CloneProgress::Done {
+        name: new.to_string(),
+        success: true,
+        message: done_msg,
+    });
+
+    Ok(report)
 }
