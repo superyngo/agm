@@ -346,7 +346,7 @@ fn rename_relinks_installed_skill_only() {
 
     // Installed link now resolves to new path; non-installed stays absent.
     let target = fs::read_link(skills_dir.join("dummy")).unwrap();
-    assert!(target.to_string_lossy().contains("/new/"));
+    assert!(target.components().any(|c| c.as_os_str() == "new"));
     assert!(skills_dir.join("ignored").symlink_metadata().is_err());
 }
 

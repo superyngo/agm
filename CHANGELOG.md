@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [v0.9.1] - 2026-05-20
+
+### Fixed
+- `rename_relinks_installed_skill_only` test now checks the renamed segment via path components instead of a hardcoded `/new/` substring, fixing the Windows CI build where symlink targets use `\` separators.
+
 ## [v0.9.0] - 2026-05-20
 
 ### Breaking
