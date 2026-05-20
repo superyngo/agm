@@ -537,7 +537,7 @@ pub fn update_all_with_progress<F>(
 ) where
     F: FnMut(UpdateProgress),
 {
-    // Collect git roots (same logic as update_all)
+    // Collect git roots from source_dir (skip local/ and agm_tools/)
     let mut git_roots = std::collections::HashSet::new();
     if source_dir.is_dir() {
         if let Ok(entries) = fs::read_dir(source_dir) {
@@ -1136,10 +1136,10 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Migrate a tool's skills directory to the central store.
+/// Migrate a tool's skills directory to the central store (TUI-safe).
 /// Moves skills from `skills_link` into `tool_skills_target` (under source_dir/agm_tools/{tool}/),
 /// then creates central links pointing to the migrated locations.
-/// Migrate tool skills directory to AGM store, returning count and messages (TUI-safe).
+/// Returns the count and human-readable messages instead of printing.
 pub fn migrate_tool_dir_quiet(
     skills_link: &Path,
     tool_skills_target: &Path,
@@ -2520,6 +2520,64 @@ pub fn file_char_count(path: &Path) -> usize {
     fs::read_to_string(path)
         .map(|s| s.chars().count())
         .unwrap_or(0)
+}
+
+/// Resolve a `<target>` string to exactly one `SourceGroup`.
+/// Match priority: (1) exact directory name match; (2) normalized git URL match
+/// against repo origins (local sources skipped in step 2).
+pub fn resolve_source_target(
+    target: &str,
+    source_dir: &Path,
+    skills_dir: &Path,
+    agents_dir: &Path,
+    commands_dir: &Path,
+) -> anyhow::Result<SourceGroup> {
+    let groups = scan_all_sources(source_dir, skills_dir, agents_dir, commands_dir);
+    if groups.is_empty() {
+        anyhow::bail!("No sources found under {}", contract_tilde(source_dir));
+    }
+
+    // Step 1: exact directory-name match.
+    let by_name: Vec<&SourceGroup> = groups.iter().filter(|g| g.name == target).collect();
+    if by_name.len() == 1 {
+        return Ok(by_name[0].clone());
+    }
+    if by_name.len() > 1 {
+        let names: Vec<&str> = by_name.iter().map(|g| g.name.as_str()).collect();
+        anyhow::bail!(
+            "Ambiguous target '{}'; matches: {}",
+            target,
+            names.join(", ")
+        );
+    }
+
+    // Step 2: URL match (Repo only).
+    let target_norm = normalize_git_url(target);
+    let by_url: Vec<&SourceGroup> = groups
+        .iter()
+        .filter(|g| match &g.kind {
+            SourceKind::Repo { url: Some(u) } => normalize_git_url(u) == target_norm,
+            _ => false,
+        })
+        .collect();
+    if by_url.len() == 1 {
+        return Ok(by_url[0].clone());
+    }
+    if by_url.len() > 1 {
+        let names: Vec<&str> = by_url.iter().map(|g| g.name.as_str()).collect();
+        anyhow::bail!(
+            "Multiple repos match URL '{}'; disambiguate by name: {}",
+            target,
+            names.join(", ")
+        );
+    }
+
+    let available: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
+    anyhow::bail!(
+        "No source matches '{}'. Available: {}",
+        target,
+        available.join(", ")
+    );
 }
 
 /// Validate a user-supplied source directory name.

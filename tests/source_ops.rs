@@ -117,6 +117,145 @@ fn file_char_count_missing() {
 
 use agm::skills::validate_source_name;
 
+use agm::skills::resolve_source_target;
+
+fn make_repo_dir(source_dir: &std::path::Path, name: &str) {
+    let p = source_dir.join(name);
+    fs::create_dir_all(p.join("skills").join("dummy")).unwrap();
+    fs::write(
+        p.join("skills").join("dummy").join("SKILL.md"),
+        "---\nname: dummy\ndescription: d\n---\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn resolve_by_directory_name() {
+    let d = tempdir().unwrap();
+    let source_dir = d.path().join("src");
+    fs::create_dir_all(&source_dir).unwrap();
+    make_repo_dir(&source_dir, "myrepo");
+    let skills_dir = d.path().join("sk");
+    let agents_dir = d.path().join("ag");
+    let commands_dir = d.path().join("cm");
+    fs::create_dir_all(&skills_dir).unwrap();
+    fs::create_dir_all(&agents_dir).unwrap();
+    fs::create_dir_all(&commands_dir).unwrap();
+    let g = resolve_source_target(
+        "myrepo",
+        &source_dir,
+        &skills_dir,
+        &agents_dir,
+        &commands_dir,
+    )
+    .unwrap();
+    assert_eq!(g.name, "myrepo");
+}
+
+#[test]
+fn resolve_no_match_errors() {
+    let d = tempdir().unwrap();
+    let source_dir = d.path().join("src");
+    fs::create_dir_all(&source_dir).unwrap();
+    let skills_dir = d.path().join("sk");
+    let agents_dir = d.path().join("ag");
+    let commands_dir = d.path().join("cm");
+    assert!(
+        resolve_source_target("nope", &source_dir, &skills_dir, &agents_dir, &commands_dir)
+            .is_err()
+    );
+}
+
+#[test]
+fn resolve_by_git_url() {
+    let d = tempdir().unwrap();
+    let source_dir = d.path().join("src");
+    fs::create_dir_all(&source_dir).unwrap();
+    let upstream = d.path().join("upstream.git");
+    // Init a bare-ish upstream so `git clone` can succeed locally.
+    std::process::Command::new("git")
+        .args(["init", "--bare", upstream.to_str().unwrap()])
+        .status()
+        .unwrap();
+
+    // Clone it under source_dir/repoA with proper origin.
+    let repo_a = source_dir.join("repoA");
+    std::process::Command::new("git")
+        .args([
+            "clone",
+            upstream.to_str().unwrap(),
+            repo_a.to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+    fs::create_dir_all(repo_a.join("skills").join("dummy")).unwrap();
+    fs::write(
+        repo_a.join("skills").join("dummy").join("SKILL.md"),
+        "---\nname: dummy\ndescription: d\n---\n",
+    )
+    .unwrap();
+
+    let skills_dir = d.path().join("sk");
+    let agents_dir = d.path().join("ag");
+    let commands_dir = d.path().join("cm");
+    fs::create_dir_all(&skills_dir).unwrap();
+    fs::create_dir_all(&agents_dir).unwrap();
+    fs::create_dir_all(&commands_dir).unwrap();
+
+    let g = resolve_source_target(
+        upstream.to_str().unwrap(),
+        &source_dir,
+        &skills_dir,
+        &agents_dir,
+        &commands_dir,
+    )
+    .unwrap();
+    assert_eq!(g.name, "repoA");
+}
+
+#[test]
+fn resolve_multi_url_match_errors() {
+    let d = tempdir().unwrap();
+    let source_dir = d.path().join("src");
+    fs::create_dir_all(&source_dir).unwrap();
+    let upstream = d.path().join("upstream.git");
+    std::process::Command::new("git")
+        .args(["init", "--bare", upstream.to_str().unwrap()])
+        .status()
+        .unwrap();
+
+    for name in ["repoA", "repoB"] {
+        let r = source_dir.join(name);
+        std::process::Command::new("git")
+            .args(["clone", upstream.to_str().unwrap(), r.to_str().unwrap()])
+            .status()
+            .unwrap();
+        fs::create_dir_all(r.join("skills").join("dummy")).unwrap();
+        fs::write(
+            r.join("skills").join("dummy").join("SKILL.md"),
+            "---\nname: dummy\ndescription: d\n---\n",
+        )
+        .unwrap();
+    }
+
+    let skills_dir = d.path().join("sk");
+    let agents_dir = d.path().join("ag");
+    let commands_dir = d.path().join("cm");
+    fs::create_dir_all(&skills_dir).unwrap();
+    fs::create_dir_all(&agents_dir).unwrap();
+    fs::create_dir_all(&commands_dir).unwrap();
+
+    let err = resolve_source_target(
+        upstream.to_str().unwrap(),
+        &source_dir,
+        &skills_dir,
+        &agents_dir,
+        &commands_dir,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("disambiguate"));
+}
+
 #[test]
 fn validate_names() {
     assert!(validate_source_name("foo").is_ok());
