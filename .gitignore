@@ -13,3 +13,6 @@
 # OS
 .DS_Store
 Thumbs.db
+
+# dispatch-agent artifacts
+docs/tmp/
