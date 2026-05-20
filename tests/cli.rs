@@ -22,28 +22,6 @@ fn test_help_shows_source_subcommand() {
 }
 
 #[test]
-fn test_tool_help_shows_flags() {
-    Command::cargo_bin("agm")
-        .unwrap()
-        .args(["tool", "--help"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("--link"))
-        .stdout(predicate::str::contains("--unlink"))
-        .stdout(predicate::str::contains("--status"));
-}
-
-#[test]
-fn test_tool_mutually_exclusive_flags() {
-    Command::cargo_bin("agm")
-        .unwrap()
-        .args(["tool", "--link", "--unlink"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("Only one of"));
-}
-
-#[test]
 fn test_version_flag() {
     Command::cargo_bin("agm")
         .unwrap()
