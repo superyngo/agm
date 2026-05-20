@@ -206,12 +206,15 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
                             ))
                         {
                             let tool_skills_target = source_dir.join("agm_tools").join(key);
-                            let added = skills::migrate_tool_dir(
+                            let (added, msgs) = skills::migrate_tool_dir_quiet(
                                 &skills_link,
                                 &tool_skills_target,
                                 &central_skills,
                                 key,
                             )?;
+                            for m in &msgs {
+                                println!("{}", m);
+                            }
                             if added > 0 {
                                 println!("  {} Migrated {} skill(s)", " ok ".green(), added);
                             }
@@ -571,7 +574,40 @@ fn main() -> anyhow::Result<()> {
                 Ok(())
             } else if update {
                 // --update: git pull all repos
-                skills::update_all(&skills_dir, &agents_dir, &source_dir)?;
+                use skills::UpdateProgress::*;
+                skills::update_all_with_progress(
+                    &skills_dir,
+                    &agents_dir,
+                    &commands_dir,
+                    &source_dir,
+                    |p| match p {
+                        RepoStart { name } => println!("Updating {}...", name),
+                        RepoComplete {
+                            name,
+                            success,
+                            message,
+                        } => {
+                            let tag = if success {
+                                " ok ".green()
+                            } else {
+                                "fail".red()
+                            };
+                            println!("  {} {}: {}", tag, name, message);
+                        }
+                        AllDone {
+                            total,
+                            updated,
+                            new_skills,
+                            new_agents,
+                            new_commands,
+                        } => {
+                            println!(
+                                "\nUpdated {}/{}; {} new skill(s), {} new agent(s), {} new command(s).",
+                                updated, total, new_skills, new_agents, new_commands
+                            );
+                        }
+                    },
+                );
                 Ok(())
             } else if list {
                 // --list: show all skills and agents

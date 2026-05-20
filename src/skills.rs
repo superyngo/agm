@@ -1,5 +1,4 @@
 use anyhow::Context;
-use colored::Colorize;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -334,12 +333,7 @@ pub fn prune_broken_skills(skills_dir: &Path) -> anyhow::Result<usize> {
         if platform::is_dir_link(&path) {
             // Follow the link; if target doesn't exist the link is broken
             if !path.exists() {
-                let name = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("<unknown>");
                 platform::remove_link(&path)?;
-                println!("  {} {} (broken skill link removed)", "warn".yellow(), name);
                 removed += 1;
             }
         }
@@ -362,12 +356,7 @@ pub fn prune_broken_agents(agents_dir: &Path) -> anyhow::Result<usize> {
             && path.symlink_metadata().is_ok()
             && !path.exists()
         {
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("<unknown>");
             platform::remove_link(&path)?;
-            println!("  {} {} (broken agent link removed)", "warn".yellow(), name);
             removed += 1;
         }
     }
@@ -388,16 +377,7 @@ pub fn prune_broken_commands(commands_dir: &Path) -> anyhow::Result<usize> {
             && path.symlink_metadata().is_ok()
             && !path.exists()
         {
-            let name = path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("<unknown>");
             platform::remove_link(&path)?;
-            println!(
-                "  {} {} (broken command link removed)",
-                "warn".yellow(),
-                name
-            );
             removed += 1;
         }
     }
@@ -546,130 +526,7 @@ fn normalize_git_url(url: &str) -> String {
 }
 
 /// Git pull all skill source repos (deduplicating by git root), then re-sync symlinks
-pub fn update_all(skills_dir: &Path, agents_dir: &Path, source_dir: &Path) -> anyhow::Result<()> {
-    if !skills_dir.is_dir() {
-        anyhow::bail!("Skills directory does not exist: {}", skills_dir.display());
-    }
-
-    // Collect git roots from source_dir (not from skills symlinks)
-    let mut git_roots = std::collections::HashSet::new();
-    if source_dir.is_dir() {
-        if let Ok(entries) = fs::read_dir(source_dir) {
-            for entry in entries.filter_map(|e| e.ok()) {
-                let path = entry.path();
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                // Skip local/ and agm_tools/ — they aren't git repos
-                if name == "local" || name == "agm_tools" {
-                    continue;
-                }
-                if path.is_dir() && path.join(".git").exists() {
-                    git_roots.insert(path);
-                }
-            }
-        }
-    }
-
-    if git_roots.is_empty() {
-        println!("No git repositories found in source directory.");
-        return Ok(());
-    }
-
-    println!("Updating {} git repositories...\n", git_roots.len());
-
-    for git_root in &git_roots {
-        println!("Updating {}...", contract_tilde(git_root));
-        let status = std::process::Command::new("git")
-            .args(["pull"])
-            .current_dir(git_root)
-            .status()?;
-
-        if status.success() {
-            println!("{} Updated {}\n", " ok ".green(), contract_tilde(git_root));
-        } else {
-            println!(
-                "{} Failed to update {}\n",
-                "fail".red(),
-                contract_tilde(git_root)
-            );
-        }
-    }
-
-    // Prune broken links (consistent with list/manage behavior)
-    println!("{}", "Syncing central skills symlinks...".bold());
-    let pruned = prune_broken_skills(skills_dir)?;
-    if pruned > 0 {
-        println!(
-            "  {} Removed {} broken skill link(s)",
-            "warn".yellow(),
-            pruned
-        );
-    }
-    let pruned_agents = prune_broken_agents(agents_dir)?;
-    if pruned_agents > 0 {
-        println!(
-            "  {} Removed {} broken agent link(s)",
-            "warn".yellow(),
-            pruned_agents
-        );
-    }
-
-    // Re-sync: for each repo, find new skills/agents not yet installed
-    let uninstalled = blocklist_read(skills_dir);
-    for git_root in &git_roots {
-        let new_skills = scan_skills(git_root);
-        let mut added = 0;
-        for (name, skill_path) in new_skills {
-            let link_path = skills_dir.join(&name);
-            if link_path.symlink_metadata().is_err() && !uninstalled.contains(&name) {
-                if let Err(e) = install_skill(&name, &skill_path, skills_dir) {
-                    println!("  {} {}: {}", "warn".yellow(), name, e);
-                } else {
-                    println!(
-                        "  {} {} → {}",
-                        " ok ".green(),
-                        name,
-                        contract_tilde(&skill_path)
-                    );
-                    added += 1;
-                }
-            }
-        }
-
-        let new_agents = scan_agents(git_root);
-        let mut agents_added = 0;
-        for (name, agent_path) in new_agents {
-            let link_name = format!("{}.md", name);
-            let link_path = agents_dir.join(&link_name);
-            if link_path.symlink_metadata().is_err() && !uninstalled.contains(&name) {
-                if let Err(e) = install_agent(&name, &agent_path, agents_dir) {
-                    println!("  {} agent {}: {}", "warn".yellow(), name, e);
-                } else {
-                    println!(
-                        "  {} agent {} → {}",
-                        " ok ".green(),
-                        name,
-                        contract_tilde(&agent_path)
-                    );
-                    agents_added += 1;
-                }
-            }
-        }
-
-        if added > 0 || agents_added > 0 {
-            println!(
-                "  {} {} new skill(s), {} new agent(s) from {}",
-                " ok ".green(),
-                added,
-                agents_added,
-                contract_tilde(git_root)
-            );
-        }
-    }
-
-    Ok(())
-}
-
-/// Like update_all, but reports progress through a callback.
+/// Reports progress through a callback.
 /// Used by the TUI for non-blocking background updates.
 pub fn update_all_with_progress<F>(
     skills_dir: &Path,
@@ -1282,21 +1139,7 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
 /// Migrate a tool's skills directory to the central store.
 /// Moves skills from `skills_link` into `tool_skills_target` (under source_dir/agm_tools/{tool}/),
 /// then creates central links pointing to the migrated locations.
-pub fn migrate_tool_dir(
-    skills_link: &Path,
-    tool_skills_target: &Path,
-    central_skills: &Path,
-    tool_key: &str,
-) -> anyhow::Result<usize> {
-    let (count, msgs) =
-        migrate_tool_dir_quiet(skills_link, tool_skills_target, central_skills, tool_key)?;
-    for m in &msgs {
-        println!("{}", m);
-    }
-    Ok(count)
-}
-
-/// Like `migrate_tool_dir` but returns messages instead of printing (TUI-safe).
+/// Migrate tool skills directory to AGM store, returning count and messages (TUI-safe).
 pub fn migrate_tool_dir_quiet(
     skills_link: &Path,
     tool_skills_target: &Path,
