@@ -882,6 +882,45 @@ impl App {
             )));
         }
 
+        // Total preload chars for this category (installed vs not-installed).
+        let (installed_chars, uninstalled_chars) = match category {
+            Category::Skills => {
+                let i: usize = self.groups.iter().flat_map(|g| &g.skills)
+                    .filter(|s| s.install_status == SkillInstallStatus::Installed)
+                    .map(|s| s.preload_chars).sum();
+                let u: usize = self.groups.iter().flat_map(|g| &g.skills)
+                    .filter(|s| s.install_status != SkillInstallStatus::Installed)
+                    .map(|s| s.preload_chars).sum();
+                (i, u)
+            }
+            Category::Agents => {
+                let i: usize = self.groups.iter().flat_map(|g| &g.agents)
+                    .filter(|a| a.install_status == SkillInstallStatus::Installed)
+                    .map(|a| a.preload_chars).sum();
+                let u: usize = self.groups.iter().flat_map(|g| &g.agents)
+                    .filter(|a| a.install_status != SkillInstallStatus::Installed)
+                    .map(|a| a.preload_chars).sum();
+                (i, u)
+            }
+            Category::Commands => {
+                let i: usize = self.groups.iter().flat_map(|g| &g.commands)
+                    .filter(|c| c.install_status == SkillInstallStatus::Installed)
+                    .map(|c| c.preload_chars).sum();
+                let u: usize = self.groups.iter().flat_map(|g| &g.commands)
+                    .filter(|c| c.install_status != SkillInstallStatus::Installed)
+                    .map(|c| c.preload_chars).sum();
+                (i, u)
+            }
+        };
+
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            "Total preload chars:",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(format!("  installed:     {}", installed_chars)));
+        lines.push(Line::from(format!("  not-installed: {}", uninstalled_chars)));
+
         lines
     }
 
@@ -906,6 +945,10 @@ impl App {
         lines.push(Line::from(vec![
             Span::styled("Status: ", Style::default().fg(Color::Yellow)),
             Span::raw(format!("{:?}", skill.install_status)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Preload chars: ", Style::default().fg(Color::Yellow)),
+            Span::raw(skill.preload_chars.to_string()),
         ]));
         lines.push(Line::default()); // blank line
 
@@ -978,6 +1021,10 @@ impl App {
             Span::styled("Status: ", Style::default().fg(Color::Yellow)),
             Span::raw(format!("{:?}", agent.install_status)),
         ]));
+        lines.push(Line::from(vec![
+            Span::styled("Char count: ", Style::default().fg(Color::Yellow)),
+            Span::raw(agent.preload_chars.to_string()),
+        ]));
         lines.push(Line::default());
 
         // Agent .md content
@@ -1034,6 +1081,10 @@ impl App {
         lines.push(Line::from(vec![
             Span::styled("Status: ", Style::default().fg(Color::Yellow)),
             Span::raw(format!("{:?}", command.install_status)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Char count: ", Style::default().fg(Color::Yellow)),
+            Span::raw(command.preload_chars.to_string()),
         ]));
         lines.push(Line::default());
 
@@ -1105,6 +1156,42 @@ impl App {
             Span::styled("Commands: ", Style::default().fg(Color::Yellow)),
             Span::raw(format!("{}", group.commands.len())),
         ]));
+
+        // Preload chars summary per-category
+        let sum = |installed: bool, items_chars: &[(bool, usize)]| -> usize {
+            items_chars.iter().filter(|(i, _)| *i == installed).map(|(_, c)| *c).sum()
+        };
+
+        let skill_data: Vec<(bool, usize)> = group
+            .skills
+            .iter()
+            .map(|s| (s.install_status == skills::SkillInstallStatus::Installed, s.preload_chars))
+            .collect();
+        let agent_data: Vec<(bool, usize)> = group
+            .agents
+            .iter()
+            .map(|a| (a.install_status == skills::SkillInstallStatus::Installed, a.preload_chars))
+            .collect();
+        let cmd_data: Vec<(bool, usize)> = group
+            .commands
+            .iter()
+            .map(|c| (c.install_status == skills::SkillInstallStatus::Installed, c.preload_chars))
+            .collect();
+
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            "Preload chars:",
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        )));
+        for (label, data) in [("Skills", &skill_data), ("Agents", &agent_data), ("Commands", &cmd_data)] {
+            if data.is_empty() { continue; }
+            lines.push(Line::from(format!(
+                "  {:<8} — installed {}  not-installed {}",
+                label,
+                sum(true, data),
+                sum(false, data),
+            )));
+        }
 
         lines.push(Line::default());
 
