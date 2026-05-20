@@ -23,6 +23,7 @@ pub struct SkillInfo {
     pub name: String,
     pub source_path: PathBuf,
     pub install_status: SkillInstallStatus,
+    pub preload_chars: usize,
 }
 
 /// Full info about a single agent (.md file)
@@ -31,6 +32,7 @@ pub struct AgentInfo {
     pub name: String,
     pub source_path: PathBuf,
     pub install_status: SkillInstallStatus,
+    pub preload_chars: usize,
 }
 
 /// Full info about a single command (.md file in commands/ folder)
@@ -39,6 +41,7 @@ pub struct CommandInfo {
     pub name: String,
     pub source_path: PathBuf,
     pub install_status: SkillInstallStatus,
+    pub preload_chars: usize,
 }
 
 /// What kind of source this is
@@ -896,6 +899,7 @@ pub fn scan_all_sources(
                         .into_iter()
                         .map(|(name, sp)| SkillInfo {
                             install_status: check_install_status(&name, &sp, skills_dir),
+                            preload_chars: skill_preload_chars(&sp),
                             name,
                             source_path: sp,
                         })
@@ -904,6 +908,7 @@ pub fn scan_all_sources(
                         .into_iter()
                         .map(|(name, sp)| AgentInfo {
                             install_status: check_agent_install_status(&name, &sp, agents_dir),
+                            preload_chars: file_char_count(&sp),
                             name,
                             source_path: sp,
                         })
@@ -912,6 +917,7 @@ pub fn scan_all_sources(
                         .into_iter()
                         .map(|(name, sp)| CommandInfo {
                             install_status: check_command_install_status(&name, &sp, commands_dir),
+                            preload_chars: file_char_count(&sp),
                             name,
                             source_path: sp,
                         })
@@ -941,6 +947,7 @@ pub fn scan_all_sources(
                         .into_iter()
                         .map(|(name, sp)| SkillInfo {
                             install_status: check_install_status(&name, &sp, skills_dir),
+                            preload_chars: skill_preload_chars(&sp),
                             name,
                             source_path: sp,
                         })
@@ -949,6 +956,7 @@ pub fn scan_all_sources(
                         .into_iter()
                         .map(|(name, sp)| AgentInfo {
                             install_status: check_agent_install_status(&name, &sp, agents_dir),
+                            preload_chars: file_char_count(&sp),
                             name,
                             source_path: sp,
                         })
@@ -957,6 +965,7 @@ pub fn scan_all_sources(
                         .into_iter()
                         .map(|(name, sp)| CommandInfo {
                             install_status: check_command_install_status(&name, &sp, commands_dir),
+                            preload_chars: file_char_count(&sp),
                             name,
                             source_path: sp,
                         })
@@ -977,6 +986,7 @@ pub fn scan_all_sources(
                 .into_iter()
                 .map(|(name, sp)| SkillInfo {
                     install_status: check_install_status(&name, &sp, skills_dir),
+                    preload_chars: skill_preload_chars(&sp),
                     name,
                     source_path: sp,
                 })
@@ -985,6 +995,7 @@ pub fn scan_all_sources(
                 .into_iter()
                 .map(|(name, sp)| AgentInfo {
                     install_status: check_agent_install_status(&name, &sp, agents_dir),
+                    preload_chars: file_char_count(&sp),
                     name,
                     source_path: sp,
                 })
@@ -993,6 +1004,7 @@ pub fn scan_all_sources(
                 .into_iter()
                 .map(|(name, sp)| CommandInfo {
                     install_status: check_command_install_status(&name, &sp, commands_dir),
+                    preload_chars: file_char_count(&sp),
                     name,
                     source_path: sp,
                 })
@@ -1844,11 +1856,13 @@ mod tests {
                     name: "skill-a".to_string(),
                     source_path: skill_a,
                     install_status: SkillInstallStatus::Installed,
+                    preload_chars: 0,
                 },
                 SkillInfo {
                     name: "skill-b".to_string(),
                     source_path: skill_b,
                     install_status: SkillInstallStatus::Installed,
+                    preload_chars: 0,
                 },
             ],
             agents: vec![],
