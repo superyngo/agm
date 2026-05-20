@@ -106,11 +106,9 @@ struct App {
     background_task: Option<super::background::BackgroundTask>,
     info_popup: Option<super::popup::ScrollablePopup>,
     add_mode: bool,
-    add_input: String,
-    add_cursor: usize,
+    add_input: super::text_input::TextInput,
     rename_mode: bool,
-    rename_input: String,
-    rename_cursor: usize,
+    rename_input: super::text_input::TextInput,
     rename_target_group_index: Option<usize>,
 }
 
@@ -151,11 +149,9 @@ impl App {
             background_task: None,
             info_popup: None,
             add_mode: false,
-            add_input: String::new(),
-            add_cursor: 0,
+            add_input: super::text_input::TextInput::new(),
             rename_mode: false,
-            rename_input: String::new(),
-            rename_cursor: 0,
+            rename_input: super::text_input::TextInput::new(),
             rename_target_group_index: None,
         };
         app.rebuild_rows();
@@ -1298,15 +1294,13 @@ impl App {
     fn do_add(&mut self) {
         self.add_mode = true;
         self.add_input.clear();
-        self.add_cursor = 0;
         self.set_status("Add source: URL or local path (Enter to confirm, Esc to cancel)");
     }
 
     fn do_add_submit(&mut self) {
         self.add_mode = false;
-        let source = self.add_input.trim().to_string();
+        let source = self.add_input.text().trim().to_string();
         self.add_input.clear();
-        self.add_cursor = 0;
 
         if source.is_empty() {
             self.set_status("Add cancelled");
@@ -1392,8 +1386,7 @@ impl App {
         };
         let current = self.groups[group_index].name.clone();
         self.rename_mode = true;
-        self.rename_input = current.clone();
-        self.rename_cursor = current.chars().count();
+        self.rename_input = super::text_input::TextInput::with_text(current);
         self.rename_target_group_index = Some(group_index);
         self.set_status("Rename: edit name (Enter to confirm, Esc to cancel)");
     }
@@ -1406,10 +1399,9 @@ impl App {
                 return;
             }
         };
-        let new_name = self.rename_input.trim().to_string();
+        let new_name = self.rename_input.text().trim().to_string();
         self.rename_mode = false;
         self.rename_input.clear();
-        self.rename_cursor = 0;
 
         let old_name = self.groups[group_index].name.clone();
         if new_name.is_empty() || new_name == old_name {
@@ -1546,21 +1538,9 @@ impl App {
                     self.set_status("Rename cancelled");
                 }
                 KeyCode::Enter => self.do_rename_submit(),
-                KeyCode::Backspace => {
-                    if self.rename_cursor > 0 {
-                        let mut chars: Vec<char> = self.rename_input.chars().collect();
-                        chars.remove(self.rename_cursor - 1);
-                        self.rename_input = chars.into_iter().collect();
-                        self.rename_cursor -= 1;
-                    }
+                _ => {
+                    self.rename_input.handle_key(code, modifiers);
                 }
-                KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
-                    let mut chars: Vec<char> = self.rename_input.chars().collect();
-                    chars.insert(self.rename_cursor, c);
-                    self.rename_input = chars.into_iter().collect();
-                    self.rename_cursor += 1;
-                }
-                _ => {}
             }
             return;
         }
@@ -1571,51 +1551,14 @@ impl App {
                 KeyCode::Esc => {
                     self.add_mode = false;
                     self.add_input.clear();
-                    self.add_cursor = 0;
                     self.set_status("Add cancelled");
                 }
                 KeyCode::Enter => {
                     self.do_add_submit();
                 }
-                KeyCode::Home => {
-                    self.add_cursor = 0;
+                _ => {
+                    self.add_input.handle_key(code, modifiers);
                 }
-                KeyCode::End => {
-                    self.add_cursor = self.add_input.chars().count();
-                }
-                KeyCode::Left => {
-                    if self.add_cursor > 0 {
-                        self.add_cursor -= 1;
-                    }
-                }
-                KeyCode::Right => {
-                    if self.add_cursor < self.add_input.chars().count() {
-                        self.add_cursor += 1;
-                    }
-                }
-                KeyCode::Backspace => {
-                    if self.add_cursor > 0 {
-                        let mut chars: Vec<char> = self.add_input.chars().collect();
-                        chars.remove(self.add_cursor - 1);
-                        self.add_input = chars.into_iter().collect();
-                        self.add_cursor -= 1;
-                    }
-                }
-                KeyCode::Delete => {
-                    let len = self.add_input.chars().count();
-                    if self.add_cursor < len {
-                        let mut chars: Vec<char> = self.add_input.chars().collect();
-                        chars.remove(self.add_cursor);
-                        self.add_input = chars.into_iter().collect();
-                    }
-                }
-                KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
-                    let mut chars: Vec<char> = self.add_input.chars().collect();
-                    chars.insert(self.add_cursor, c);
-                    self.add_input = chars.into_iter().collect();
-                    self.add_cursor += 1;
-                }
-                _ => {}
             }
             return;
         }
@@ -2479,65 +2422,18 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
         )));
         frame.render_widget(p, inner);
     } else if app.add_mode {
-        let prefix = "Add source: ";
-        let input = &app.add_input;
-        // Build spans: prefix + text before cursor + cursor block + text after cursor
-        let chars: Vec<char> = input.chars().collect();
-        let before: String = chars[..app.add_cursor].iter().collect();
-        let cursor_char: String = chars
-            .get(app.add_cursor)
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| " ".to_string());
-        let after_start = if chars.get(app.add_cursor).is_some() {
-            app.add_cursor + 1
-        } else {
-            app.add_cursor
-        };
-        let after: String = chars[after_start..].iter().collect();
-        let line = Line::from(vec![
-            Span::styled(
-                prefix,
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(before, Style::default().fg(Color::White)),
-            Span::styled(
-                cursor_char,
-                Style::default().fg(Color::Black).bg(Color::White),
-            ),
-            Span::styled(after, Style::default().fg(Color::White)),
-        ]);
+        let prefix_style = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD);
+        let text_style = Style::default().fg(Color::White);
+        let line = app.add_input.render_line("Add source: ", prefix_style, text_style);
         frame.render_widget(Paragraph::new(line), inner);
     } else if app.rename_mode {
-        let prefix = "Rename → ";
-        let input = &app.rename_input;
-        let chars: Vec<char> = input.chars().collect();
-        let before: String = chars[..app.rename_cursor].iter().collect();
-        let cursor_char: String = chars
-            .get(app.rename_cursor)
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| " ".to_string());
-        let after_start = if chars.get(app.rename_cursor).is_some() {
-            app.rename_cursor + 1
-        } else {
-            app.rename_cursor
-        };
-        let after: String = chars[after_start..].iter().collect();
-        let line = Line::from(vec![
-            Span::styled(
-                prefix,
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(before, Style::default().fg(Color::White)),
-            Span::styled(
-                cursor_char,
-                Style::default().fg(Color::Black).bg(Color::White),
-            ),
-            Span::styled(after, Style::default().fg(Color::White)),
-        ]);
+        let prefix_style = Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD);
+        let text_style = Style::default().fg(Color::White);
+        let line = app.rename_input.render_line("Rename → ", prefix_style, text_style);
         frame.render_widget(Paragraph::new(line), inner);
     } else if app.search_mode {
         let prompt = format!("/{}", app.search_query);
