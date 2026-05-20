@@ -88,13 +88,13 @@ chmod +x ~/.local/bin/agm
 agm init
 
 # Show status of all tools
-agm tool --status
+agm tool status
 
 # Create links for all installed tools
-agm tool --link
+agm tool link
 
 # Add a source from a git repo
-agm source -a https://github.com/anthropics/claude-code-skills
+agm source add https://github.com/anthropics/claude-code-skills
 
 # Open interactive TUI to manage skills & agents
 agm source
@@ -103,10 +103,10 @@ agm source
 agm tool
 
 # List all sources
-agm source -l
+agm source list
 
 # Update all source repos
-agm source -u
+agm source update
 ```
 
 ## Commands
@@ -114,9 +114,9 @@ agm source -u
 ### Tool Management
 
 - `agm tool` - Open interactive TUI to manage tools, links, and configuration
-- `agm tool --status` / `agm tool -s` - Show link status for all tools
-- `agm tool --link` / `agm tool -l` - Create/repair all links (prompts + skills + agents)
-- `agm tool --unlink` / `agm tool -u` - Remove all links
+- `agm tool status` - Show link status for all tools
+- `agm tool link` - Create/repair all links (prompts + skills + agents)
+- `agm tool unlink` - Remove all links
 
 The TUI provides:
 - View and toggle link status for each tool (prompt, skills, agents)
@@ -128,16 +128,25 @@ The TUI provides:
 ### Source Management
 
 - `agm source` - Open interactive TUI to manage skills & agents
-- `agm source -a <url>` / `agm source --add <url>` - Add a source repo by URL
-- `agm source -u` / `agm source --update` - Update all source repos
-- `agm source -l` / `agm source --list` - List all sources with skills & agents
+- `agm source add <url>` - Add a source repo by URL
+- `agm source update` - Update all source repos
+- `agm source list` - List all sources with skills & agents
+- `agm source del <name|url>` - Delete a source
+- `agm source rename <old> <new>` - Rename a source folder and relink installed items
+- `agm source add -n,--name <name> <url>` - Override the cloned/copied directory name
 
 **Examples:**
 ```bash
 # Non-interactive operations
-agm tool --status         # Show link status table
-agm tool --link           # Link all installed tools
-agm tool --unlink         # Remove all links
+agm tool status           # Show link status table
+agm tool link             # Link all installed tools
+agm tool unlink           # Remove all links
+
+# Source operations
+agm source add https://github.com/user/skills   # Add a source
+agm source add -n my-skills https://github.com/user/skills  # Add with custom name
+agm source del my-skills   # Delete a source by name
+agm source rename old-name new-name  # Rename a source
 
 # Interactive TUIs
 agm tool                  # Tool management TUI
