@@ -2601,6 +2601,7 @@ pub struct RenameReport {
     pub agents_relinked: usize,
     pub commands_relinked: usize,
     pub rollback_failures: Vec<String>,
+    pub relink_failures: Vec<String>,
 }
 
 pub fn rename_source(
@@ -2711,34 +2712,47 @@ pub fn rename_source(
     let mut report = RenameReport::default();
     let new_skills = scan_skills(&new_path);
     for (n, sp) in &new_skills {
-        if installed_skills.contains(n) && install_skill(n, sp, skills_dir).is_ok() {
-            report.skills_relinked += 1;
+        if installed_skills.contains(n) {
+            match install_skill(n, sp, skills_dir) {
+                Ok(()) => report.skills_relinked += 1,
+                Err(_) => report.relink_failures.push(format!("skill {}", n)),
+            }
         }
     }
     let new_agents = scan_agents(&new_path);
     for (n, sp) in &new_agents {
-        if installed_agents.contains(n) && install_agent(n, sp, agents_dir).is_ok() {
-            report.agents_relinked += 1;
+        if installed_agents.contains(n) {
+            match install_agent(n, sp, agents_dir) {
+                Ok(()) => report.agents_relinked += 1,
+                Err(_) => report.relink_failures.push(format!("agent {}", n)),
+            }
         }
     }
     let new_cmds = scan_commands(&new_path);
     for (n, sp) in &new_cmds {
-        if installed_commands.contains(n) && install_command(n, sp, commands_dir).is_ok() {
-            report.commands_relinked += 1;
+        if installed_commands.contains(n) {
+            match install_command(n, sp, commands_dir) {
+                Ok(()) => report.commands_relinked += 1,
+                Err(_) => report.relink_failures.push(format!("command {}", n)),
+            }
         }
     }
 
+    let mut done_msg = format!(
+        "Renamed {} → {}; relinked {} skill(s), {} agent(s), {} command(s)",
+        group.name,
+        new,
+        report.skills_relinked,
+        report.agents_relinked,
+        report.commands_relinked
+    );
+    if !report.relink_failures.is_empty() {
+        done_msg.push_str(&format!("; relink failures: {}", report.relink_failures.join(", ")));
+    }
     on_progress(CloneProgress::Done {
         name: new.to_string(),
         success: true,
-        message: format!(
-            "Renamed {} → {}; relinked {} skill(s), {} agent(s), {} command(s)",
-            group.name,
-            new,
-            report.skills_relinked,
-            report.agents_relinked,
-            report.commands_relinked
-        ),
+        message: done_msg,
     });
 
     Ok(report)
