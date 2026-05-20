@@ -372,7 +372,13 @@ fn rename_with_invalid_new_name_errors() {
     fs::create_dir_all(&commands_dir).unwrap();
 
     assert!(rename_source(
-        "old", "a/b", &source_dir, &skills_dir, &agents_dir, &commands_dir, |_| {},
+        "old",
+        "a/b",
+        &source_dir,
+        &skills_dir,
+        &agents_dir,
+        &commands_dir,
+        |_| {},
     )
     .is_err());
     // Source dir untouched.
@@ -403,7 +409,13 @@ fn rename_target_exists_errors() {
     fs::create_dir_all(&commands_dir).unwrap();
 
     let err = rename_source(
-        "old", "new", &source_dir, &skills_dir, &agents_dir, &commands_dir, |_| {},
+        "old",
+        "new",
+        &source_dir,
+        &skills_dir,
+        &agents_dir,
+        &commands_dir,
+        |_| {},
     )
     .unwrap_err();
     assert!(err.to_string().contains("already exists"));

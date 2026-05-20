@@ -2623,10 +2623,7 @@ pub fn rename_source(
             source_dir.join("local").join(&group.name),
             source_dir.join("local").join(new),
         ),
-        _ => (
-            source_dir.join(&group.name),
-            source_dir.join(new),
-        ),
+        _ => (source_dir.join(&group.name), source_dir.join(new)),
     };
 
     if new_path.exists() {
@@ -2664,15 +2661,23 @@ pub fn rename_source(
         .collect();
 
     // Uninstall from central store.
-    for n in &installed_skills { let _ = uninstall_skill(n, skills_dir); }
-    for n in &installed_agents { let _ = uninstall_agent(n, agents_dir); }
-    for n in &installed_commands { let _ = uninstall_command(n, commands_dir); }
+    for n in &installed_skills {
+        let _ = uninstall_skill(n, skills_dir);
+    }
+    for n in &installed_agents {
+        let _ = uninstall_agent(n, agents_dir);
+    }
+    for n in &installed_commands {
+        let _ = uninstall_command(n, commands_dir);
+    }
 
     // uninstall_skill adds to the blocklist as a side-effect; clear it so
     // that an interrupt between here and re-install can't leave skills
     // silently blocklisted. install_skill on the rebuild will be a no-op
     // w.r.t. the blocklist since the names are no longer present.
-    for n in &installed_skills { blocklist_remove(skills_dir, n); }
+    for n in &installed_skills {
+        blocklist_remove(skills_dir, n);
+    }
 
     // fs::rename
     if let Err(e) = fs::rename(&old_path, &new_path) {
@@ -2740,14 +2745,13 @@ pub fn rename_source(
 
     let mut done_msg = format!(
         "Renamed {} → {}; relinked {} skill(s), {} agent(s), {} command(s)",
-        group.name,
-        new,
-        report.skills_relinked,
-        report.agents_relinked,
-        report.commands_relinked
+        group.name, new, report.skills_relinked, report.agents_relinked, report.commands_relinked
     );
     if !report.relink_failures.is_empty() {
-        done_msg.push_str(&format!("; relink failures: {}", report.relink_failures.join(", ")));
+        done_msg.push_str(&format!(
+            "; relink failures: {}",
+            report.relink_failures.join(", ")
+        ));
     }
     on_progress(CloneProgress::Done {
         name: new.to_string(),

@@ -432,23 +432,16 @@ fn source_add(
 ) -> anyhow::Result<()> {
     let normalized = skills::normalize_git_source(source);
     if skills::is_url(&normalized) {
-        let (repo_path, found_skills) = skills::clone_or_pull(
-            &normalized,
-            source_dir,
-            name,
-            |evt| print_clone_progress(&evt),
-        )?;
+        let (repo_path, found_skills) =
+            skills::clone_or_pull(&normalized, source_dir, name, |evt| {
+                print_clone_progress(&evt)
+            })?;
         let to_install = select_skills_to_install(&found_skills, all)?;
         let mut count = 0;
         for (n, p) in &to_install {
             match skills::install_skill(n, p, skills_dir) {
                 Ok(()) => {
-                    println!(
-                        "  {} {} → {}",
-                        " ok ".green(),
-                        n,
-                        paths::contract_tilde(p)
-                    );
+                    println!("  {} {} → {}", " ok ".green(), n, paths::contract_tilde(p));
                     count += 1;
                 }
                 Err(e) => println!("  {} {}: {}", "warn".yellow(), n, e),
@@ -481,23 +474,15 @@ fn source_add(
             "Adding skills from {}...",
             paths::contract_tilde(&source_path)
         );
-        let (dest, found_skills) = skills::add_local_copy(
-            &source_path,
-            source_dir,
-            name,
-            |evt| print_clone_progress(&evt),
-        )?;
+        let (dest, found_skills) = skills::add_local_copy(&source_path, source_dir, name, |evt| {
+            print_clone_progress(&evt)
+        })?;
         let to_install = select_skills_to_install(&found_skills, all)?;
         let mut count = 0;
         for (n, p) in &to_install {
             match skills::install_skill(n, p, skills_dir) {
                 Ok(()) => {
-                    println!(
-                        "  {} {} → {}",
-                        " ok ".green(),
-                        n,
-                        paths::contract_tilde(p)
-                    );
+                    println!("  {} {} → {}", " ok ".green(), n, paths::contract_tilde(p));
                     count += 1;
                 }
                 Err(e) => println!("  {} {}: {}", "warn".yellow(), n, e),
@@ -678,7 +663,8 @@ fn source_del(
     agents_dir: &std::path::Path,
     commands_dir: &std::path::Path,
 ) -> anyhow::Result<()> {
-    let group = skills::resolve_source_target(target, source_dir, skills_dir, agents_dir, commands_dir)?;
+    let group =
+        skills::resolve_source_target(target, source_dir, skills_dir, agents_dir, commands_dir)?;
     skills::delete_source(&group, skills_dir, agents_dir, commands_dir)?;
     println!("{} Deleted source {}", " ok ".green(), group.name);
     Ok(())
@@ -773,19 +759,33 @@ fn main() -> anyhow::Result<()> {
             match action {
                 None => tui::source::run(&mut config),
                 Some(SourceAction::Add { source, name, all }) => source_add(
-                    &source, name.as_deref(), all, &source_dir, &skills_dir, &agents_dir,
+                    &source,
+                    name.as_deref(),
+                    all,
+                    &source_dir,
+                    &skills_dir,
+                    &agents_dir,
                 ),
-                Some(SourceAction::Update) => source_update(
-                    &skills_dir, &agents_dir, &commands_dir, &source_dir,
-                ),
-                Some(SourceAction::List) => source_list(
-                    &skills_dir, &agents_dir, &commands_dir, &source_dir,
-                ),
+                Some(SourceAction::Update) => {
+                    source_update(&skills_dir, &agents_dir, &commands_dir, &source_dir)
+                }
+                Some(SourceAction::List) => {
+                    source_list(&skills_dir, &agents_dir, &commands_dir, &source_dir)
+                }
                 Some(SourceAction::Del { target }) => source_del(
-                    &target, &source_dir, &skills_dir, &agents_dir, &commands_dir,
+                    &target,
+                    &source_dir,
+                    &skills_dir,
+                    &agents_dir,
+                    &commands_dir,
                 ),
                 Some(SourceAction::Rename { old, new }) => source_rename(
-                    &old, &new, &source_dir, &skills_dir, &agents_dir, &commands_dir,
+                    &old,
+                    &new,
+                    &source_dir,
+                    &skills_dir,
+                    &agents_dir,
+                    &commands_dir,
                 ),
             }
         }
