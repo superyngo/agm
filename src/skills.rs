@@ -2488,3 +2488,85 @@ mod tests {
         assert!(central.join("test.md").symlink_metadata().is_ok());
     }
 }
+
+/// Count unicode chars in the value of a top-level YAML key inside the slice of
+/// frontmatter lines (lines between the two `---` markers, excluding markers).
+fn extract_key_value_chars(lines: &[&str], key: &str) -> usize {
+    let prefix = format!("{}:", key);
+    for (i, line) in lines.iter().enumerate() {
+        if !line.starts_with(&prefix) {
+            continue;
+        }
+        let rest = &line[prefix.len()..];
+        let rest_trim = rest.trim();
+        if rest_trim == "|" || rest_trim == ">" {
+            // Block scalar — collect subsequent indented lines
+            let mut acc = String::new();
+            for cont in &lines[i + 1..] {
+                if cont.trim().is_empty() {
+                    if !acc.is_empty() {
+                        acc.push('\n');
+                    }
+                    continue;
+                }
+                let leading = cont.len() - cont.trim_start().len();
+                if leading == 0 {
+                    break;
+                }
+                if !acc.is_empty() {
+                    acc.push('\n');
+                }
+                acc.push_str(cont.trim_start());
+            }
+            return acc.chars().count();
+        }
+        // Inline scalar, possibly quoted
+        let mut v = rest_trim.to_string();
+        if (v.starts_with('"') && v.ends_with('"') && v.len() >= 2)
+            || (v.starts_with('\'') && v.ends_with('\'') && v.len() >= 2)
+        {
+            v = v[1..v.len() - 1].to_string();
+        }
+        return v.chars().count();
+    }
+    0
+}
+
+/// Compute the preload-char count for a skill: sum of `name` + `description`
+/// values in the SKILL.md YAML frontmatter. Returns 0 on any failure.
+pub fn skill_preload_chars(skill_path: &Path) -> usize {
+    let md = skill_path.join("SKILL.md");
+    let content = match fs::read_to_string(&md) {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+    let mut iter = content.lines();
+    let first = match iter.next() {
+        Some(l) => l,
+        None => return 0,
+    };
+    if first.trim() != "---" {
+        return 0;
+    }
+    let mut fm_lines: Vec<&str> = Vec::new();
+    let mut terminated = false;
+    for line in iter.take(200) {
+        let t = line.trim();
+        if t == "---" || t == "..." {
+            terminated = true;
+            break;
+        }
+        fm_lines.push(line);
+    }
+    if !terminated {
+        return 0;
+    }
+    extract_key_value_chars(&fm_lines, "name") + extract_key_value_chars(&fm_lines, "description")
+}
+
+/// Count unicode chars in the whole file. Returns 0 on read error.
+pub fn file_char_count(path: &Path) -> usize {
+    fs::read_to_string(path)
+        .map(|s| s.chars().count())
+        .unwrap_or(0)
+}
