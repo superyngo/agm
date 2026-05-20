@@ -1155,12 +1155,16 @@ pub fn clone_or_pull(
         }
     });
 
-    let status = child.wait().context("git wait failed")?;
-    let _ = t_out.join();
-    let _ = t_err.join();
+    // Drain the channel while readers + git are still running.
+    // rx.iter() blocks until both senders (t_out, t_err) are dropped,
+    // which happens when both reader threads finish — i.e. when git's
+    // stdout/stderr both close (typically when the child exits).
     for (is_err, line) in rx.iter() {
         on_progress(CloneProgress::GitLine { line, is_err });
     }
+    let _ = t_out.join();
+    let _ = t_err.join();
+    let status = child.wait().context("git wait failed")?;
 
     let (success, message) = if status.success() {
         (
