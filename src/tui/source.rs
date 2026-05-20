@@ -1250,7 +1250,7 @@ impl App {
             }
         } else {
             let source_path = expand_tilde(&source);
-            match skills::add_local_copy(&source_path, &self.source_dir) {
+            match skills::add_local_copy(&source_path, &self.source_dir, None, |_evt| {}) {
                 Ok((_dest, found_skills)) => {
                     let mut count = 0;
                     for (name, skill_path) in &found_skills {

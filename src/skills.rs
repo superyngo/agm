@@ -1026,15 +1026,17 @@ pub fn scan_all_sources(
 
 /// Copy a local directory into source_dir/local/{name}/ and return the list of skills found.
 /// Scans BEFORE copying — errors if no skills found. Original directory preserved.
+/// Progress is reported via `on_progress` callback.
 pub fn add_local_copy(
     source: &Path,
     source_dir: &Path,
+    target_name: Option<&str>,
+    mut on_progress: impl FnMut(CloneProgress),
 ) -> anyhow::Result<(PathBuf, Vec<(String, PathBuf)>)> {
     if !source.exists() {
         anyhow::bail!("Source path does not exist: {}", source.display());
     }
 
-    // Scan before copying
     let pre_skills = scan_skills(source);
     if pre_skills.is_empty() {
         anyhow::bail!(
@@ -1043,26 +1045,42 @@ pub fn add_local_copy(
         );
     }
 
-    let source_name = source
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unnamed")
-        .to_string();
+    let name = match target_name {
+        Some(n) => {
+            validate_source_name(n)?;
+            n.to_string()
+        }
+        None => source
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unnamed")
+            .to_string(),
+    };
 
-    let dest = source_dir.join("local").join(&source_name);
+    let dest = source_dir.join("local").join(&name);
     if dest.exists() {
         anyhow::bail!(
             "Source '{}' already exists at {}. Remove it first or choose a different name.",
-            source_name,
+            name,
             contract_tilde(&dest)
         );
     }
 
-    // Copy
+    on_progress(CloneProgress::Start {
+        name: name.clone(),
+        url: source.display().to_string(),
+        action: CloneAction::Clone,
+    });
+
     fs::create_dir_all(dest.parent().unwrap())?;
     copy_dir_recursive(source, &dest)?;
 
-    // Re-scan the copied location
+    on_progress(CloneProgress::Done {
+        name: name.clone(),
+        success: true,
+        message: format!("Copied to {}", contract_tilde(&dest)),
+    });
+
     let skills = scan_skills(&dest);
     Ok((dest, skills))
 }
@@ -1862,7 +1880,7 @@ mod tests {
         let source_dir = dir.path().join("source");
         fs::create_dir_all(&source_dir).unwrap();
 
-        let (dest, skills) = add_local_copy(&original, &source_dir).unwrap();
+        let (dest, skills) = add_local_copy(&original, &source_dir, None, |_| {}).unwrap();
 
         // Copied to source_dir/local/{name}
         assert!(dest.starts_with(source_dir.join("local")));
@@ -1881,7 +1899,7 @@ mod tests {
         let source_dir = dir.path().join("source");
         fs::create_dir_all(&source_dir).unwrap();
 
-        let result = add_local_copy(&empty, &source_dir);
+        let result = add_local_copy(&empty, &source_dir, None, |_| {});
         assert!(result.is_err());
         // Should not have created any directory
         assert!(!source_dir.join("local").exists());
@@ -1899,7 +1917,7 @@ mod tests {
         let existing = source_dir.join("local").join("original");
         fs::create_dir_all(&existing).unwrap();
 
-        let result = add_local_copy(&original, &source_dir);
+        let result = add_local_copy(&original, &source_dir, None, |_| {});
         assert!(result.is_err()); // Already exists
     }
 

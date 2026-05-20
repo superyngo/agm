@@ -542,7 +542,10 @@ fn main() -> anyhow::Result<()> {
                         "Adding skills from {}...",
                         paths::contract_tilde(&source_path)
                     );
-                    let (dest, found_skills) = skills::add_local_copy(&source_path, &source_dir)?;
+                    let (dest, found_skills) =
+                        skills::add_local_copy(&source_path, &source_dir, None, |evt| {
+                            print_clone_progress(&evt);
+                        })?;
                     let to_install = select_skills_to_install(&found_skills, all)?;
                     let mut count = 0;
                     for (name, skill_path) in &to_install {
