@@ -881,30 +881,54 @@ impl App {
         // Total preload chars for this category (installed vs not-installed).
         let (installed_chars, uninstalled_chars) = match category {
             Category::Skills => {
-                let i: usize = self.groups.iter().flat_map(|g| &g.skills)
+                let i: usize = self
+                    .groups
+                    .iter()
+                    .flat_map(|g| &g.skills)
                     .filter(|s| s.install_status == SkillInstallStatus::Installed)
-                    .map(|s| s.preload_chars).sum();
-                let u: usize = self.groups.iter().flat_map(|g| &g.skills)
+                    .map(|s| s.preload_chars)
+                    .sum();
+                let u: usize = self
+                    .groups
+                    .iter()
+                    .flat_map(|g| &g.skills)
                     .filter(|s| s.install_status != SkillInstallStatus::Installed)
-                    .map(|s| s.preload_chars).sum();
+                    .map(|s| s.preload_chars)
+                    .sum();
                 (i, u)
             }
             Category::Agents => {
-                let i: usize = self.groups.iter().flat_map(|g| &g.agents)
+                let i: usize = self
+                    .groups
+                    .iter()
+                    .flat_map(|g| &g.agents)
                     .filter(|a| a.install_status == SkillInstallStatus::Installed)
-                    .map(|a| a.preload_chars).sum();
-                let u: usize = self.groups.iter().flat_map(|g| &g.agents)
+                    .map(|a| a.preload_chars)
+                    .sum();
+                let u: usize = self
+                    .groups
+                    .iter()
+                    .flat_map(|g| &g.agents)
                     .filter(|a| a.install_status != SkillInstallStatus::Installed)
-                    .map(|a| a.preload_chars).sum();
+                    .map(|a| a.preload_chars)
+                    .sum();
                 (i, u)
             }
             Category::Commands => {
-                let i: usize = self.groups.iter().flat_map(|g| &g.commands)
+                let i: usize = self
+                    .groups
+                    .iter()
+                    .flat_map(|g| &g.commands)
                     .filter(|c| c.install_status == SkillInstallStatus::Installed)
-                    .map(|c| c.preload_chars).sum();
-                let u: usize = self.groups.iter().flat_map(|g| &g.commands)
+                    .map(|c| c.preload_chars)
+                    .sum();
+                let u: usize = self
+                    .groups
+                    .iter()
+                    .flat_map(|g| &g.commands)
                     .filter(|c| c.install_status != SkillInstallStatus::Installed)
-                    .map(|c| c.preload_chars).sum();
+                    .map(|c| c.preload_chars)
+                    .sum();
                 (i, u)
             }
         };
@@ -912,10 +936,15 @@ impl App {
         lines.push(Line::default());
         lines.push(Line::from(Span::styled(
             "Total preload chars:",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )));
         lines.push(Line::from(format!("  installed:     {}", installed_chars)));
-        lines.push(Line::from(format!("  not-installed: {}", uninstalled_chars)));
+        lines.push(Line::from(format!(
+            "  not-installed: {}",
+            uninstalled_chars
+        )));
 
         lines
     }
@@ -1155,32 +1184,59 @@ impl App {
 
         // Preload chars summary per-category
         let sum = |installed: bool, items_chars: &[(bool, usize)]| -> usize {
-            items_chars.iter().filter(|(i, _)| *i == installed).map(|(_, c)| *c).sum()
+            items_chars
+                .iter()
+                .filter(|(i, _)| *i == installed)
+                .map(|(_, c)| *c)
+                .sum()
         };
 
         let skill_data: Vec<(bool, usize)> = group
             .skills
             .iter()
-            .map(|s| (s.install_status == skills::SkillInstallStatus::Installed, s.preload_chars))
+            .map(|s| {
+                (
+                    s.install_status == skills::SkillInstallStatus::Installed,
+                    s.preload_chars,
+                )
+            })
             .collect();
         let agent_data: Vec<(bool, usize)> = group
             .agents
             .iter()
-            .map(|a| (a.install_status == skills::SkillInstallStatus::Installed, a.preload_chars))
+            .map(|a| {
+                (
+                    a.install_status == skills::SkillInstallStatus::Installed,
+                    a.preload_chars,
+                )
+            })
             .collect();
         let cmd_data: Vec<(bool, usize)> = group
             .commands
             .iter()
-            .map(|c| (c.install_status == skills::SkillInstallStatus::Installed, c.preload_chars))
+            .map(|c| {
+                (
+                    c.install_status == skills::SkillInstallStatus::Installed,
+                    c.preload_chars,
+                )
+            })
             .collect();
 
         lines.push(Line::default());
         lines.push(Line::from(Span::styled(
             "Preload chars:",
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
         )));
-        for (label, data) in [("Skills", &skill_data), ("Agents", &agent_data), ("Commands", &cmd_data)] {
-            if data.is_empty() { continue; }
+        for (label, data) in [
+            ("Skills", &skill_data),
+            ("Agents", &agent_data),
+            ("Commands", &cmd_data),
+        ] {
+            if data.is_empty() {
+                continue;
+            }
             lines.push(Line::from(format!(
                 "  {:<8} — installed {}  not-installed {}",
                 label,
@@ -2426,14 +2482,18 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD);
         let text_style = Style::default().fg(Color::White);
-        let line = app.add_input.render_line("Add source: ", prefix_style, text_style);
+        let line = app
+            .add_input
+            .render_line("Add source: ", prefix_style, text_style);
         frame.render_widget(Paragraph::new(line), inner);
     } else if app.rename_mode {
         let prefix_style = Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD);
         let text_style = Style::default().fg(Color::White);
-        let line = app.rename_input.render_line("Rename → ", prefix_style, text_style);
+        let line = app
+            .rename_input
+            .render_line("Rename → ", prefix_style, text_style);
         frame.render_widget(Paragraph::new(line), inner);
     } else if app.search_mode {
         let prompt = format!("/{}", app.search_query);

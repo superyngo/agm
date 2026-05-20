@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [v0.9.0] - 2026-05-20
+
 ### Breaking
 - CLI restructured to use explicit subcommands. Removed: `agm tool -l/-u/-s`, `agm source -a/-u/-l/--add/--update/--list`. Replacements: `agm tool link|unlink|status`, `agm source add|update|list`.
 
@@ -21,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `resolve_source_target` now canonicalizes shorthand `user/repo` URLs via `normalize_git_source` before matching, so `agm source del user/repo` correctly resolves repos cloned from `https://github.com/user/repo` (2026-05-20)
 - TUI screen tearing when adding a source. All git stdout/stderr now flows through `LogBuffer`.
 - TUI source rename input now supports the same keys as add input (Home/End, Left/Right, Delete); both share a new `TextInput` widget (2026-05-20)
+- Clippy `lines_filter_map_ok` warnings in `clone_or_pull` stream readers; replaced `lines().flatten()` with `lines().map_while(Result::ok)`.
+- `tui::tool::LinkContext` visibility raised to `pub` to match its use in `PopupState::Info`.
+- Removed unused `editor` import from `src/main.rs`.
 
 ## [v0.8.2] - 2026-05-07
 

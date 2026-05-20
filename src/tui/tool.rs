@@ -236,7 +236,7 @@ fn replace_tool_section(config_text: &str, tool_key: &str, new_section: &str) ->
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
-pub(crate) struct LinkContext {
+pub struct LinkContext {
     tool_key: String,
     field: LinkField,
 }

@@ -1020,12 +1020,12 @@ pub fn clone_or_pull(
     let (tx, rx) = mpsc::channel::<(bool, String)>();
     let tx_err = tx.clone();
     let t_out = thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().flatten() {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             let _ = tx.send((false, line));
         }
     });
     let t_err = thread::spawn(move || {
-        for line in BufReader::new(stderr).lines().flatten() {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
             let _ = tx_err.send((true, line));
         }
     });

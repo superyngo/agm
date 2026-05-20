@@ -1,4 +1,4 @@
-use agm::{config, editor, init, linker, paths, platform, skills, status, tui};
+use agm::{config, init, linker, paths, platform, skills, status, tui};
 
 use clap::{CommandFactory, Parser, Subcommand};
 use colored::Colorize;
