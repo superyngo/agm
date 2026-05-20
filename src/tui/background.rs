@@ -63,7 +63,7 @@ impl BackgroundTask {
 /// (Task 2.1). For now, create the function signature but use a placeholder that we'll wire up later.
 ///
 /// The actual wiring will look like:
-/// ```
+/// ```ignore
 /// pub fn spawn_update(
 ///     skills_dir: PathBuf,
 ///     agents_dir: PathBuf,
