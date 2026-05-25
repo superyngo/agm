@@ -22,7 +22,7 @@ AGM is a Rust-based CLI tool designed to centralize and manage configurations fo
 ## Architecture & Structure
 
 - `src/main.rs`: The entry point that handles CLI argument parsing and dispatches to various modules.
-- `src/config.rs`: Defines the configuration schema (`Config`, `CentralConfig`, `ToolConfig`) and handles loading/saving.
+- `src/config.rs`: Defines the configuration schema (`Config`, `AgmConfig`, `ToolConfig`) and handles loading/saving.
 - `src/tui/`: Contains the TUI implementation using `ratatui`.
     - `mod.rs`: TUI event loop and common components.
     - `tool.rs`: Implementation of the tool management TUI.

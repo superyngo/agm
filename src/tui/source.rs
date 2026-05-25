@@ -748,7 +748,7 @@ impl App {
     fn build_category_info_lines(&self, category: Category) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
 
-        let (label, central_dir, feature_key) = match category {
+        let (label, agm_dir, feature_key) = match category {
             Category::Skills => ("Skills", &self.skills_dir, "skills"),
             Category::Agents => ("Agents", &self.agents_dir, "agents"),
             Category::Commands => ("Commands", &self.commands_dir, "commands"),
@@ -759,10 +759,10 @@ impl App {
             Span::raw(label.to_string()),
         ]));
         lines.push(Line::from(vec![
-            Span::styled("Central Dir: ", Style::default().fg(Color::Yellow)),
-            Span::raw(contract_tilde(central_dir).to_string()),
+            Span::styled("agm Dir: ", Style::default().fg(Color::Yellow)),
+            Span::raw(contract_tilde(agm_dir).to_string()),
         ]));
-        if self.config.central.is_disabled(feature_key) {
+        if self.config.agm.is_disabled(feature_key) {
             lines.push(Line::from(Span::styled(
                 "⚠ Feature disabled",
                 Style::default().fg(Color::Red),
@@ -1711,7 +1711,7 @@ impl App {
                         group_index,
                         skill_index,
                     }) => {
-                        if self.config.central.is_disabled("skills") {
+                        if self.config.agm.is_disabled("skills") {
                             self.set_status("Skills feature is disabled");
                         } else {
                             self.toggle_skill(group_index, skill_index);
@@ -1721,7 +1721,7 @@ impl App {
                         group_index,
                         agent_index,
                     }) => {
-                        if self.config.central.is_disabled("agents") {
+                        if self.config.agm.is_disabled("agents") {
                             self.set_status("Agents feature is disabled");
                         } else {
                             self.toggle_agent(group_index, agent_index);
@@ -1731,7 +1731,7 @@ impl App {
                         group_index,
                         command_index,
                     }) => {
-                        if self.config.central.is_disabled("commands") {
+                        if self.config.agm.is_disabled("commands") {
                             self.set_status("Commands feature is disabled");
                         } else {
                             self.toggle_command(group_index, command_index);
@@ -1746,7 +1746,7 @@ impl App {
                             Category::Agents => "agents",
                             Category::Commands => "commands",
                         };
-                        if self.config.central.is_disabled(feature) {
+                        if self.config.agm.is_disabled(feature) {
                             self.set_status(format!("{} feature is disabled", feature));
                         } else {
                             self.start_bulk_toggle(group_index, category);
@@ -2141,9 +2141,9 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                     }
                 };
                 let disabled = match category {
-                    Category::Skills => app.config.central.is_disabled("skills"),
-                    Category::Agents => app.config.central.is_disabled("agents"),
-                    Category::Commands => app.config.central.is_disabled("commands"),
+                    Category::Skills => app.config.agm.is_disabled("skills"),
+                    Category::Agents => app.config.agm.is_disabled("agents"),
+                    Category::Commands => app.config.agm.is_disabled("commands"),
                 };
 
                 let arrow = if expanded { "▼" } else { "▶" };
@@ -2234,7 +2234,7 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                 skill_index,
             } => {
                 let skill = &app.groups[*group_index].skills[*skill_index];
-                let disabled = app.config.central.is_disabled("skills");
+                let disabled = app.config.agm.is_disabled("skills");
                 let indices = if app.filtered_rows.is_some() && !app.search_query.is_empty() {
                     app.matcher
                         .fuzzy_indices(&skill.name, &app.search_query)
@@ -2260,7 +2260,7 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                 agent_index,
             } => {
                 let agent = &app.groups[*group_index].agents[*agent_index];
-                let disabled = app.config.central.is_disabled("agents");
+                let disabled = app.config.agm.is_disabled("agents");
                 let indices = if app.filtered_rows.is_some() && !app.search_query.is_empty() {
                     app.matcher
                         .fuzzy_indices(&agent.name, &app.search_query)
@@ -2286,7 +2286,7 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                 command_index,
             } => {
                 let command = &app.groups[*group_index].commands[*command_index];
-                let disabled = app.config.central.is_disabled("commands");
+                let disabled = app.config.agm.is_disabled("commands");
                 let indices = if app.filtered_rows.is_some() && !app.search_query.is_empty() {
                     app.matcher
                         .fuzzy_indices(&command.name, &app.search_query)
@@ -2543,10 +2543,10 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
 
 /// Interactive TUI for managing skills and agents.
 pub fn run(config: &mut Config) -> Result<()> {
-    let skills_dir = expand_tilde(&config.central.skills_source);
-    let agents_dir = expand_tilde(&config.central.agents_source);
-    let commands_dir = expand_tilde(&config.central.commands_source);
-    let source_dir = expand_tilde(&config.central.source_dir);
+    let skills_dir = expand_tilde(&config.agm.skills_source);
+    let agents_dir = expand_tilde(&config.agm.agents_source);
+    let commands_dir = expand_tilde(&config.agm.commands_source);
+    let source_dir = expand_tilde(&config.agm.source_dir);
 
     // Prune broken symlinks before loading
     let _ = skills::prune_broken_skills(&skills_dir);

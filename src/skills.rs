@@ -5,12 +5,12 @@ use std::path::{Path, PathBuf};
 use crate::paths::contract_tilde;
 use crate::platform;
 
-/// Installation status of a skill in the central skills directory
+/// Installation status of a skill in the agm skills directory
 #[derive(Debug, Clone, PartialEq)]
 pub enum SkillInstallStatus {
-    /// Central skills dir has a symlink pointing to this skill's source
+    /// agm skills dir has a symlink pointing to this skill's source
     Installed,
-    /// Source exists but no central link
+    /// Source exists but no agm link
     NotInstalled,
     /// Another skill with the same name is installed from a different source
     Conflict,
@@ -211,7 +211,7 @@ fn scan_skills_recursive(
     }
 }
 
-/// Install a single skill by creating a symlink in the central skills directory.
+/// Install a single skill by creating a symlink in the agm skills directory.
 /// Errors if a skill with the same name from a different source already exists.
 pub fn install_skill(name: &str, source_path: &Path, skills_dir: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(skills_dir)?;
@@ -240,7 +240,7 @@ pub fn install_skill(name: &str, source_path: &Path, skills_dir: &Path) -> anyho
     Ok(())
 }
 
-/// Uninstall a single skill by removing its symlink from the central skills directory.
+/// Uninstall a single skill by removing its symlink from the agm skills directory.
 /// No-op if the skill is not installed. Source directory is NOT deleted.
 /// Records the name in the uninstalled blocklist so updates don't re-install it.
 pub fn uninstall_skill(name: &str, skills_dir: &Path) -> anyhow::Result<()> {
@@ -255,7 +255,7 @@ pub fn uninstall_skill(name: &str, skills_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Install a single agent by creating a file symlink in the central agents directory.
+/// Install a single agent by creating a file symlink in the agm agents directory.
 pub fn install_agent(name: &str, source_path: &Path, agents_dir: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(agents_dir)?;
     let link_name = format!("{}.md", name);
@@ -276,7 +276,7 @@ pub fn install_agent(name: &str, source_path: &Path, agents_dir: &Path) -> anyho
     Ok(())
 }
 
-/// Install a single command by symlinking its .md file into the central commands directory.
+/// Install a single command by symlinking its .md file into the agm commands directory.
 pub fn install_command(name: &str, source_path: &Path, commands_dir: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(commands_dir)?;
     let link_name = format!("{}.md", name);
@@ -297,7 +297,7 @@ pub fn install_command(name: &str, source_path: &Path, commands_dir: &Path) -> a
     Ok(())
 }
 
-/// Uninstall a single agent by removing its symlink from the central agents directory.
+/// Uninstall a single agent by removing its symlink from the agm agents directory.
 pub fn uninstall_agent(name: &str, agents_dir: &Path) -> anyhow::Result<()> {
     let link_name = format!("{}.md", name);
     let link_path = agents_dir.join(&link_name);
@@ -308,7 +308,7 @@ pub fn uninstall_agent(name: &str, agents_dir: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Uninstall a single command by removing its symlink from the central commands directory.
+/// Uninstall a single command by removing its symlink from the agm commands directory.
 pub fn uninstall_command(name: &str, commands_dir: &Path) -> anyhow::Result<()> {
     let link_name = format!("{}.md", name);
     let link_path = commands_dir.join(&link_name);
@@ -319,7 +319,7 @@ pub fn uninstall_command(name: &str, commands_dir: &Path) -> anyhow::Result<()> 
     Ok(())
 }
 
-/// Scan central skills directory and remove any symlinks whose targets no longer exist.
+/// Scan agm skills directory and remove any symlinks whose targets no longer exist.
 /// Returns the number of broken links removed.
 pub fn prune_broken_skills(skills_dir: &Path) -> anyhow::Result<usize> {
     if !skills_dir.is_dir() {
@@ -341,7 +341,7 @@ pub fn prune_broken_skills(skills_dir: &Path) -> anyhow::Result<usize> {
     Ok(removed)
 }
 
-/// Scan central agents directory and remove any symlinks whose targets no longer exist.
+/// Scan agm agents directory and remove any symlinks whose targets no longer exist.
 pub fn prune_broken_agents(agents_dir: &Path) -> anyhow::Result<usize> {
     if !agents_dir.is_dir() {
         return Ok(0);
@@ -363,7 +363,7 @@ pub fn prune_broken_agents(agents_dir: &Path) -> anyhow::Result<usize> {
     Ok(removed)
 }
 
-/// Scan central commands directory and remove any symlinks whose targets no longer exist.
+/// Scan agm commands directory and remove any symlinks whose targets no longer exist.
 pub fn prune_broken_commands(commands_dir: &Path) -> anyhow::Result<usize> {
     if !commands_dir.is_dir() {
         return Ok(0);
@@ -428,7 +428,7 @@ fn blocklist_remove(skills_dir: &Path, name: &str) {
     }
 }
 
-/// Check the install status of an agent by examining the central agents directory.
+/// Check the install status of an agent by examining the agm agents directory.
 fn check_agent_install_status(
     name: &str,
     source_path: &Path,
@@ -694,7 +694,7 @@ fn resolve_repo_url(path: &Path) -> Option<String> {
         })
 }
 
-/// Check the install status of a skill by examining the central skills directory.
+/// Check the install status of a skill by examining the agm skills directory.
 fn check_install_status(name: &str, source_path: &Path, skills_dir: &Path) -> SkillInstallStatus {
     let link_path = skills_dir.join(name);
     if link_path.symlink_metadata().is_err() {
@@ -1083,28 +1083,28 @@ pub fn clone_or_pull(
     Ok((repo_path, skills))
 }
 
-/// Delete a source: remove all its central symlinks (skills + agents) and delete the source directory.
+/// Delete a source: remove all its agm symlinks (skills + agents) and delete the source directory.
 pub fn delete_source(
     group: &SourceGroup,
     skills_dir: &Path,
     agents_dir: &Path,
     commands_dir: &Path,
 ) -> anyhow::Result<()> {
-    // Remove all central symlinks for this source's skills
+    // Remove all agm symlinks for this source's skills
     for skill in &group.skills {
         if skill.install_status == SkillInstallStatus::Installed {
             uninstall_skill(&skill.name, skills_dir)?;
         }
     }
 
-    // Remove all central symlinks for this source's agents
+    // Remove all agm symlinks for this source's agents
     for agent in &group.agents {
         if agent.install_status == SkillInstallStatus::Installed {
             uninstall_agent(&agent.name, agents_dir)?;
         }
     }
 
-    // Remove all central symlinks for this source's commands
+    // Remove all agm symlinks for this source's commands
     for command in &group.commands {
         if command.install_status == SkillInstallStatus::Installed {
             uninstall_command(&command.name, commands_dir)?;
@@ -1136,39 +1136,39 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Migrate a tool's skills directory to the central store (TUI-safe).
+/// Migrate a tool's skills directory to the agm store (TUI-safe).
 /// Moves skills from `skills_link` into `tool_skills_target` (under source_dir/agm_tools/{tool}/),
-/// then creates central links pointing to the migrated locations.
+/// then creates agm links pointing to the migrated locations.
 /// Returns the count and human-readable messages instead of printing.
 pub fn migrate_tool_dir_quiet(
     skills_link: &Path,
     tool_skills_target: &Path,
-    central_skills: &Path,
+    agm_skills: &Path,
     tool_key: &str,
 ) -> anyhow::Result<(usize, Vec<String>)> {
     use anyhow::Context;
 
     let mut msgs = Vec::new();
     fs::create_dir_all(tool_skills_target)?;
-    fs::create_dir_all(central_skills)?;
+    fs::create_dir_all(agm_skills)?;
 
     let discovered = scan_skills(skills_link);
     let mut migrated = 0;
 
     for (name, skill_path) in &discovered {
-        let effective_name = if !central_skills.join(name).exists() {
+        let effective_name = if !agm_skills.join(name).exists() {
             name.clone()
         } else {
             let prefixed = format!("{}_{}", tool_key, name);
             msgs.push(format!(
-                "  skill '{}' already in central, renaming to '{}'",
+                "  skill '{}' already in agm, renaming to '{}'",
                 name, prefixed
             ));
             prefixed
         };
 
         let dest = tool_skills_target.join(&effective_name);
-        let link = central_skills.join(&effective_name);
+        let link = agm_skills.join(&effective_name);
 
         if dest.exists() {
             msgs.push(format!("  {} already in store, re-linking", effective_name));
@@ -1192,7 +1192,7 @@ pub fn migrate_tool_dir_quiet(
         }
 
         platform::link_dir(&dest, &link)
-            .with_context(|| format!("Failed to link skill '{}' into central", effective_name))?;
+            .with_context(|| format!("Failed to link skill '{}' into agm", effective_name))?;
 
         msgs.push(format!("  {} → {}", effective_name, contract_tilde(&dest)));
         migrated += 1;
@@ -1205,13 +1205,13 @@ pub fn migrate_tool_dir_quiet(
     Ok((migrated, msgs))
 }
 
-/// Migrate a tool's agents directory to the central store (TUI-safe).
+/// Migrate a tool's agents directory to the agm store (TUI-safe).
 /// Moves .md files from `agents_link` into `tool_agents_target` (under
-/// source_dir/agm_tools/{tool}/agents/), then creates file links in `central_agents`.
+/// source_dir/agm_tools/{tool}/agents/), then creates file links in `agm_agents`.
 pub fn migrate_agents_dir_quiet(
     agents_link: &Path,
     tool_agents_target: &Path,
-    central_agents: &Path,
+    agm_agents: &Path,
     tool_key: &str,
     prompt_filename: &str,
 ) -> anyhow::Result<(usize, Vec<String>)> {
@@ -1219,7 +1219,7 @@ pub fn migrate_agents_dir_quiet(
 
     let mut msgs = Vec::new();
     fs::create_dir_all(tool_agents_target)?;
-    fs::create_dir_all(central_agents)?;
+    fs::create_dir_all(agm_agents)?;
 
     let mut migrated = 0;
     let entries: Vec<_> = fs::read_dir(agents_link)?
@@ -1243,20 +1243,20 @@ pub fn migrate_agents_dir_quiet(
         let name = file_name.to_string_lossy().to_string();
         let src = entry.path();
 
-        let effective_name = if !central_agents.join(&name).exists() {
+        let effective_name = if !agm_agents.join(&name).exists() {
             name.clone()
         } else {
             let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or(&name);
             let prefixed = format!("{}_{}.md", tool_key, stem);
             msgs.push(format!(
-                "  agent '{}' already in central, renaming to '{}'",
+                "  agent '{}' already in agm, renaming to '{}'",
                 name, prefixed
             ));
             prefixed
         };
 
         let dest = tool_agents_target.join(&effective_name);
-        let link = central_agents.join(&effective_name);
+        let link = agm_agents.join(&effective_name);
 
         if dest.exists() {
             msgs.push(format!("  {} already in store, re-linking", effective_name));
@@ -1276,7 +1276,7 @@ pub fn migrate_agents_dir_quiet(
         }
 
         platform::link_file(&dest, &link)
-            .with_context(|| format!("Failed to link agent '{}' into central", effective_name))?;
+            .with_context(|| format!("Failed to link agent '{}' into agm", effective_name))?;
 
         msgs.push(format!("  {} → {}", effective_name, contract_tilde(&dest)));
         migrated += 1;
@@ -1289,13 +1289,13 @@ pub fn migrate_agents_dir_quiet(
     Ok((migrated, msgs))
 }
 
-/// Migrate a tool's commands directory to the central store (TUI-safe).
+/// Migrate a tool's commands directory to the agm store (TUI-safe).
 /// Moves .md files from `commands_link` into `tool_commands_target` (under
-/// source_dir/agm_tools/{tool}/commands/), then creates file links in `central_commands`.
+/// source_dir/agm_tools/{tool}/commands/), then creates file links in `agm_commands`.
 pub fn migrate_commands_dir_quiet(
     commands_link: &Path,
     tool_commands_target: &Path,
-    central_commands: &Path,
+    agm_commands: &Path,
     tool_key: &str,
     prompt_filename: &str,
 ) -> anyhow::Result<(usize, Vec<String>)> {
@@ -1303,7 +1303,7 @@ pub fn migrate_commands_dir_quiet(
 
     let mut msgs = Vec::new();
     fs::create_dir_all(tool_commands_target)?;
-    fs::create_dir_all(central_commands)?;
+    fs::create_dir_all(agm_commands)?;
 
     let mut migrated = 0;
     let entries: Vec<_> = fs::read_dir(commands_link)?
@@ -1327,20 +1327,20 @@ pub fn migrate_commands_dir_quiet(
         let name = file_name.to_string_lossy().to_string();
         let src = entry.path();
 
-        let effective_name = if !central_commands.join(&name).exists() {
+        let effective_name = if !agm_commands.join(&name).exists() {
             name.clone()
         } else {
             let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or(&name);
             let prefixed = format!("{}_{}.md", tool_key, stem);
             msgs.push(format!(
-                "  command '{}' already in central, renaming to '{}'",
+                "  command '{}' already in agm, renaming to '{}'",
                 name, prefixed
             ));
             prefixed
         };
 
         let dest = tool_commands_target.join(&effective_name);
-        let link = central_commands.join(&effective_name);
+        let link = agm_commands.join(&effective_name);
 
         if dest.exists() {
             msgs.push(format!("  {} already in store, re-linking", effective_name));
@@ -1360,7 +1360,7 @@ pub fn migrate_commands_dir_quiet(
         }
 
         platform::link_file(&dest, &link)
-            .with_context(|| format!("Failed to link command '{}' into central", effective_name))?;
+            .with_context(|| format!("Failed to link command '{}' into agm", effective_name))?;
 
         msgs.push(format!("  {} → {}", effective_name, contract_tilde(&dest)));
         migrated += 1;
@@ -1814,7 +1814,7 @@ mod tests {
         )
         .unwrap();
 
-        // Central links removed
+        // agm links removed
         assert!(!skills_dir.join("skill-a").exists());
         assert!(!skills_dir.join("skill-b").exists());
         // Source directory removed
@@ -2020,9 +2020,9 @@ mod tests {
         fs::write(s2.join("SKILL.md"), "# beta").unwrap();
 
         let store = tmp.path().join("store");
-        let central = tmp.path().join("central");
+        let agm = tmp.path().join("agm");
 
-        let (count, msgs) = migrate_tool_dir_quiet(&skills_dir, &store, &central, "test").unwrap();
+        let (count, msgs) = migrate_tool_dir_quiet(&skills_dir, &store, &agm, "test").unwrap();
 
         assert_eq!(count, 2);
         assert!(!msgs.is_empty());
@@ -2031,9 +2031,9 @@ mod tests {
         // Items in store
         assert!(store.join("alpha").join("SKILL.md").exists());
         assert!(store.join("beta").join("SKILL.md").exists());
-        // Links in central
-        assert!(platform::is_dir_link(&central.join("alpha")));
-        assert!(platform::is_dir_link(&central.join("beta")));
+        // Links in agm
+        assert!(platform::is_dir_link(&agm.join("alpha")));
+        assert!(platform::is_dir_link(&agm.join("beta")));
     }
 
     #[test]
@@ -2045,17 +2045,16 @@ mod tests {
         fs::write(s1.join("SKILL.md"), "# shared").unwrap();
 
         let store = tmp.path().join("store");
-        let central = tmp.path().join("central");
-        // Pre-existing skill with same name in central
-        fs::create_dir_all(central.join("shared")).unwrap();
+        let agm = tmp.path().join("agm");
+        // Pre-existing skill with same name in agm
+        fs::create_dir_all(agm.join("shared")).unwrap();
 
-        let (count, msgs) =
-            migrate_tool_dir_quiet(&skills_dir, &store, &central, "mytool").unwrap();
+        let (count, msgs) = migrate_tool_dir_quiet(&skills_dir, &store, &agm, "mytool").unwrap();
 
         assert_eq!(count, 1);
         // Should be renamed with tool prefix
         assert!(store.join("mytool_shared").exists());
-        assert!(central.join("mytool_shared").exists());
+        assert!(agm.join("mytool_shared").exists());
         // Messages mention the rename
         assert!(msgs.iter().any(|m| m.contains("renaming")));
     }
@@ -2068,9 +2067,9 @@ mod tests {
         // No skills inside
 
         let store = tmp.path().join("store");
-        let central = tmp.path().join("central");
+        let agm = tmp.path().join("agm");
 
-        let (count, _msgs) = migrate_tool_dir_quiet(&skills_dir, &store, &central, "test").unwrap();
+        let (count, _msgs) = migrate_tool_dir_quiet(&skills_dir, &store, &agm, "test").unwrap();
         assert_eq!(count, 0);
         // Original dir still removed
         assert!(!skills_dir.exists());
@@ -2090,10 +2089,10 @@ mod tests {
         fs::write(agents_dir.join("README"), "not an agent").unwrap(); // non-.md file
 
         let store = tmp.path().join("store_agents");
-        let central = tmp.path().join("central_agents");
+        let agm = tmp.path().join("agm_agents");
 
         let (count, msgs) =
-            migrate_agents_dir_quiet(&agents_dir, &store, &central, "test", "").unwrap();
+            migrate_agents_dir_quiet(&agents_dir, &store, &agm, "test", "").unwrap();
 
         assert_eq!(count, 2);
         assert!(!msgs.is_empty());
@@ -2103,11 +2102,9 @@ mod tests {
         assert!(store.join("helper.md").exists());
         assert!(store.join("reviewer.md").exists());
         // Non-md file not migrated (lost with dir removal — intentional)
-        // Links in central (file links)
-        assert!(platform::same_file(&central.join("helper.md"), &store.join("helper.md")).unwrap());
-        assert!(
-            platform::same_file(&central.join("reviewer.md"), &store.join("reviewer.md")).unwrap()
-        );
+        // Links in agm (file links)
+        assert!(platform::same_file(&agm.join("helper.md"), &store.join("helper.md")).unwrap());
+        assert!(platform::same_file(&agm.join("reviewer.md"), &store.join("reviewer.md")).unwrap());
     }
 
     #[test]
@@ -2118,24 +2115,24 @@ mod tests {
         fs::write(agents_dir.join("shared.md"), "# shared agent").unwrap();
 
         let store = tmp.path().join("store_agents");
-        let central = tmp.path().join("central_agents");
-        // Pre-existing agent with same name in central
-        fs::create_dir_all(&central).unwrap();
-        fs::write(central.join("shared.md"), "# existing agent").unwrap();
+        let agm = tmp.path().join("agm_agents");
+        // Pre-existing agent with same name in agm
+        fs::create_dir_all(&agm).unwrap();
+        fs::write(agm.join("shared.md"), "# existing agent").unwrap();
 
         let (count, msgs) =
-            migrate_agents_dir_quiet(&agents_dir, &store, &central, "mytool", "").unwrap();
+            migrate_agents_dir_quiet(&agents_dir, &store, &agm, "mytool", "").unwrap();
 
         assert_eq!(count, 1);
         assert!(store.join("mytool_shared.md").exists());
         assert!(platform::same_file(
-            &central.join("mytool_shared.md"),
+            &agm.join("mytool_shared.md"),
             &store.join("mytool_shared.md")
         )
         .unwrap());
         // Original preserved
         assert_eq!(
-            fs::read_to_string(central.join("shared.md")).unwrap(),
+            fs::read_to_string(agm.join("shared.md")).unwrap(),
             "# existing agent"
         );
         assert!(msgs.iter().any(|m| m.contains("renaming")));
@@ -2148,10 +2145,10 @@ mod tests {
         fs::create_dir_all(&agents_dir).unwrap();
 
         let store = tmp.path().join("store_agents");
-        let central = tmp.path().join("central_agents");
+        let agm = tmp.path().join("agm_agents");
 
         let (count, _msgs) =
-            migrate_agents_dir_quiet(&agents_dir, &store, &central, "test", "").unwrap();
+            migrate_agents_dir_quiet(&agents_dir, &store, &agm, "test", "").unwrap();
         assert_eq!(count, 0);
         assert!(!agents_dir.exists());
     }
@@ -2171,20 +2168,19 @@ mod tests {
         fs::write(s1.join("code.py"), "print('hi')").unwrap();
 
         let store = tmp.path().join("agm_tools").join("testtool");
-        let central = tmp.path().join("central_skills");
+        let agm = tmp.path().join("agm_skills");
 
         // Step 1: Migrate (simulating handle_blocked_link for skills)
-        let (count, _) =
-            migrate_tool_dir_quiet(&tool_skills, &store, &central, "testtool").unwrap();
+        let (count, _) = migrate_tool_dir_quiet(&tool_skills, &store, &agm, "testtool").unwrap();
         assert_eq!(count, 1);
         assert!(!tool_skills.exists());
         assert!(store.join("my-skill").join("SKILL.md").exists());
         assert!(store.join("my-skill").join("code.py").exists());
 
         // Step 2: Create link
-        linker::create_link_quiet(&tool_skills, &central, "skills", true).unwrap();
+        linker::create_link_quiet(&tool_skills, &agm, "skills", true).unwrap();
         assert_eq!(
-            linker::check_link(&tool_skills, &central, true),
+            linker::check_link(&tool_skills, &agm, true),
             linker::LinkStatus::Linked
         );
 
@@ -2222,21 +2218,20 @@ mod tests {
         fs::write(tool_agents.join("tester.md"), "# Tester Agent").unwrap();
 
         let store_agents = tmp.path().join("agm_tools").join("testtool").join("agents");
-        let central = tmp.path().join("central_agents");
+        let agm = tmp.path().join("agm_agents");
 
         // Step 1: Migrate
         let (count, _) =
-            migrate_agents_dir_quiet(&tool_agents, &store_agents, &central, "testtool", "")
-                .unwrap();
+            migrate_agents_dir_quiet(&tool_agents, &store_agents, &agm, "testtool", "").unwrap();
         assert_eq!(count, 2);
         assert!(!tool_agents.exists());
         assert!(store_agents.join("coder.md").exists());
         assert!(store_agents.join("tester.md").exists());
 
         // Step 2: Create link
-        linker::create_link_quiet(&tool_agents, &central, "agents", true).unwrap();
+        linker::create_link_quiet(&tool_agents, &agm, "agents", true).unwrap();
         assert_eq!(
-            linker::check_link(&tool_agents, &central, true),
+            linker::check_link(&tool_agents, &agm, true),
             linker::LinkStatus::Linked
         );
 
@@ -2262,9 +2257,9 @@ mod tests {
         let prompt_path = tmp.path().join("AGENTS.md");
         fs::write(&prompt_path, "# My Custom Prompt").unwrap();
 
-        let central_prompt = tmp.path().join("central").join("MASTER.md");
-        fs::create_dir_all(central_prompt.parent().unwrap()).unwrap();
-        fs::write(&central_prompt, "# Central Prompt").unwrap();
+        let agm_prompt = tmp.path().join("agm").join("MASTER.md");
+        fs::create_dir_all(agm_prompt.parent().unwrap()).unwrap();
+        fs::write(&agm_prompt, "# agm Prompt").unwrap();
 
         // Step 1: Backup (with_extension replaces .md, so AGENTS.md → AGENTS.{ts}.bak)
         let backup = prompt_path.with_extension("20990101_120000.bak");
@@ -2273,15 +2268,12 @@ mod tests {
         assert!(backup.exists());
 
         // Step 2: Create link
-        linker::create_link_quiet(&prompt_path, &central_prompt, "prompt", false).unwrap();
+        linker::create_link_quiet(&prompt_path, &agm_prompt, "prompt", false).unwrap();
         assert_eq!(
-            linker::check_link(&prompt_path, &central_prompt, false),
+            linker::check_link(&prompt_path, &agm_prompt, false),
             linker::LinkStatus::Linked
         );
-        assert_eq!(
-            fs::read_to_string(&prompt_path).unwrap(),
-            "# Central Prompt"
-        );
+        assert_eq!(fs::read_to_string(&prompt_path).unwrap(), "# agm Prompt");
 
         // Step 3: Unlink
         linker::remove_link_quiet(&prompt_path, "prompt", false).unwrap();
@@ -2343,28 +2335,28 @@ mod tests {
     fn test_install_uninstall_command() {
         let tmp = tempfile::tempdir().unwrap();
         let source_dir = tmp.path().join("source");
-        let central_dir = tmp.path().join("central");
+        let agm_dir = tmp.path().join("agm");
         fs::create_dir_all(&source_dir).unwrap();
-        fs::create_dir_all(&central_dir).unwrap();
+        fs::create_dir_all(&agm_dir).unwrap();
 
         let cmd_file = source_dir.join("deploy.md");
         fs::write(&cmd_file, "# Deploy command").unwrap();
 
         // Install
-        install_command("deploy", &cmd_file, &central_dir).unwrap();
-        let link = central_dir.join("deploy.md");
+        install_command("deploy", &cmd_file, &agm_dir).unwrap();
+        let link = agm_dir.join("deploy.md");
         assert!(link.symlink_metadata().is_ok());
         assert!(link.exists());
 
         // Install again (idempotent)
-        install_command("deploy", &cmd_file, &central_dir).unwrap();
+        install_command("deploy", &cmd_file, &agm_dir).unwrap();
 
         // Uninstall
-        uninstall_command("deploy", &central_dir).unwrap();
-        assert!(central_dir.join("deploy.md").symlink_metadata().is_err());
+        uninstall_command("deploy", &agm_dir).unwrap();
+        assert!(agm_dir.join("deploy.md").symlink_metadata().is_err());
 
         // Uninstall again (idempotent)
-        uninstall_command("deploy", &central_dir).unwrap();
+        uninstall_command("deploy", &agm_dir).unwrap();
     }
 
     #[test]
@@ -2372,18 +2364,18 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let source1 = tmp.path().join("source1");
         let source2 = tmp.path().join("source2");
-        let central = tmp.path().join("central");
+        let agm = tmp.path().join("agm");
         fs::create_dir_all(&source1).unwrap();
         fs::create_dir_all(&source2).unwrap();
-        fs::create_dir_all(&central).unwrap();
+        fs::create_dir_all(&agm).unwrap();
 
         let cmd1 = source1.join("test.md");
         let cmd2 = source2.join("test.md");
         fs::write(&cmd1, "# Command from source 1").unwrap();
         fs::write(&cmd2, "# Command from source 2").unwrap();
 
-        install_command("test", &cmd1, &central).unwrap();
-        let result = install_command("test", &cmd2, &central);
+        install_command("test", &cmd1, &agm).unwrap();
+        let result = install_command("test", &cmd2, &agm);
         assert!(result.is_err());
     }
 
@@ -2392,23 +2384,23 @@ mod tests {
     fn test_prune_broken_commands() {
         let tmp = tempfile::tempdir().unwrap();
         let source = tmp.path().join("source");
-        let central = tmp.path().join("central");
+        let agm = tmp.path().join("agm");
         fs::create_dir_all(&source).unwrap();
-        fs::create_dir_all(&central).unwrap();
+        fs::create_dir_all(&agm).unwrap();
 
         let cmd_file = source.join("ephemeral.md");
         fs::write(&cmd_file, "# Ephemeral").unwrap();
 
-        install_command("ephemeral", &cmd_file, &central).unwrap();
-        assert!(central.join("ephemeral.md").exists());
+        install_command("ephemeral", &cmd_file, &agm).unwrap();
+        assert!(agm.join("ephemeral.md").exists());
 
         // Remove source — link is now broken
         fs::remove_file(&cmd_file).unwrap();
-        assert!(!central.join("ephemeral.md").exists()); // target gone
+        assert!(!agm.join("ephemeral.md").exists()); // target gone
 
-        let removed = prune_broken_commands(&central).unwrap();
+        let removed = prune_broken_commands(&agm).unwrap();
         assert_eq!(removed, 1);
-        assert!(central.join("ephemeral.md").symlink_metadata().is_err());
+        assert!(agm.join("ephemeral.md").symlink_metadata().is_err());
     }
 
     #[test]
@@ -2416,14 +2408,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let tool_commands = tmp.path().join("tool_commands");
         let store = tmp.path().join("store");
-        let central = tmp.path().join("central");
+        let agm = tmp.path().join("agm");
         fs::create_dir_all(&tool_commands).unwrap();
 
         fs::write(tool_commands.join("build.md"), "# Build").unwrap();
         fs::write(tool_commands.join("test.md"), "# Test").unwrap();
 
         let (count, msgs) =
-            migrate_commands_dir_quiet(&tool_commands, &store, &central, "claude", "").unwrap();
+            migrate_commands_dir_quiet(&tool_commands, &store, &agm, "claude", "").unwrap();
         assert_eq!(count, 2);
         assert!(!msgs.is_empty());
 
@@ -2434,9 +2426,9 @@ mod tests {
         assert!(store.join("build.md").exists());
         assert!(store.join("test.md").exists());
 
-        // Central should have symlinks
-        assert!(central.join("build.md").symlink_metadata().is_ok());
-        assert!(central.join("test.md").symlink_metadata().is_ok());
+        // agm should have symlinks
+        assert!(agm.join("build.md").symlink_metadata().is_ok());
+        assert!(agm.join("test.md").symlink_metadata().is_ok());
     }
 }
 
@@ -2660,7 +2652,7 @@ pub fn rename_source(
         .map(|c| c.name.clone())
         .collect();
 
-    // Uninstall from central store.
+    // Uninstall from agm store.
     for n in &installed_skills {
         let _ = uninstall_skill(n, skills_dir);
     }

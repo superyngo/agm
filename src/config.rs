@@ -9,25 +9,26 @@ use crate::paths::{contract_tilde, expand_path, expand_tilde};
 pub struct Config {
     #[serde(default)]
     pub editor: String,
-    pub central: CentralConfig,
+    #[serde(alias = "central")]
+    pub agm: AgmConfig,
     #[serde(default)]
     pub tools: BTreeMap<String, ToolConfig>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CentralConfig {
+pub struct AgmConfig {
     pub prompt_source: String,
     pub skills_source: String,
-    #[serde(default = "CentralConfig::default_agents_source")]
+    #[serde(default = "AgmConfig::default_agents_source")]
     pub agents_source: String,
-    #[serde(default = "CentralConfig::default_commands_source")]
+    #[serde(default = "AgmConfig::default_commands_source")]
     pub commands_source: String,
     pub source_dir: String,
     #[serde(default)]
     pub disabled: Vec<String>,
 }
 
-impl CentralConfig {
+impl AgmConfig {
     fn default_agents_source() -> String {
         "~/.local/share/agm/agents".into()
     }
@@ -209,7 +210,7 @@ impl Config {
 
         Config {
             editor: String::new(),
-            central: CentralConfig {
+            agm: AgmConfig {
                 prompt_source: "~/.local/share/agm/prompts/MASTER.md".into(),
                 skills_source: "~/.local/share/agm/skills".into(),
                 agents_source: "~/.local/share/agm/agents".into(),
@@ -327,19 +328,32 @@ mod tests {
     }
 
     #[test]
-    fn test_central_defaults() {
+    fn test_agm_defaults() {
         let config = Config::default_config();
         assert_eq!(
-            config.central.prompt_source,
+            config.agm.prompt_source,
             "~/.local/share/agm/prompts/MASTER.md"
         );
-        assert_eq!(config.central.skills_source, "~/.local/share/agm/skills");
-        assert_eq!(config.central.agents_source, "~/.local/share/agm/agents");
-        assert_eq!(
-            config.central.commands_source,
-            "~/.local/share/agm/commands"
-        );
-        assert_eq!(config.central.source_dir, "~/.local/share/agm/source");
+        assert_eq!(config.agm.skills_source, "~/.local/share/agm/skills");
+        assert_eq!(config.agm.agents_source, "~/.local/share/agm/agents");
+        assert_eq!(config.agm.commands_source, "~/.local/share/agm/commands");
+        assert_eq!(config.agm.source_dir, "~/.local/share/agm/source");
+    }
+
+    #[test]
+    fn test_legacy_central_section_alias() {
+        // Configs written before the central -> agm rename use [central];
+        // they must still load via the serde alias.
+        let toml = r#"
+[central]
+prompt_source = "~/p/MASTER.md"
+skills_source = "~/p/skills"
+source_dir = "~/p/source"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.agm.prompt_source, "~/p/MASTER.md");
+        assert_eq!(config.agm.skills_source, "~/p/skills");
+        assert_eq!(config.agm.source_dir, "~/p/source");
     }
 
     #[test]
@@ -451,10 +465,10 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let config_path = tmp.path().join("config.toml");
         let mut config = Config::default_config();
-        config.central.disabled = vec!["skills".to_string(), "agents".to_string()];
+        config.agm.disabled = vec!["skills".to_string(), "agents".to_string()];
         config.save_to(&config_path).unwrap();
         let loaded = Config::load_from(Some(config_path)).unwrap();
-        assert_eq!(loaded.central.disabled, vec!["skills", "agents"]);
+        assert_eq!(loaded.agm.disabled, vec!["skills", "agents"]);
     }
 
     #[test]
@@ -464,26 +478,26 @@ mod tests {
         let config = Config::default_config();
         config.save_to(&config_path).unwrap();
         let loaded = Config::load_from(Some(config_path)).unwrap();
-        assert!(loaded.central.disabled.is_empty());
+        assert!(loaded.agm.disabled.is_empty());
     }
 
     #[test]
     fn test_is_disabled() {
         let mut config = Config::default_config();
-        assert!(!config.central.is_disabled("skills"));
-        config.central.disabled = vec!["skills".to_string()];
-        assert!(config.central.is_disabled("skills"));
-        assert!(!config.central.is_disabled("prompt"));
+        assert!(!config.agm.is_disabled("skills"));
+        config.agm.disabled = vec!["skills".to_string()];
+        assert!(config.agm.is_disabled("skills"));
+        assert!(!config.agm.is_disabled("prompt"));
     }
 
     #[test]
     fn test_toggleable_features() {
-        assert!(CentralConfig::TOGGLEABLE_FEATURES.contains(&"prompt"));
-        assert!(CentralConfig::TOGGLEABLE_FEATURES.contains(&"skills"));
-        assert!(CentralConfig::TOGGLEABLE_FEATURES.contains(&"agents"));
-        assert!(CentralConfig::TOGGLEABLE_FEATURES.contains(&"commands"));
-        assert!(!CentralConfig::TOGGLEABLE_FEATURES.contains(&"config"));
-        assert!(!CentralConfig::TOGGLEABLE_FEATURES.contains(&"source"));
+        assert!(AgmConfig::TOGGLEABLE_FEATURES.contains(&"prompt"));
+        assert!(AgmConfig::TOGGLEABLE_FEATURES.contains(&"skills"));
+        assert!(AgmConfig::TOGGLEABLE_FEATURES.contains(&"agents"));
+        assert!(AgmConfig::TOGGLEABLE_FEATURES.contains(&"commands"));
+        assert!(!AgmConfig::TOGGLEABLE_FEATURES.contains(&"config"));
+        assert!(!AgmConfig::TOGGLEABLE_FEATURES.contains(&"source"));
     }
 
     #[test]

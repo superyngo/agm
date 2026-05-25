@@ -8,10 +8,10 @@ use crate::skills;
 /// Display table with tool name, config dir, prompt/skills/agents link status and paths
 pub fn status() -> anyhow::Result<()> {
     let config = Config::load()?;
-    let central_skills = expand_tilde(&config.central.skills_source);
-    let central_agents = expand_tilde(&config.central.agents_source);
-    let central_commands = expand_tilde(&config.central.commands_source);
-    let central_prompt = expand_tilde(&config.central.prompt_source);
+    let agm_skills = expand_tilde(&config.agm.skills_source);
+    let agm_agents = expand_tilde(&config.agm.agents_source);
+    let agm_commands = expand_tilde(&config.agm.commands_source);
+    let agm_prompt = expand_tilde(&config.agm.prompt_source);
 
     // Indent for detail lines: aligns under the data columns
     const INDENT: &str = "                ";
@@ -29,22 +29,22 @@ pub fn status() -> anyhow::Result<()> {
         let prompt_link = tool.resolved_link_path("prompt");
         let prompt_ls = prompt_link
             .as_ref()
-            .map(|l| check_link(l, &central_prompt, false));
+            .map(|l| check_link(l, &agm_prompt, false));
 
         let skills_link = tool.resolved_link_path("skills");
         let skills_ls = skills_link
             .as_ref()
-            .map(|l| check_link(l, &central_skills, true));
+            .map(|l| check_link(l, &agm_skills, true));
 
         let agents_link = tool.resolved_link_path("agents");
         let agents_ls = agents_link
             .as_ref()
-            .map(|l| check_link(l, &central_agents, true));
+            .map(|l| check_link(l, &agm_agents, true));
 
         let commands_link = tool.resolved_link_path("commands");
         let commands_ls = commands_link
             .as_ref()
-            .map(|l| check_link(l, &central_commands, true));
+            .map(|l| check_link(l, &agm_commands, true));
 
         let config_dir = contract_tilde(&tool.resolved_config_dir());
         println!(
@@ -55,7 +55,7 @@ pub fn status() -> anyhow::Result<()> {
 
         if let Some(ls) = prompt_ls {
             print!("{}{:<8}", INDENT, "prompt");
-            if config.central.is_disabled("prompt") {
+            if config.agm.is_disabled("prompt") {
                 println!("{}", "disabled".dimmed());
             } else {
                 match ls {
@@ -67,7 +67,7 @@ pub fn status() -> anyhow::Result<()> {
                     LinkStatus::Missing => println!(
                         "{} → {}",
                         "✗ missing".yellow(),
-                        contract_tilde(&central_prompt).dimmed()
+                        contract_tilde(&agm_prompt).dimmed()
                     ),
                     LinkStatus::Broken => println!("{}", "✗ broken".red()),
                     LinkStatus::Wrong(t) => println!("{} → {}", "✗ wrong".red(), t.dimmed()),
@@ -82,7 +82,7 @@ pub fn status() -> anyhow::Result<()> {
 
         if let Some(ls) = skills_ls {
             print!("{}{:<8}", INDENT, "skills");
-            if config.central.is_disabled("skills") {
+            if config.agm.is_disabled("skills") {
                 println!("{}", "disabled".dimmed());
             } else {
                 match ls {
@@ -94,7 +94,7 @@ pub fn status() -> anyhow::Result<()> {
                     LinkStatus::Missing => println!(
                         "{} → {}",
                         "✗ missing".yellow(),
-                        contract_tilde(&central_skills).dimmed()
+                        contract_tilde(&agm_skills).dimmed()
                     ),
                     LinkStatus::Broken => println!("{}", "✗ broken".red()),
                     LinkStatus::Wrong(t) => println!("{} → {}", "✗ wrong".red(), t.dimmed()),
@@ -109,7 +109,7 @@ pub fn status() -> anyhow::Result<()> {
 
         if let Some(ls) = agents_ls {
             print!("{}{:<8}", INDENT, "agents");
-            if config.central.is_disabled("agents") {
+            if config.agm.is_disabled("agents") {
                 println!("{}", "disabled".dimmed());
             } else {
                 match ls {
@@ -121,7 +121,7 @@ pub fn status() -> anyhow::Result<()> {
                     LinkStatus::Missing => println!(
                         "{} → {}",
                         "✗ missing".yellow(),
-                        contract_tilde(&central_agents).dimmed()
+                        contract_tilde(&agm_agents).dimmed()
                     ),
                     LinkStatus::Broken => println!("{}", "✗ broken".red()),
                     LinkStatus::Wrong(t) => println!("{} → {}", "✗ wrong".red(), t.dimmed()),
@@ -136,7 +136,7 @@ pub fn status() -> anyhow::Result<()> {
 
         if let Some(ls) = commands_ls {
             print!("{}{:<8}", INDENT, "commands");
-            if config.central.is_disabled("commands") {
+            if config.agm.is_disabled("commands") {
                 println!("{}", "disabled".dimmed());
             } else {
                 match ls {
@@ -148,7 +148,7 @@ pub fn status() -> anyhow::Result<()> {
                     LinkStatus::Missing => println!(
                         "{} → {}",
                         "✗ missing".yellow(),
-                        contract_tilde(&central_commands).dimmed()
+                        contract_tilde(&agm_commands).dimmed()
                     ),
                     LinkStatus::Broken => println!("{}", "✗ broken".red()),
                     LinkStatus::Wrong(t) => println!("{} → {}", "✗ wrong".red(), t.dimmed()),
@@ -166,10 +166,10 @@ pub fn status() -> anyhow::Result<()> {
 
     // Count skills and agents from all sources
     let groups = skills::scan_all_sources(
-        &expand_tilde(&config.central.source_dir),
-        &central_skills,
-        &central_agents,
-        &central_commands,
+        &expand_tilde(&config.agm.source_dir),
+        &agm_skills,
+        &agm_agents,
+        &agm_commands,
     );
     let installed_skills: usize = groups
         .iter()
@@ -187,61 +187,61 @@ pub fn status() -> anyhow::Result<()> {
         .filter(|c| c.install_status == skills::SkillInstallStatus::Installed)
         .count();
 
-    if config.central.is_disabled("prompt") {
+    if config.agm.is_disabled("prompt") {
         println!(
-            "Central prompt : {} {}",
-            contract_tilde(&central_prompt),
+            "agm prompt : {} {}",
+            contract_tilde(&agm_prompt),
             "(disabled)".dimmed()
         );
     } else {
-        println!("Central prompt : {}", contract_tilde(&central_prompt));
+        println!("agm prompt : {}", contract_tilde(&agm_prompt));
     }
-    if config.central.is_disabled("skills") {
+    if config.agm.is_disabled("skills") {
         println!(
-            "Central skills : {} ({} installed, {} sources) {}",
-            contract_tilde(&central_skills),
+            "agm skills : {} ({} installed, {} sources) {}",
+            contract_tilde(&agm_skills),
             installed_skills,
             groups.len(),
             "(disabled)".dimmed()
         );
     } else {
         println!(
-            "Central skills : {} ({} installed, {} sources)",
-            contract_tilde(&central_skills),
+            "agm skills : {} ({} installed, {} sources)",
+            contract_tilde(&agm_skills),
             installed_skills,
             groups.len()
         );
     }
-    if config.central.is_disabled("agents") {
+    if config.agm.is_disabled("agents") {
         println!(
-            "Central agents : {} ({} installed) {}",
-            contract_tilde(&central_agents),
+            "agm agents : {} ({} installed) {}",
+            contract_tilde(&agm_agents),
             installed_agents,
             "(disabled)".dimmed()
         );
     } else {
         println!(
-            "Central agents : {} ({} installed)",
-            contract_tilde(&central_agents),
+            "agm agents : {} ({} installed)",
+            contract_tilde(&agm_agents),
             installed_agents,
         );
     }
-    if config.central.is_disabled("commands") {
+    if config.agm.is_disabled("commands") {
         println!(
-            "Central commands: {} ({} installed) {}",
-            contract_tilde(&central_commands),
+            "agm commands: {} ({} installed) {}",
+            contract_tilde(&agm_commands),
             installed_commands,
             "(disabled)".dimmed()
         );
     } else {
         println!(
-            "Central commands: {} ({} installed)",
-            contract_tilde(&central_commands),
+            "agm commands: {} ({} installed)",
+            contract_tilde(&agm_commands),
             installed_commands,
         );
     }
-    let source_dir = expand_tilde(&config.central.source_dir);
-    println!("Central source : {}", contract_tilde(&source_dir));
+    let source_dir = expand_tilde(&config.agm.source_dir);
+    println!("agm source : {}", contract_tilde(&source_dir));
     println!();
 
     Ok(())

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Changed
+- 2026-05-25: Renamed the `central` concept to `agm` throughout — the TUI tree section now reads `agm`, the config section is `[agm]`, and internal types are `AgmConfig`/`AgmField`. Existing configs using `[central]` still load via a serde alias and are re-saved as `[agm]`.
+
+### Fixed
+- 2026-05-25: Source skill/agent info popup can now scroll to the true bottom of word-wrapped content. Scroll bounds and the page indicator are now computed from the wrapped row count (via `Paragraph::line_count`) instead of the pre-wrap logical line count, so `End`/`PageDown` no longer stop short of the last section. The page indicator also snaps to the last page (e.g. `6/6`) once the bottom is reached, instead of reading `5/6`.
+
 ## [v0.9.1] - 2026-05-20
 
 ### Fixed

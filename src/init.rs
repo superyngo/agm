@@ -27,15 +27,15 @@ pub fn run(config_path_override: Option<PathBuf>) -> anyhow::Result<()> {
         );
     }
 
-    // Load config to get central paths
+    // Load config to get agm paths
     let config = Config::load_from(config_path_override.clone())?;
 
-    // Create central directories
+    // Create agm directories
     let dirs_to_create = [
-        &config.central.skills_source,
-        &config.central.agents_source,
-        &config.central.commands_source,
-        &config.central.source_dir,
+        &config.agm.skills_source,
+        &config.agm.agents_source,
+        &config.agm.commands_source,
+        &config.agm.source_dir,
     ];
     for dir in dirs_to_create {
         let path = expand_tilde(dir);
@@ -48,23 +48,19 @@ pub fn run(config_path_override: Option<PathBuf>) -> anyhow::Result<()> {
     }
 
     // Create prompt source parent dir and empty MASTER.md if not exists
-    let prompt_path = expand_tilde(&config.central.prompt_source);
+    let prompt_path = expand_tilde(&config.agm.prompt_source);
     if prompt_path.exists() {
         println!(
             "{} {} already exists",
             "skip".yellow(),
-            config.central.prompt_source
+            config.agm.prompt_source
         );
     } else {
         if let Some(parent) = prompt_path.parent() {
             fs::create_dir_all(parent)?;
         }
         fs::write(&prompt_path, "# Shared AI Agent Prompt\n\n")?;
-        println!(
-            "{} Created {}",
-            " ok ".green(),
-            config.central.prompt_source
-        );
+        println!("{} Created {}", " ok ".green(), config.agm.prompt_source);
     }
 
     // Detect installed tools

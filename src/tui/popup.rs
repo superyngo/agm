@@ -14,6 +14,9 @@ pub struct ScrollablePopup {
     pub lines: Vec<Line<'static>>,
     pub scroll_offset: usize,
     visible_height: usize,
+    /// Number of rows the content occupies after word-wrapping at the current
+    /// width. Defaults to the logical line count and is refined on each render.
+    content_height: usize,
     close_hint: String, // e.g., "Esc:close" or "l:close"
 }
 
@@ -25,11 +28,13 @@ impl ScrollablePopup {
             lines.push(Line::from("[truncated — content too large]"));
         }
 
+        let content_height = lines.len();
         Self {
             title: title.into(),
             lines,
             scroll_offset: 0,
             visible_height: 1, // Will be updated on first render
+            content_height,    // Refined to the wrapped row count on first render
             close_hint: "Esc:close".to_string(),
         }
     }
@@ -97,11 +102,17 @@ impl ScrollablePopup {
         frame.render_widget(block, popup_rect);
 
         // Create paragraph with content
-        let paragraph = Paragraph::new(self.lines.clone())
-            .wrap(Wrap { trim: true })
-            .scroll((self.scroll_offset as u16, 0));
+        let paragraph = Paragraph::new(self.lines.clone()).wrap(Wrap { trim: true });
 
-        frame.render_widget(paragraph, inner_area);
+        // Measure how many rows the content occupies once word-wrapped at the
+        // current width. Scroll offset is applied to wrapped rows, so this is
+        // what the scroll bounds and page indicator must be based on.
+        self.content_height = paragraph.line_count(inner_area.width);
+
+        // Re-clamp in case a resize shrank the reachable range.
+        self.scroll_offset = self.scroll_offset.min(self.max_scroll());
+
+        frame.render_widget(paragraph.scroll((self.scroll_offset as u16, 0)), inner_area);
 
         // Render page indicator at bottom-right
         if !self.lines.is_empty() {
@@ -125,6 +136,12 @@ impl ScrollablePopup {
         if self.visible_height == 0 || self.lines.is_empty() {
             return 1;
         }
+        // At the bottom the scroll offset is content_height - visible_height,
+        // which rarely lands on a clean page boundary. Snap to the last page so
+        // reaching the end reads N/N rather than (N-1)/N.
+        if self.scroll_offset >= self.max_scroll() {
+            return self.total_pages();
+        }
         let page = self.scroll_offset / self.visible_height + 1;
         page.min(self.total_pages())
     }
@@ -133,7 +150,7 @@ impl ScrollablePopup {
         if self.visible_height == 0 || self.lines.is_empty() {
             return 1;
         }
-        self.lines.len().div_ceil(self.visible_height)
+        self.content_height.div_ceil(self.visible_height).max(1)
     }
 
     fn scroll_up(&mut self, amount: usize) {
@@ -150,7 +167,8 @@ impl ScrollablePopup {
     }
 
     fn max_scroll(&self) -> usize {
-        self.lines.len().saturating_sub(self.visible_height.max(1))
+        self.content_height
+            .saturating_sub(self.visible_height.max(1))
     }
 }
 
@@ -365,9 +383,89 @@ mod tests {
     }
 
     #[test]
+    fn test_scroll_end_reaches_wrapped_bottom() {
+        // 10 logical lines that each wrap into 3 rows => 30 wrapped rows.
+        let lines = (1..=10)
+            .map(|i| Line::from(format!("line {}", i)))
+            .collect();
+        let mut popup = ScrollablePopup::new("Test", lines);
+        popup.visible_height = 5;
+        popup.content_height = 30; // what render() would measure post-wrap
+
+        // End must reach the true wrapped bottom, not lines.len()-visible_height.
+        popup.handle_key(KeyCode::End);
+        assert_eq!(popup.scroll_offset, 25);
+        assert_eq!(popup.total_pages(), 6);
+        // At the end the indicator must read the last page (6/6), even though
+        // max_scroll (25) is not a multiple of visible_height (5).
+        assert_eq!(popup.current_page(), 6);
+    }
+
+    #[test]
+    fn test_page_indicator_snaps_to_last_at_end() {
+        // content_height not a multiple of visible_height => bottom offset is
+        // off the page grid; the indicator must still reach total_pages.
+        let lines = (1..=10)
+            .map(|i| Line::from(format!("line {}", i)))
+            .collect();
+        let mut popup = ScrollablePopup::new("Test", lines);
+        popup.visible_height = 4;
+        popup.content_height = 23; // ceil(23/4) = 6 pages, max_scroll = 19
+
+        assert_eq!(popup.total_pages(), 6);
+        popup.handle_key(KeyCode::End);
+        assert_eq!(popup.scroll_offset, 19);
+        assert_eq!(popup.current_page(), 6);
+
+        // One line up from the bottom drops back below the last page.
+        popup.handle_key(KeyCode::Up);
+        assert!(popup.current_page() < 6);
+    }
+
+    #[test]
     fn test_page_indicator_empty() {
         let popup = ScrollablePopup::new("Test", vec![]);
         assert_eq!(popup.current_page(), 1);
         assert_eq!(popup.total_pages(), 1);
+    }
+
+    /// Regression: with word-wrapped content, pressing End must reveal the
+    /// final logical line. Before the fix, scroll bounds used the pre-wrap
+    /// line count, so the wrapped tail was unreachable. Drives the real
+    /// render() path (which measures wrapped height via Paragraph::line_count).
+    #[test]
+    fn test_render_end_reveals_last_line_with_wrapping() {
+        use ratatui::{backend::TestBackend, Terminal};
+
+        // Several long lines that each wrap into multiple rows, then a short
+        // unique marker as the very last line.
+        let mut lines: Vec<Line<'static>> = (0..6).map(|_| Line::from("A".repeat(120))).collect();
+        lines.push(Line::from("ZZZ_BOTTOM_MARKER"));
+
+        let mut popup = ScrollablePopup::new("Info", lines);
+
+        let backend = TestBackend::new(60, 16);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        // First render populates visible_height and the wrapped content_height.
+        terminal.draw(|f| popup.render(f, f.area())).unwrap();
+
+        // Marker is below the fold initially.
+        let before = buffer_to_string(terminal.backend().buffer());
+        assert!(!before.contains("ZZZ_BOTTOM_MARKER"));
+
+        // Scroll to the end and re-render.
+        popup.handle_key(KeyCode::End);
+        terminal.draw(|f| popup.render(f, f.area())).unwrap();
+
+        let after = buffer_to_string(terminal.backend().buffer());
+        assert!(
+            after.contains("ZZZ_BOTTOM_MARKER"),
+            "End should reveal the last line; buffer was:\n{after}"
+        );
+    }
+
+    fn buffer_to_string(buf: &ratatui::buffer::Buffer) -> String {
+        buf.content.iter().map(|c| c.symbol()).collect()
     }
 }

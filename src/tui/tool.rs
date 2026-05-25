@@ -18,7 +18,7 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use crate::config::{CentralConfig, Config};
+use crate::config::{AgmConfig, Config};
 use crate::editor;
 use crate::linker::{self, LinkStatus};
 use crate::paths::{contract_tilde, expand_tilde};
@@ -28,9 +28,9 @@ use crate::skills;
 // Data model
 // ---------------------------------------------------------------------------
 
-/// Which central config field a row represents
+/// Which agm config field a row represents
 #[derive(Debug, Clone, PartialEq)]
-pub enum CentralField {
+pub enum AgmField {
     Config,
     Prompt,
     Skills,
@@ -59,8 +59,8 @@ pub enum FileGroup {
 /// A single row in the tool TUI list
 #[derive(Debug, Clone)]
 pub enum ToolRow {
-    CentralHeader,
-    CentralItem(CentralField),
+    AgmHeader,
+    AgmItem(AgmField),
     ToolHeader {
         key: String,
         name: String,
@@ -104,15 +104,15 @@ fn group_label(group: &FileGroup) -> &'static str {
 pub fn build_rows(config: &Config, expanded: &HashSet<String>) -> Vec<ToolRow> {
     let mut rows = Vec::new();
 
-    // Central section
-    rows.push(ToolRow::CentralHeader);
-    if expanded.contains("central") {
-        rows.push(ToolRow::CentralItem(CentralField::Config));
-        rows.push(ToolRow::CentralItem(CentralField::Source));
-        rows.push(ToolRow::CentralItem(CentralField::Prompt));
-        rows.push(ToolRow::CentralItem(CentralField::Skills));
-        rows.push(ToolRow::CentralItem(CentralField::Agents));
-        rows.push(ToolRow::CentralItem(CentralField::Commands));
+    // agm section
+    rows.push(ToolRow::AgmHeader);
+    if expanded.contains("agm") {
+        rows.push(ToolRow::AgmItem(AgmField::Config));
+        rows.push(ToolRow::AgmItem(AgmField::Source));
+        rows.push(ToolRow::AgmItem(AgmField::Prompt));
+        rows.push(ToolRow::AgmItem(AgmField::Skills));
+        rows.push(ToolRow::AgmItem(AgmField::Agents));
+        rows.push(ToolRow::AgmItem(AgmField::Commands));
     }
 
     // Tool sections — BTreeMap gives alphabetical order
@@ -247,10 +247,10 @@ pub enum PopupState {
         popup: super::popup::ScrollablePopup,
         editor_path: Option<PathBuf>,
         link_context: Option<LinkContext>,
-        central_field: Option<CentralField>,
+        agm_field: Option<AgmField>,
     },
     PathEditor {
-        field: CentralField,
+        field: AgmField,
         value: String,
         cursor_pos: usize,
     },
@@ -285,7 +285,7 @@ pub struct ToolApp {
 impl ToolApp {
     fn new(config: Config, config_path: Option<PathBuf>) -> Self {
         let mut expanded = HashSet::new();
-        expanded.insert("central".to_string());
+        expanded.insert("agm".to_string());
         let rows = build_rows(&config, &expanded);
         Self {
             config,
@@ -391,7 +391,7 @@ impl ToolApp {
                 self.rebuild_rows();
             }
             KeyCode::Char('9') => {
-                self.expanded.insert("central".to_string());
+                self.expanded.insert("agm".to_string());
                 for key in self.config.tools.keys() {
                     self.expanded.insert(key.clone());
                     self.expanded.insert(format!("{}:status", key));
@@ -413,14 +413,14 @@ impl ToolApp {
             KeyCode::Char(' ') | KeyCode::Enter => {
                 if let Some(row) = self.current_row().cloned() {
                     match &row {
-                        ToolRow::CentralHeader => self.toggle_expanded("central"),
+                        ToolRow::AgmHeader => self.toggle_expanded("agm"),
                         ToolRow::ToolHeader { key, .. } => self.toggle_expanded(key),
                         ToolRow::StatusHeader { tool_key } => {
                             let sk = format!("{}:status", tool_key);
                             self.toggle_expanded(&sk);
                         }
-                        ToolRow::CentralItem(ref cf) => {
-                            self.show_central_info(cf);
+                        ToolRow::AgmItem(ref cf) => {
+                            self.show_agm_info(cf);
                         }
                         ToolRow::LinkItem { tool_key, field } => {
                             self.show_link_info(&tool_key.clone(), &field.clone());
@@ -449,8 +449,8 @@ impl ToolApp {
             KeyCode::Char('i') => {
                 if let Some(row) = self.current_row().cloned() {
                     match &row {
-                        ToolRow::CentralItem(ref cf) => {
-                            self.show_central_info(cf);
+                        ToolRow::AgmItem(ref cf) => {
+                            self.show_agm_info(cf);
                         }
                         ToolRow::LinkItem { tool_key, field } => {
                             self.show_link_info(&tool_key.clone(), &field.clone());
@@ -474,11 +474,11 @@ impl ToolApp {
             KeyCode::Char('l') => {
                 if let Some(row) = self.current_row().cloned() {
                     match &row {
-                        ToolRow::CentralItem(
-                            ref cf @ (CentralField::Prompt
-                            | CentralField::Skills
-                            | CentralField::Agents
-                            | CentralField::Commands),
+                        ToolRow::AgmItem(
+                            ref cf @ (AgmField::Prompt
+                            | AgmField::Skills
+                            | AgmField::Agents
+                            | AgmField::Commands),
                         ) => {
                             self.show_toggle_feature_confirm(cf);
                         }
@@ -492,7 +492,7 @@ impl ToolApp {
                                 LinkField::Agents => "agents",
                                 LinkField::Commands => "commands",
                             };
-                            if self.config.central.is_disabled(feature) {
+                            if self.config.agm.is_disabled(feature) {
                                 self.set_status(format!("{} is globally disabled", feature));
                             } else {
                                 self.toggle_link(&tool_key.clone(), &field.clone());
@@ -507,19 +507,17 @@ impl ToolApp {
             KeyCode::Char('e') => {
                 if let Some(row) = self.current_row().cloned() {
                     match &row {
-                        ToolRow::CentralItem(
-                            ref cf @ (CentralField::Skills
-                            | CentralField::Agents
-                            | CentralField::Commands
-                            | CentralField::Source),
+                        ToolRow::AgmItem(
+                            ref cf @ (AgmField::Skills
+                            | AgmField::Agents
+                            | AgmField::Commands
+                            | AgmField::Source),
                         ) => {
                             let current_value = match cf {
-                                CentralField::Skills => self.config.central.skills_source.clone(),
-                                CentralField::Agents => self.config.central.agents_source.clone(),
-                                CentralField::Commands => {
-                                    self.config.central.commands_source.clone()
-                                }
-                                CentralField::Source => self.config.central.source_dir.clone(),
+                                AgmField::Skills => self.config.agm.skills_source.clone(),
+                                AgmField::Agents => self.config.agm.agents_source.clone(),
+                                AgmField::Commands => self.config.agm.commands_source.clone(),
+                                AgmField::Source => self.config.agm.source_dir.clone(),
                                 _ => unreachable!(),
                             };
                             let len = current_value.len();
@@ -605,7 +603,7 @@ impl ToolApp {
                         let field_clone = field.clone();
                         let value_clone = value.clone();
                         self.popup = None;
-                        self.save_central_path(field_clone, value_clone);
+                        self.save_agm_path(field_clone, value_clone);
                     }
                     KeyCode::Esc => self.popup = None,
                     _ => {}
@@ -664,17 +662,13 @@ impl ToolApp {
         }
 
         // Extract context for action keys
-        let (editor_path, link_ctx, central_ctx) = match &self.popup {
+        let (editor_path, link_ctx, agm_ctx) = match &self.popup {
             Some(PopupState::Info {
                 editor_path,
                 link_context,
-                central_field,
+                agm_field,
                 ..
-            }) => (
-                editor_path.clone(),
-                link_context.clone(),
-                central_field.clone(),
-            ),
+            }) => (editor_path.clone(), link_context.clone(), agm_field.clone()),
             _ => return,
         };
 
@@ -697,7 +691,7 @@ impl ToolApp {
                         LinkField::Agents => "agents",
                         LinkField::Commands => "commands",
                     };
-                    if self.config.central.is_disabled(feature) {
+                    if self.config.agm.is_disabled(feature) {
                         self.popup = None;
                         self.set_status(format!("{} is globally disabled", feature));
                     } else {
@@ -707,7 +701,7 @@ impl ToolApp {
                         self.toggle_link(&tk, &f);
                         self.show_link_info(&tk, &f);
                     }
-                } else if let Some(cf) = central_ctx {
+                } else if let Some(cf) = agm_ctx {
                     self.popup = None;
                     self.show_toggle_feature_confirm(&cf);
                 }
@@ -738,19 +732,19 @@ impl ToolApp {
         let link = tool.resolved_link_path(label)?;
         let (target, is_dir) = match field {
             LinkField::Prompt => {
-                let target = expand_tilde(&self.config.central.prompt_source);
+                let target = expand_tilde(&self.config.agm.prompt_source);
                 (target, false)
             }
             LinkField::Skills => {
-                let target = expand_tilde(&self.config.central.skills_source);
+                let target = expand_tilde(&self.config.agm.skills_source);
                 (target, true)
             }
             LinkField::Agents => {
-                let target = expand_tilde(&self.config.central.agents_source);
+                let target = expand_tilde(&self.config.agm.agents_source);
                 (target, true)
             }
             LinkField::Commands => {
-                let target = expand_tilde(&self.config.central.commands_source);
+                let target = expand_tilde(&self.config.agm.commands_source);
                 (target, true)
             }
         };
@@ -856,9 +850,9 @@ impl ToolApp {
         use chrono::Local;
 
         if is_dir {
-            let source_dir = expand_tilde(&self.config.central.source_dir);
+            let source_dir = expand_tilde(&self.config.agm.source_dir);
             let tool_target = source_dir.join("agm_tools").join(tool_key);
-            let central_dir = target;
+            let agm_dir = target;
 
             let result = match field {
                 LinkField::Agents => {
@@ -872,7 +866,7 @@ impl ToolApp {
                     skills::migrate_agents_dir_quiet(
                         link_path,
                         &agents_target,
-                        central_dir,
+                        agm_dir,
                         tool_key,
                         prompt_fn,
                     )
@@ -888,12 +882,12 @@ impl ToolApp {
                     skills::migrate_commands_dir_quiet(
                         link_path,
                         &commands_target,
-                        central_dir,
+                        agm_dir,
                         tool_key,
                         prompt_fn,
                     )
                 }
-                _ => skills::migrate_tool_dir_quiet(link_path, &tool_target, central_dir, tool_key),
+                _ => skills::migrate_tool_dir_quiet(link_path, &tool_target, agm_dir, tool_key),
             };
 
             match result {
@@ -997,7 +991,7 @@ impl ToolApp {
         link_path: &std::path::Path,
     ) {
         use super::log::LogLevel;
-        let source_dir = expand_tilde(&self.config.central.source_dir);
+        let source_dir = expand_tilde(&self.config.agm.source_dir);
         let tool_store = source_dir.join("agm_tools").join(tool_key);
 
         match field {
@@ -1234,7 +1228,7 @@ impl ToolApp {
                     LinkField::Agents => "agents",
                     LinkField::Commands => "commands",
                 };
-                !self.config.central.is_disabled(name)
+                !self.config.agm.is_disabled(name)
             })
             .collect();
 
@@ -1283,16 +1277,16 @@ impl ToolApp {
         }
     }
 
-    fn show_toggle_feature_confirm(&mut self, field: &CentralField) {
+    fn show_toggle_feature_confirm(&mut self, field: &AgmField) {
         let feature = match field {
-            CentralField::Prompt => "prompt",
-            CentralField::Skills => "skills",
-            CentralField::Agents => "agents",
-            CentralField::Commands => "commands",
+            AgmField::Prompt => "prompt",
+            AgmField::Skills => "skills",
+            AgmField::Agents => "agents",
+            AgmField::Commands => "commands",
             _ => return,
         };
 
-        let enabling = self.config.central.is_disabled(feature);
+        let enabling = self.config.agm.is_disabled(feature);
         let tool_count = self
             .config
             .tools
@@ -1310,7 +1304,7 @@ impl ToolApp {
     fn execute_toggle_feature(&mut self, feature: &str, enabling: bool) {
         use super::log::LogLevel;
 
-        if !CentralConfig::TOGGLEABLE_FEATURES.contains(&feature) {
+        if !AgmConfig::TOGGLEABLE_FEATURES.contains(&feature) {
             return;
         }
 
@@ -1335,7 +1329,7 @@ impl ToolApp {
 
         if enabling {
             // Remove from disabled list first
-            self.config.central.disabled.retain(|d| d != feature);
+            self.config.agm.disabled.retain(|d| d != feature);
 
             // Link for all installed tools
             for key in &tool_keys {
@@ -1446,8 +1440,8 @@ impl ToolApp {
             }
 
             // Add to disabled list
-            if !self.config.central.disabled.contains(&feature.to_string()) {
-                self.config.central.disabled.push(feature.to_string());
+            if !self.config.agm.disabled.contains(&feature.to_string()) {
+                self.config.agm.disabled.push(feature.to_string());
             }
         }
 
@@ -1478,33 +1472,33 @@ impl ToolApp {
     // Info popups
     // ------------------------------------------------------------------
 
-    fn show_central_info(&mut self, field: &CentralField) {
+    fn show_agm_info(&mut self, field: &AgmField) {
         let (title, path, is_dir, is_feature) = match field {
-            CentralField::Config => {
+            AgmField::Config => {
                 let p = self
                     .config_path
                     .clone()
                     .unwrap_or_else(|| expand_tilde("~/.config/agm/config.toml"));
                 ("Config".to_string(), p, false, false)
             }
-            CentralField::Prompt => {
-                let p = expand_tilde(&self.config.central.prompt_source);
+            AgmField::Prompt => {
+                let p = expand_tilde(&self.config.agm.prompt_source);
                 ("Prompt".to_string(), p, false, true)
             }
-            CentralField::Skills => {
-                let p = expand_tilde(&self.config.central.skills_source);
+            AgmField::Skills => {
+                let p = expand_tilde(&self.config.agm.skills_source);
                 ("Skills".to_string(), p, true, true)
             }
-            CentralField::Agents => {
-                let p = expand_tilde(&self.config.central.agents_source);
+            AgmField::Agents => {
+                let p = expand_tilde(&self.config.agm.agents_source);
                 ("Agents".to_string(), p, true, true)
             }
-            CentralField::Commands => {
-                let p = expand_tilde(&self.config.central.commands_source);
+            AgmField::Commands => {
+                let p = expand_tilde(&self.config.agm.commands_source);
                 ("Commands".to_string(), p, true, true)
             }
-            CentralField::Source => {
-                let p = expand_tilde(&self.config.central.source_dir);
+            AgmField::Source => {
+                let p = expand_tilde(&self.config.agm.source_dir);
                 ("Source".to_string(), p, true, false)
             }
         };
@@ -1517,14 +1511,14 @@ impl ToolApp {
         // Show disabled status for features
         if is_feature {
             let feature_name = match field {
-                CentralField::Prompt => "prompt",
-                CentralField::Skills => "skills",
-                CentralField::Agents => "agents",
-                CentralField::Commands => "commands",
+                AgmField::Prompt => "prompt",
+                AgmField::Skills => "skills",
+                AgmField::Agents => "agents",
+                AgmField::Commands => "commands",
                 _ => "",
             };
             if !feature_name.is_empty() {
-                let disabled = self.config.central.is_disabled(feature_name);
+                let disabled = self.config.agm.is_disabled(feature_name);
                 content_lines.push(Line::from(vec![
                     Span::styled("Status: ", Style::default().fg(Color::DarkGray)),
                     if disabled {
@@ -1606,7 +1600,7 @@ impl ToolApp {
             popup: super::popup::ScrollablePopup::new(&title, content_lines).with_close_hint(&hint),
             editor_path,
             link_context: None,
-            central_field: cf_for_popup,
+            agm_field: cf_for_popup,
         });
     }
 
@@ -1725,7 +1719,7 @@ impl ToolApp {
                 tool_key: tool_key.to_string(),
                 field: field.clone(),
             }),
-            central_field: None,
+            agm_field: None,
         });
     }
 
@@ -1776,7 +1770,7 @@ impl ToolApp {
             popup: super::popup::ScrollablePopup::new(&title, lines).with_close_hint(hint),
             editor_path,
             link_context: None,
-            central_field: None,
+            agm_field: None,
         });
     }
 
@@ -1918,7 +1912,7 @@ impl ToolApp {
                     self.set_status("✗ Config reload failed");
                 }
             }
-            ToolRow::CentralItem(CentralField::Config) => {
+            ToolRow::AgmItem(AgmField::Config) => {
                 let path = self
                     .config_path
                     .clone()
@@ -1933,8 +1927,8 @@ impl ToolApp {
                     self.set_status(format!("File not found: {}", contract_tilde(&path)));
                 }
             }
-            ToolRow::CentralItem(CentralField::Prompt) => {
-                let path = expand_tilde(&self.config.central.prompt_source);
+            ToolRow::AgmItem(AgmField::Prompt) => {
+                let path = expand_tilde(&self.config.agm.prompt_source);
                 if path.exists() {
                     self.open_in_editor(terminal, &[path]);
                 } else {
@@ -1988,14 +1982,14 @@ impl ToolApp {
         }
     }
 
-    fn save_central_path(&mut self, field: CentralField, value: String) {
+    fn save_agm_path(&mut self, field: AgmField, value: String) {
         use super::log::LogLevel;
         let contracted = contract_tilde(&expand_tilde(&value));
         match field {
-            CentralField::Skills => self.config.central.skills_source = contracted.clone(),
-            CentralField::Agents => self.config.central.agents_source = contracted.clone(),
-            CentralField::Commands => self.config.central.commands_source = contracted.clone(),
-            CentralField::Source => self.config.central.source_dir = contracted.clone(),
+            AgmField::Skills => self.config.agm.skills_source = contracted.clone(),
+            AgmField::Agents => self.config.agm.agents_source = contracted.clone(),
+            AgmField::Commands => self.config.agm.commands_source = contracted.clone(),
+            AgmField::Source => self.config.agm.source_dir = contracted.clone(),
             _ => return,
         };
         let save_result = if let Some(ref path) = self.config_path {
@@ -2076,15 +2070,15 @@ fn compute_tool_status(config: &Config, tool_key: &str) -> (u8, &'static str, Co
     }
 
     let all_fields = [
-        ("prompt", &config.central.prompt_source, false),
-        ("skills", &config.central.skills_source, true),
-        ("agents", &config.central.agents_source, true),
-        ("commands", &config.central.commands_source, true),
+        ("prompt", &config.agm.prompt_source, false),
+        ("skills", &config.agm.skills_source, true),
+        ("agents", &config.agm.agents_source, true),
+        ("commands", &config.agm.commands_source, true),
     ];
 
     let enabled_links: Vec<_> = all_fields
         .into_iter()
-        .filter(|(name, _, _)| tool.is_field_configured(name) && !config.central.is_disabled(name))
+        .filter(|(name, _, _)| tool.is_field_configured(name) && !config.agm.is_disabled(name))
         .collect();
 
     let total = enabled_links.len();
@@ -2122,7 +2116,7 @@ fn hint_text(t: &str) -> Span<'static> {
 fn build_tool_hints(row: Option<&ToolRow>, config: &Config) -> Line<'static> {
     let mut spans = Vec::new();
     match row {
-        Some(ToolRow::CentralHeader) => {
+        Some(ToolRow::AgmHeader) => {
             spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
@@ -2133,26 +2127,26 @@ fn build_tool_hints(row: Option<&ToolRow>, config: &Config) -> Line<'static> {
             spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
-        Some(ToolRow::CentralItem(CentralField::Config)) => {
+        Some(ToolRow::AgmItem(AgmField::Config)) => {
             spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
-        Some(ToolRow::CentralItem(CentralField::Source)) => {
+        Some(ToolRow::AgmItem(AgmField::Source)) => {
             spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
             spans.extend([hint_key("e"), hint_text(" edit path  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
-        Some(ToolRow::CentralItem(CentralField::Prompt)) => {
+        Some(ToolRow::AgmItem(AgmField::Prompt)) => {
             spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
             spans.extend([hint_key("l"), hint_text(" toggle  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
-        Some(ToolRow::CentralItem(_)) => {
+        Some(ToolRow::AgmItem(_)) => {
             // Skills, Agents, Commands
             spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
             spans.extend([hint_key("e"), hint_text(" edit path  ")]);
@@ -2280,8 +2274,8 @@ fn render_row(
     let cursor_prefix = if is_cursor { "▸ " } else { "  " };
 
     match row {
-        ToolRow::CentralHeader => {
-            let arrow = if expanded.contains("central") {
+        ToolRow::AgmHeader => {
+            let arrow = if expanded.contains("agm") {
                 "▼"
             } else {
                 "▶"
@@ -2296,47 +2290,44 @@ fn render_row(
                     .add_modifier(Modifier::BOLD)
             };
             Line::from(Span::styled(
-                format!("{}{} central", cursor_prefix, arrow),
+                format!("{}{} agm", cursor_prefix, arrow),
                 style,
             ))
         }
 
-        ToolRow::CentralItem(field) => {
+        ToolRow::AgmItem(field) => {
             let (label, value) = match field {
-                CentralField::Config => (
+                AgmField::Config => (
                     "config".to_string(),
                     "~/.config/agm/config.toml".to_string(),
                 ),
-                CentralField::Source => (
+                AgmField::Source => (
                     "source".to_string(),
-                    contract_tilde(&expand_tilde(&config.central.source_dir)),
+                    contract_tilde(&expand_tilde(&config.agm.source_dir)),
                 ),
-                CentralField::Prompt => (
+                AgmField::Prompt => (
                     "prompt".to_string(),
-                    contract_tilde(&expand_tilde(&config.central.prompt_source)),
+                    contract_tilde(&expand_tilde(&config.agm.prompt_source)),
                 ),
-                CentralField::Skills => (
+                AgmField::Skills => (
                     "skills".to_string(),
-                    contract_tilde(&expand_tilde(&config.central.skills_source)),
+                    contract_tilde(&expand_tilde(&config.agm.skills_source)),
                 ),
-                CentralField::Agents => (
+                AgmField::Agents => (
                     "agents".to_string(),
-                    contract_tilde(&expand_tilde(&config.central.agents_source)),
+                    contract_tilde(&expand_tilde(&config.agm.agents_source)),
                 ),
-                CentralField::Commands => (
+                AgmField::Commands => (
                     "commands".to_string(),
-                    contract_tilde(&expand_tilde(&config.central.commands_source)),
+                    contract_tilde(&expand_tilde(&config.agm.commands_source)),
                 ),
             };
 
             let is_feature = matches!(
                 field,
-                CentralField::Prompt
-                    | CentralField::Skills
-                    | CentralField::Agents
-                    | CentralField::Commands
+                AgmField::Prompt | AgmField::Skills | AgmField::Agents | AgmField::Commands
             );
-            let is_disabled = is_feature && config.central.is_disabled(&label);
+            let is_disabled = is_feature && config.agm.is_disabled(&label);
 
             let (indicator, indicator_style) = if !is_feature {
                 ("  ".to_string(), Style::default())
@@ -2428,13 +2419,13 @@ fn render_row(
                 None => return Line::from(""),
             };
             let (target, is_dir) = match field {
-                LinkField::Prompt => (expand_tilde(&config.central.prompt_source), false),
-                LinkField::Skills => (expand_tilde(&config.central.skills_source), true),
-                LinkField::Agents => (expand_tilde(&config.central.agents_source), true),
-                LinkField::Commands => (expand_tilde(&config.central.commands_source), true),
+                LinkField::Prompt => (expand_tilde(&config.agm.prompt_source), false),
+                LinkField::Skills => (expand_tilde(&config.agm.skills_source), true),
+                LinkField::Agents => (expand_tilde(&config.agm.agents_source), true),
+                LinkField::Commands => (expand_tilde(&config.agm.commands_source), true),
             };
             let status = linker::check_link(&link_path, &target, is_dir);
-            let feature_disabled = config.central.is_disabled(label);
+            let feature_disabled = config.agm.is_disabled(label);
 
             if feature_disabled {
                 let spans = vec![
@@ -2586,10 +2577,10 @@ fn render_path_editor(app: &ToolApp, frame: &mut Frame, area: Rect) {
         let popup_area = super::dialog_area(area, 3);
         frame.render_widget(Clear, popup_area);
         let label = match field {
-            CentralField::Skills => "skills",
-            CentralField::Agents => "agents",
-            CentralField::Commands => "commands",
-            CentralField::Source => "source",
+            AgmField::Skills => "skills",
+            AgmField::Agents => "agents",
+            AgmField::Commands => "commands",
+            AgmField::Source => "source",
             _ => "path",
         };
         let block = Block::default()
@@ -2728,7 +2719,7 @@ pub fn run(config_path: Option<PathBuf>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{CentralConfig, ToolConfig};
+    use crate::config::{AgmConfig, ToolConfig};
     use std::collections::BTreeMap;
     use tempfile::TempDir;
 
@@ -2739,7 +2730,7 @@ mod tests {
         }
         Config {
             editor: String::new(),
-            central: CentralConfig {
+            agm: AgmConfig {
                 prompt_source: "~/.local/share/agm/prompts/MASTER.md".to_string(),
                 skills_source: "~/.local/share/agm/skills".to_string(),
                 agents_source: "~/.local/share/agm/agents".to_string(),
@@ -2793,47 +2784,29 @@ mod tests {
         let rows = build_rows(&config, &expanded);
 
         assert_eq!(rows.len(), 3);
-        assert!(matches!(rows[0], ToolRow::CentralHeader));
+        assert!(matches!(rows[0], ToolRow::AgmHeader));
         assert!(matches!(rows[1], ToolRow::ToolHeader { ref key, .. } if key == "claude"));
         assert!(matches!(rows[2], ToolRow::ToolHeader { ref key, .. } if key == "copilot"));
     }
 
     #[test]
-    fn test_build_rows_central_expanded() {
+    fn test_build_rows_agm_expanded() {
         let config = test_config_with_tools(vec![(
             "claude",
             test_tool_config("Claude Code", "/nonexistent/claude", true),
         )]);
         let mut expanded = HashSet::new();
-        expanded.insert("central".to_string());
+        expanded.insert("agm".to_string());
         let rows = build_rows(&config, &expanded);
 
         assert_eq!(rows.len(), 8);
-        assert!(matches!(rows[0], ToolRow::CentralHeader));
-        assert!(matches!(
-            rows[1],
-            ToolRow::CentralItem(CentralField::Config)
-        ));
-        assert!(matches!(
-            rows[2],
-            ToolRow::CentralItem(CentralField::Source)
-        ));
-        assert!(matches!(
-            rows[3],
-            ToolRow::CentralItem(CentralField::Prompt)
-        ));
-        assert!(matches!(
-            rows[4],
-            ToolRow::CentralItem(CentralField::Skills)
-        ));
-        assert!(matches!(
-            rows[5],
-            ToolRow::CentralItem(CentralField::Agents)
-        ));
-        assert!(matches!(
-            rows[6],
-            ToolRow::CentralItem(CentralField::Commands)
-        ));
+        assert!(matches!(rows[0], ToolRow::AgmHeader));
+        assert!(matches!(rows[1], ToolRow::AgmItem(AgmField::Config)));
+        assert!(matches!(rows[2], ToolRow::AgmItem(AgmField::Source)));
+        assert!(matches!(rows[3], ToolRow::AgmItem(AgmField::Prompt)));
+        assert!(matches!(rows[4], ToolRow::AgmItem(AgmField::Skills)));
+        assert!(matches!(rows[5], ToolRow::AgmItem(AgmField::Agents)));
+        assert!(matches!(rows[6], ToolRow::AgmItem(AgmField::Commands)));
         assert!(matches!(rows[7], ToolRow::ToolHeader { ref key, .. } if key == "claude"));
     }
 
@@ -2851,10 +2824,10 @@ mod tests {
         expanded.insert("claude".to_string());
         let rows = build_rows(&config, &expanded);
 
-        // CentralHeader + ToolHeader + StatusHeader + 3 FileGroupHeaders (settings, auth, mcp single-file)
+        // AgmHeader + ToolHeader + StatusHeader + 3 FileGroupHeaders (settings, auth, mcp single-file)
         // StatusHeader is collapsed so no LinkItems
         assert_eq!(rows.len(), 6);
-        assert!(matches!(rows[0], ToolRow::CentralHeader));
+        assert!(matches!(rows[0], ToolRow::AgmHeader));
         assert!(
             matches!(rows[1], ToolRow::ToolHeader { ref key, installed: true, .. } if key == "claude")
         );
@@ -2885,9 +2858,9 @@ mod tests {
         expanded.insert("claude:status".to_string());
         let rows = build_rows(&config, &expanded);
 
-        // CentralHeader + ToolHeader + StatusHeader + 4 LinkItems + Settings + Auth + Mcp
+        // AgmHeader + ToolHeader + StatusHeader + 4 LinkItems + Settings + Auth + Mcp
         assert_eq!(rows.len(), 10);
-        assert!(matches!(rows[0], ToolRow::CentralHeader));
+        assert!(matches!(rows[0], ToolRow::AgmHeader));
         assert!(matches!(rows[1], ToolRow::ToolHeader { .. }));
         assert!(matches!(rows[2], ToolRow::StatusHeader { .. }));
         assert!(
@@ -2928,9 +2901,9 @@ mod tests {
         expanded.insert("minimal:status".to_string());
         let rows = build_rows(&config, &expanded);
 
-        // CentralHeader + ToolHeader + StatusHeader + 4 LinkItems (no file groups since empty)
+        // AgmHeader + ToolHeader + StatusHeader + 4 LinkItems (no file groups since empty)
         assert_eq!(rows.len(), 7);
-        assert!(matches!(rows[0], ToolRow::CentralHeader));
+        assert!(matches!(rows[0], ToolRow::AgmHeader));
         assert!(matches!(rows[1], ToolRow::ToolHeader { ref key, .. } if key == "minimal"));
         assert!(matches!(rows[2], ToolRow::StatusHeader { .. }));
         assert!(
@@ -2968,7 +2941,7 @@ mod tests {
         let rows = build_rows(&config, &expanded);
 
         assert_eq!(rows.len(), 3);
-        assert!(matches!(rows[0], ToolRow::CentralHeader));
+        assert!(matches!(rows[0], ToolRow::AgmHeader));
         assert!(matches!(rows[1], ToolRow::ToolHeader { ref key, .. } if key == "alpha"));
         assert!(matches!(rows[2], ToolRow::ToolHeader { ref key, .. } if key == "zed"));
     }
@@ -3000,7 +2973,7 @@ mod tests {
         expanded.insert("claude:settings".to_string());
         let rows = build_rows(&config, &expanded);
 
-        // CentralHeader + ToolHeader + StatusHeader + FileGroupHeader(settings) + 3 FileItems + FileGroupHeader(auth) + FileGroupHeader(mcp)
+        // AgmHeader + ToolHeader + StatusHeader + FileGroupHeader(settings) + 3 FileItems + FileGroupHeader(auth) + FileGroupHeader(mcp)
         assert_eq!(rows.len(), 9);
         assert!(
             matches!(rows[3], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Settings)
@@ -3022,7 +2995,7 @@ mod tests {
         );
     }
 
-    const SAMPLE_CONFIG: &str = r#"[central]
+    const SAMPLE_CONFIG: &str = r#"[agm]
 prompt_source = "~/.local/share/agm/prompts/MASTER.md"
 skills_source = "~/.local/share/agm/skills"
 

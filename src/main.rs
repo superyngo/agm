@@ -23,7 +23,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initialize agm config and central directories
+    /// Initialize agm config and agm directories
     Init,
     /// Manage tools, links, and configuration
     Tool {
@@ -134,10 +134,10 @@ fn prompt_yes_no(prompt: &str) -> bool {
 }
 
 fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> anyhow::Result<()> {
-    let central_skills = paths::expand_tilde(&config.central.skills_source);
-    let central_agents = paths::expand_tilde(&config.central.agents_source);
-    let central_prompt = paths::expand_tilde(&config.central.prompt_source);
-    let source_dir = paths::expand_tilde(&config.central.source_dir);
+    let agm_skills = paths::expand_tilde(&config.agm.skills_source);
+    let agm_agents = paths::expand_tilde(&config.agm.agents_source);
+    let agm_prompt = paths::expand_tilde(&config.agm.prompt_source);
+    let source_dir = paths::expand_tilde(&config.agm.source_dir);
     let yes = true; // Non-interactive mode
 
     // Collect which tools to link (all installed tools)
@@ -147,9 +147,9 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
         .filter(|(_, tc)| tc.is_installed())
         .collect();
 
-    // Prune broken skill/agent links from central store
-    if central_skills.is_dir() {
-        let pruned = skills::prune_broken_skills(&central_skills)?;
+    // Prune broken skill/agent links from agm store
+    if agm_skills.is_dir() {
+        let pruned = skills::prune_broken_skills(&agm_skills)?;
         if pruned > 0 {
             println!(
                 "{} Removed {} broken skill link(s)",
@@ -158,8 +158,8 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
             );
         }
     }
-    if central_agents.is_dir() {
-        let pruned = skills::prune_broken_agents(&central_agents)?;
+    if agm_agents.is_dir() {
+        let pruned = skills::prune_broken_agents(&agm_agents)?;
         if pruned > 0 {
             println!(
                 "{} Removed {} broken agent link(s)",
@@ -170,11 +170,11 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
     }
 
     // Link tools
-    if !config.central.disabled.is_empty() {
+    if !config.agm.disabled.is_empty() {
         println!(
             "\n{} Disabled features: {}",
             "note".yellow(),
-            config.central.disabled.join(", ")
+            config.agm.disabled.join(", ")
         );
     }
     for (key, tool) in tools_to_link {
@@ -182,12 +182,12 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
 
         // Link skills directory
         if let Some(skills_link) = tool.resolved_link_path("skills") {
-            if !config.central.is_disabled("skills") {
+            if !config.agm.is_disabled("skills") {
                 if platform::is_dir_link(&skills_link) {
                     let actual_target = fs::read_link(&skills_link)?;
-                    let expected_target = central_skills
+                    let expected_target = agm_skills
                         .canonicalize()
-                        .unwrap_or_else(|_| central_skills.clone());
+                        .unwrap_or_else(|_| agm_skills.clone());
                     let resolved_actual = skills_link
                         .parent()
                         .map(|p: &std::path::Path| p.join(&actual_target))
@@ -222,7 +222,7 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
                             let (added, msgs) = skills::migrate_tool_dir_quiet(
                                 &skills_link,
                                 &tool_skills_target,
-                                &central_skills,
+                                &agm_skills,
                                 key,
                             )?;
                             for m in &msgs {
@@ -240,18 +240,18 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
                     }
                 }
 
-                linker::create_link(&skills_link, &central_skills, "skills", true)?;
+                linker::create_link(&skills_link, &agm_skills, "skills", true)?;
             }
         }
 
         // Link agents directory
         if let Some(agents_link) = tool.resolved_link_path("agents") {
-            if !config.central.is_disabled("agents") {
+            if !config.agm.is_disabled("agents") {
                 if platform::is_dir_link(&agents_link) {
                     let actual_target = fs::read_link(&agents_link)?;
-                    let expected_target = central_agents
+                    let expected_target = agm_agents
                         .canonicalize()
-                        .unwrap_or_else(|_| central_agents.clone());
+                        .unwrap_or_else(|_| agm_agents.clone());
                     let resolved_actual = agents_link
                         .parent()
                         .map(|p: &std::path::Path| p.join(&actual_target))
@@ -293,16 +293,16 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
                     }
                 }
 
-                linker::create_link(&agents_link, &central_agents, "agents", true)?;
+                linker::create_link(&agents_link, &agm_agents, "agents", true)?;
             }
         }
 
         // Link prompt file
         if let Some(prompt_link) = tool.resolved_link_path("prompt") {
-            if !config.central.is_disabled("prompt") {
+            if !config.agm.is_disabled("prompt") {
                 let already_linked = prompt_link.exists()
-                    && central_prompt.exists()
-                    && platform::same_file(&prompt_link, &central_prompt).unwrap_or(false);
+                    && agm_prompt.exists()
+                    && platform::same_file(&prompt_link, &agm_prompt).unwrap_or(false);
 
                 if !already_linked && prompt_link.exists() {
                     if fs::read_link(&prompt_link).is_ok() {
@@ -354,7 +354,7 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
                     }
                 }
 
-                linker::create_link(&prompt_link, &central_prompt, "prompt", false)?;
+                linker::create_link(&prompt_link, &agm_prompt, "prompt", false)?;
             }
         }
     }
@@ -363,10 +363,10 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
 }
 
 fn unlink_all(config: &config::Config) -> anyhow::Result<()> {
-    let central_skills = paths::expand_tilde(&config.central.skills_source);
-    let central_agents = paths::expand_tilde(&config.central.agents_source);
-    let central_commands = paths::expand_tilde(&config.central.commands_source);
-    let central_prompt = paths::expand_tilde(&config.central.prompt_source);
+    let agm_skills = paths::expand_tilde(&config.agm.skills_source);
+    let agm_agents = paths::expand_tilde(&config.agm.agents_source);
+    let agm_commands = paths::expand_tilde(&config.agm.commands_source);
+    let agm_prompt = paths::expand_tilde(&config.agm.prompt_source);
 
     // Collect which tools to unlink (all installed tools)
     let tools_to_unlink: Vec<(&String, &config::ToolConfig)> = config
@@ -379,41 +379,41 @@ fn unlink_all(config: &config::Config) -> anyhow::Result<()> {
         println!("Unlinking {} ({}):", key, tool_config.name);
 
         if let Some(skills_link) = tool_config.resolved_link_path("skills") {
-            if !config.central.is_disabled("skills")
+            if !config.agm.is_disabled("skills")
                 && linker::remove_link(&skills_link, "skills", true)?
-                && central_skills.is_dir()
+                && agm_skills.is_dir()
             {
-                skills::copy_dir_all(&central_skills, &skills_link)?;
+                skills::copy_dir_all(&agm_skills, &skills_link)?;
                 println!("  {} skills copied back", " ok ".green());
             }
         }
 
         if let Some(agents_link) = tool_config.resolved_link_path("agents") {
-            if !config.central.is_disabled("agents")
+            if !config.agm.is_disabled("agents")
                 && linker::remove_link(&agents_link, "agents", true)?
-                && central_agents.is_dir()
+                && agm_agents.is_dir()
             {
-                skills::copy_dir_all(&central_agents, &agents_link)?;
+                skills::copy_dir_all(&agm_agents, &agents_link)?;
                 println!("  {} agents copied back", " ok ".green());
             }
         }
 
         if let Some(commands_link) = tool_config.resolved_link_path("commands") {
-            if !config.central.is_disabled("commands")
+            if !config.agm.is_disabled("commands")
                 && linker::remove_link(&commands_link, "commands", true)?
-                && central_commands.is_dir()
+                && agm_commands.is_dir()
             {
-                skills::copy_dir_all(&central_commands, &commands_link)?;
+                skills::copy_dir_all(&agm_commands, &commands_link)?;
                 println!("  {} commands copied back", " ok ".green());
             }
         }
 
         if let Some(prompt_link) = tool_config.resolved_link_path("prompt") {
-            if !config.central.is_disabled("prompt")
+            if !config.agm.is_disabled("prompt")
                 && linker::remove_link(&prompt_link, "prompt", false)?
-                && central_prompt.exists()
+                && agm_prompt.exists()
             {
-                fs::copy(&central_prompt, &prompt_link)?;
+                fs::copy(&agm_prompt, &prompt_link)?;
                 println!("  {} prompt copied back", " ok ".green());
             }
         }
@@ -752,10 +752,10 @@ fn main() -> anyhow::Result<()> {
         },
         Commands::Source { action } => {
             let mut config = config::Config::load_from(cli.config.clone())?;
-            let skills_dir = paths::expand_tilde(&config.central.skills_source);
-            let agents_dir = paths::expand_tilde(&config.central.agents_source);
-            let commands_dir = paths::expand_tilde(&config.central.commands_source);
-            let source_dir = paths::expand_tilde(&config.central.source_dir);
+            let skills_dir = paths::expand_tilde(&config.agm.skills_source);
+            let agents_dir = paths::expand_tilde(&config.agm.agents_source);
+            let commands_dir = paths::expand_tilde(&config.agm.commands_source);
+            let source_dir = paths::expand_tilde(&config.agm.source_dir);
             match action {
                 None => tui::source::run(&mut config),
                 Some(SourceAction::Add { source, name, all }) => source_add(
