@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [v0.10.0] - 2026-05-25
+
 ### Changed
 - 2026-05-25: Renamed the `central` concept to `agm` throughout — the TUI tree section now reads `agm`, the config section is `[agm]`, and internal types are `AgmConfig`/`AgmField`. Existing configs using `[central]` still load via a serde alias and are re-saved as `[agm]`.
 
