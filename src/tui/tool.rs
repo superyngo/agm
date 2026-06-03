@@ -31,7 +31,6 @@ use crate::skills;
 /// Which agm config field a row represents
 #[derive(Debug, Clone, PartialEq)]
 pub enum AgmField {
-    Config,
     Prompt,
     Skills,
     Agents,
@@ -107,7 +106,6 @@ pub fn build_rows(config: &Config, expanded: &HashSet<String>) -> Vec<ToolRow> {
     // agm section
     rows.push(ToolRow::AgmHeader);
     if expanded.contains("agm") {
-        rows.push(ToolRow::AgmItem(AgmField::Config));
         rows.push(ToolRow::AgmItem(AgmField::Source));
         rows.push(ToolRow::AgmItem(AgmField::Prompt));
         rows.push(ToolRow::AgmItem(AgmField::Skills));
@@ -1474,13 +1472,6 @@ impl ToolApp {
 
     fn show_agm_info(&mut self, field: &AgmField) {
         let (title, path, is_dir, is_feature) = match field {
-            AgmField::Config => {
-                let p = self
-                    .config_path
-                    .clone()
-                    .unwrap_or_else(|| expand_tilde("~/.config/agm/config.toml"));
-                ("Config".to_string(), p, false, false)
-            }
             AgmField::Prompt => {
                 let p = expand_tilde(&self.config.agm.prompt_source);
                 ("Prompt".to_string(), p, false, true)
@@ -1912,21 +1903,6 @@ impl ToolApp {
                     self.set_status("✗ Config reload failed");
                 }
             }
-            ToolRow::AgmItem(AgmField::Config) => {
-                let path = self
-                    .config_path
-                    .clone()
-                    .unwrap_or_else(|| expand_tilde("~/.config/agm/config.toml"));
-                if path.exists() {
-                    self.open_in_editor(terminal, &[path]);
-                    if let Ok(new_config) = Config::load_from(self.config_path.clone()) {
-                        self.config = new_config;
-                        self.rebuild_rows();
-                    }
-                } else {
-                    self.set_status(format!("File not found: {}", contract_tilde(&path)));
-                }
-            }
             ToolRow::AgmItem(AgmField::Prompt) => {
                 let path = expand_tilde(&self.config.agm.prompt_source);
                 if path.exists() {
@@ -2127,12 +2103,6 @@ fn build_tool_hints(row: Option<&ToolRow>, config: &Config) -> Line<'static> {
             spans.extend([hint_key("o"), hint_text(" log  ")]);
             spans.extend([hint_key("q"), hint_text(" quit")]);
         }
-        Some(ToolRow::AgmItem(AgmField::Config)) => {
-            spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
-            spans.extend([hint_key("e"), hint_text(" edit  ")]);
-            spans.extend([hint_key("o"), hint_text(" log  ")]);
-            spans.extend([hint_key("q"), hint_text(" quit")]);
-        }
         Some(ToolRow::AgmItem(AgmField::Source)) => {
             spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
             spans.extend([hint_key("e"), hint_text(" edit path  ")]);
@@ -2297,10 +2267,6 @@ fn render_row(
 
         ToolRow::AgmItem(field) => {
             let (label, value) = match field {
-                AgmField::Config => (
-                    "config".to_string(),
-                    "~/.config/agm/config.toml".to_string(),
-                ),
                 AgmField::Source => (
                     "source".to_string(),
                     contract_tilde(&expand_tilde(&config.agm.source_dir)),
@@ -2799,15 +2765,14 @@ mod tests {
         expanded.insert("agm".to_string());
         let rows = build_rows(&config, &expanded);
 
-        assert_eq!(rows.len(), 8);
+        assert_eq!(rows.len(), 7);
         assert!(matches!(rows[0], ToolRow::AgmHeader));
-        assert!(matches!(rows[1], ToolRow::AgmItem(AgmField::Config)));
-        assert!(matches!(rows[2], ToolRow::AgmItem(AgmField::Source)));
-        assert!(matches!(rows[3], ToolRow::AgmItem(AgmField::Prompt)));
-        assert!(matches!(rows[4], ToolRow::AgmItem(AgmField::Skills)));
-        assert!(matches!(rows[5], ToolRow::AgmItem(AgmField::Agents)));
-        assert!(matches!(rows[6], ToolRow::AgmItem(AgmField::Commands)));
-        assert!(matches!(rows[7], ToolRow::ToolHeader { ref key, .. } if key == "claude"));
+        assert!(matches!(rows[1], ToolRow::AgmItem(AgmField::Source)));
+        assert!(matches!(rows[2], ToolRow::AgmItem(AgmField::Prompt)));
+        assert!(matches!(rows[3], ToolRow::AgmItem(AgmField::Skills)));
+        assert!(matches!(rows[4], ToolRow::AgmItem(AgmField::Agents)));
+        assert!(matches!(rows[5], ToolRow::AgmItem(AgmField::Commands)));
+        assert!(matches!(rows[6], ToolRow::ToolHeader { ref key, .. } if key == "claude"));
     }
 
     #[test]

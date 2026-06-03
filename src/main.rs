@@ -1,4 +1,4 @@
-use agm::{config, init, linker, paths, platform, skills, status, tui};
+use agm::{config, editor, init, linker, paths, platform, skills, status, tui};
 
 use clap::{CommandFactory, Parser, Subcommand};
 use colored::Colorize;
@@ -25,6 +25,8 @@ struct Cli {
 enum Commands {
     /// Initialize agm config and agm directories
     Init,
+    /// Open the agm config file in $EDITOR (or the platform default)
+    Config,
     /// Manage tools, links, and configuration
     Tool {
         #[command(subcommand)]
@@ -738,6 +740,15 @@ fn main() -> anyhow::Result<()> {
 
     match command {
         Commands::Init => init::run(cli.config.clone()),
+        Commands::Config => {
+            let config = config::Config::load_from(cli.config.clone())?;
+            let path = cli
+                .config
+                .clone()
+                .unwrap_or_else(config::Config::config_path);
+            let ed = editor::get_editor(&config);
+            editor::open_files(&ed, &[&path])
+        }
         Commands::Tool { action } => match action {
             None => tui::tool::run(cli.config.clone()),
             Some(ToolAction::Link) => {

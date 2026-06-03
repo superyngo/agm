@@ -1,6 +1,6 @@
 # AGM (AI Agent Manager) - Project Context
 
-AGM is a Rust-based CLI tool designed to centralize and manage configurations for various AI coding agent CLI tools such as Claude Code, Gemini CLI, Copilot CLI, and others. It simplifies the management of prompts, skills, agents, and configurations by using a central store and symlinking (or junctions on Windows) to the respective tool configuration directories.
+AGM is a Rust-based CLI tool designed to centralize and manage configurations for various AI coding agent CLI tools such as Claude Code, Antigravity CLI, Copilot CLI, and others. It simplifies the management of prompts, skills, agents, and configurations by using a central store and symlinking (or junctions on Windows) to the respective tool configuration directories.
 
 ## Project Overview
 

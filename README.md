@@ -1,6 +1,6 @@
 # AGM (AI Agent Manager)
 
-A Rust CLI tool for centralized management of AI coding agent CLI tools (Claude Code, Gemini CLI, Copilot CLI, Codex CLI, Pi, Crush, OpenCode, etc.).
+A Rust CLI tool for centralized management of AI coding agent CLI tools (Claude Code, Antigravity CLI, Copilot CLI, Codex CLI, Pi, Crush, OpenCode, etc.).
 
 ## Features
 
@@ -87,6 +87,9 @@ chmod +x ~/.local/bin/agm
 # Initialize config and central directories
 agm init
 
+# Open the config file in your editor
+agm config
+
 # Show status of all tools
 agm tool status
 
@@ -111,6 +114,10 @@ agm source update
 
 ## Commands
 
+### Config
+
+- `agm config` - Open the config file (`~/.config/agm/config.toml`) in `$EDITOR`, or the platform default if unset
+
 ### Tool Management
 
 - `agm tool` - Open interactive TUI to manage tools, links, and configuration
@@ -120,7 +127,7 @@ agm source update
 
 The TUI provides:
 - View and toggle link status for each tool (prompt, skills, agents)
-- Edit config, prompt, settings, auth, and MCP files with `e` key
+- Edit prompt, settings, auth, and MCP files with `e` key
 - Edit central paths (skills, agents, source) inline
 - File picker popup for multi-file fields
 - Log popup (`l` key) for operation history
@@ -172,7 +179,7 @@ Out of the box support for 7 tools:
 - Codex CLI (`~/.codex`)
 - Copilot CLI (`~/.copilot`)
 - Crush (`~/.config/crush`)
-- Gemini CLI (`~/.gemini`)
+- Antigravity CLI (`~/.gemini`)
 - OpenCode (`~/.config/opencode`)
 - Pi (`~/.pi/agent`)
 

@@ -162,11 +162,11 @@ impl Config {
             },
         );
         tools.insert(
-            "gemini".into(),
+            "agy".into(),
             ToolConfig {
-                name: "Gemini CLI".into(),
+                name: "Antigravity CLI".into(),
                 config_dir: "~/.gemini".into(),
-                settings: vec!["settings.json".into()],
+                settings: vec!["antigravity-cli/settings.json".into()],
                 auth: vec![
                     "oauth_creds.json".into(),
                     "accounts.json".into(),
@@ -176,7 +176,7 @@ impl Config {
                 skills_dir: "skills".into(),
                 agents_dir: "agents".into(),
                 commands_dir: "commands".into(),
-                mcp: vec!["settings.json".into()],
+                mcp: vec!["config/mcp_config.json".into()],
             },
         );
         tools.insert(
@@ -322,7 +322,7 @@ mod tests {
         assert!(parsed.tools.contains_key("codex"));
         assert!(parsed.tools.contains_key("copilot"));
         assert!(parsed.tools.contains_key("crush"));
-        assert!(parsed.tools.contains_key("gemini"));
+        assert!(parsed.tools.contains_key("agy"));
         assert!(parsed.tools.contains_key("opencode"));
         assert!(parsed.tools.contains_key("pi"));
     }

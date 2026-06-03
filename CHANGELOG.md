@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [v0.11.0] - 2026-06-03
+
+### Added
+- New `agm config` subcommand opens the config file (`~/.config/agm/config.toml`, or `--config` override) in `$EDITOR`, falling back to the platform default editor.
+
+### Changed
+- Removed the `config` entry from the TUI `agm` section. The config file is now edited via the dedicated `agm config` command rather than from inside the tool tree.
+- Replaced the default `gemini` (Gemini CLI) tool with `agy` (Antigravity CLI), Google's successor terminal agent. It shares `~/.gemini` as its config dir, with settings at `antigravity-cli/settings.json`, MCP at `config/mcp_config.json`, and `GEMINI.md` as its global instructions file.
+
 ## [v0.10.0] - 2026-05-25
 
 ### Changed
