@@ -13,6 +13,12 @@ A Rust CLI tool for centralized management of AI coding agent CLI tools (Claude 
 
 ## Installation
 
+### With Wenget
+
+```bash
+wenget install agm
+```
+
 ### Quick Install (One-Line Command)
 
 #### Linux / macOS (Bash)
