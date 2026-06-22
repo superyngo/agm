@@ -6,7 +6,7 @@ use crate::paths::contract_tilde;
 use crate::platform;
 
 /// Installation status of a skill in the agm skills directory
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SkillInstallStatus {
     /// agm skills dir has a symlink pointing to this skill's source
     Installed,

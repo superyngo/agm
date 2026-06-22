@@ -599,58 +599,71 @@ impl App {
 
     fn execute_bulk_toggle(&mut self, group_index: usize, category: Category, install: bool) {
         let mut count = 0usize;
+        let mut conflicts = 0usize;
+        let target = if install {
+            SkillInstallStatus::Installed
+        } else {
+            SkillInstallStatus::NotInstalled
+        };
         match category {
             Category::Skills => {
                 let len = self.groups[group_index].skills.len();
                 for si in 0..len {
-                    let status = &self.groups[group_index].skills[si].install_status;
-                    if *status == SkillInstallStatus::Conflict {
+                    let status = self.groups[group_index].skills[si].install_status;
+                    // Already-known conflicts (a different skill owns the name)
+                    // can't be installed; nothing to do when uninstalling either.
+                    if status == SkillInstallStatus::Conflict {
+                        conflicts += 1;
                         continue;
                     }
-                    let should_act = if install {
-                        *status == SkillInstallStatus::NotInstalled
-                    } else {
-                        *status == SkillInstallStatus::Installed
-                    };
-                    if should_act {
-                        self.toggle_skill(group_index, si);
+                    if status == target {
+                        continue;
+                    }
+                    self.toggle_skill(group_index, si);
+                    // A failed install (duplicate name within this source) leaves
+                    // the status unchanged; only count entries that actually moved.
+                    if self.groups[group_index].skills[si].install_status == target {
                         count += 1;
+                    } else if install {
+                        conflicts += 1;
                     }
                 }
             }
             Category::Agents => {
                 let len = self.groups[group_index].agents.len();
                 for ai in 0..len {
-                    let status = &self.groups[group_index].agents[ai].install_status;
-                    if *status == SkillInstallStatus::Conflict {
+                    let status = self.groups[group_index].agents[ai].install_status;
+                    if status == SkillInstallStatus::Conflict {
+                        conflicts += 1;
                         continue;
                     }
-                    let should_act = if install {
-                        *status == SkillInstallStatus::NotInstalled
-                    } else {
-                        *status == SkillInstallStatus::Installed
-                    };
-                    if should_act {
-                        self.toggle_agent(group_index, ai);
+                    if status == target {
+                        continue;
+                    }
+                    self.toggle_agent(group_index, ai);
+                    if self.groups[group_index].agents[ai].install_status == target {
                         count += 1;
+                    } else if install {
+                        conflicts += 1;
                     }
                 }
             }
             Category::Commands => {
                 let len = self.groups[group_index].commands.len();
                 for ci in 0..len {
-                    let status = &self.groups[group_index].commands[ci].install_status;
-                    if *status == SkillInstallStatus::Conflict {
+                    let status = self.groups[group_index].commands[ci].install_status;
+                    if status == SkillInstallStatus::Conflict {
+                        conflicts += 1;
                         continue;
                     }
-                    let should_act = if install {
-                        *status == SkillInstallStatus::NotInstalled
-                    } else {
-                        *status == SkillInstallStatus::Installed
-                    };
-                    if should_act {
-                        self.toggle_command(group_index, ci);
+                    if status == target {
+                        continue;
+                    }
+                    self.toggle_command(group_index, ci);
+                    if self.groups[group_index].commands[ci].install_status == target {
                         count += 1;
+                    } else if install {
+                        conflicts += 1;
                     }
                 }
             }
@@ -661,7 +674,23 @@ impl App {
             Category::Agents => "agent(s)",
             Category::Commands => "command(s)",
         };
-        self.set_status(format!("{action} {count} {kind}"));
+        // Conflicts only matter when installing: they are items whose name is
+        // already in use (commonly a duplicate/vendored copy of the same name),
+        // so they can't share the single flat skills namespace.
+        if install && conflicts > 0 {
+            self.log.push(
+                super::log::LogLevel::Warning,
+                format!(
+                    "Skipped {conflicts} {kind}: name already in use (duplicate name — \
+                     these are extra copies of an already-linked skill)"
+                ),
+            );
+            self.set_status(format!(
+                "{action} {count} {kind}; skipped {conflicts} duplicate-named"
+            ));
+        } else {
+            self.set_status(format!("{action} {count} {kind}"));
+        }
     }
 
     fn open_editor(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) {

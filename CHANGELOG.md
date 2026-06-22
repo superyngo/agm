@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - 2026-06-22: Adding a source in the Source Manager TUI now runs the clone/copy on a background thread, so the UI stays responsive for large repos (previously the terminal froze during the clone). The add no longer auto-installs every skill it finds — the new source appears in the list and you expand it to link the skills you want.
 - 2026-06-22: `git clone` now uses `--depth 1` (shallow clone) to drastically reduce download size for large source repos. `git pull` updates still work.
+- 2026-06-22: Bulk install in the Source Manager now reports skills/agents/commands skipped because their name is already in use (duplicate/vendored copies of the same skill). The status line and log explain the gap (e.g. `Installed 369 skill(s); skipped 143 duplicate-named`) instead of silently linking fewer than the total shown.
 
 ## [v0.11.0] - 2026-06-03
 
