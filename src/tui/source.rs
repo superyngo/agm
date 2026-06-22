@@ -610,7 +610,11 @@ impl App {
         let new = (self.cursor as isize + delta).clamp(0, vis.len() as isize - 1) as usize;
         self.cursor = new;
         // Paint the newly-entered row into the selection (leaves only).
-        if let Some(key) = vis.get(new).and_then(|&i| self.rows.get(i)).and_then(row_leaf_key) {
+        if let Some(key) = vis
+            .get(new)
+            .and_then(|&i| self.rows.get(i))
+            .and_then(row_leaf_key)
+        {
             self.selected.insert(key);
         }
     }
@@ -939,13 +943,22 @@ impl App {
         // name can occupy the flat namespace, so the rest are skipped on install.
         let duplicate_named = match category {
             Category::Skills => duplicate_name_count(
-                self.groups.iter().flat_map(|g| &g.skills).map(|s| s.name.clone()),
+                self.groups
+                    .iter()
+                    .flat_map(|g| &g.skills)
+                    .map(|s| s.name.clone()),
             ),
             Category::Agents => duplicate_name_count(
-                self.groups.iter().flat_map(|g| &g.agents).map(|a| a.name.clone()),
+                self.groups
+                    .iter()
+                    .flat_map(|g| &g.agents)
+                    .map(|a| a.name.clone()),
             ),
             Category::Commands => duplicate_name_count(
-                self.groups.iter().flat_map(|g| &g.commands).map(|c| c.name.clone()),
+                self.groups
+                    .iter()
+                    .flat_map(|g| &g.commands)
+                    .map(|c| c.name.clone()),
             ),
         };
         if duplicate_named > 0 {
@@ -1558,8 +1571,7 @@ impl App {
             is_url,
             self.source_dir.clone(),
         ));
-        self.log
-            .push(super::log::LogLevel::Info, "Add started");
+        self.log.push(super::log::LogLevel::Info, "Add started");
         self.set_status("⟳ Adding... (skills are not auto-installed; expand to link)");
     }
 
@@ -2727,7 +2739,10 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             Line::from(Span::styled(msg.clone(), Style::default().fg(Color::Green)))
         } else if !app.selected.is_empty() {
             Line::from(Span::styled(
-                format!("{} selected — l to install/uninstall, Esc to clear", app.selected.len()),
+                format!(
+                    "{} selected — l to install/uninstall, Esc to clear",
+                    app.selected.len()
+                ),
                 Style::default().fg(Color::Magenta),
             ))
         } else {
