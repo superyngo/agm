@@ -1008,7 +1008,9 @@ pub fn clone_or_pull(
             cmd.args(["pull"]).current_dir(&repo_path);
         }
         CloneAction::Clone => {
-            cmd.args(["clone", url, &repo_path.display().to_string()]);
+            // Shallow clone: only the latest commit. Avoids pulling huge
+            // history for large source repos. `git pull` still works on updates.
+            cmd.args(["clone", "--depth", "1", url, &repo_path.display().to_string()]);
         }
     }
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());

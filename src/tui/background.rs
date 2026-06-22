@@ -23,6 +23,17 @@ pub enum TaskEvent {
     /// Generic operation result (for tool TUI link/unlink etc.)
     #[allow(dead_code)]
     OperationResult { message: String, success: bool },
+    /// A line of git/clone progress while adding a source.
+    CloneLine { line: String, is_err: bool },
+    /// Adding a source finished. Counts are items *found* (not installed).
+    AddDone {
+        name: String,
+        skill_count: usize,
+        agent_count: usize,
+        command_count: usize,
+        success: bool,
+        message: String,
+    },
 }
 
 pub struct BackgroundTask {
@@ -51,6 +62,10 @@ impl BackgroundTask {
                 }
                 TaskEvent::UpdateRepoComplete { .. } => {}
                 TaskEvent::OperationResult { .. } => {}
+                TaskEvent::CloneLine { line, .. } => {
+                    self.progress = Some(line.clone());
+                }
+                TaskEvent::AddDone { .. } => self.is_running = false,
             }
             events.push(event);
         }
@@ -144,6 +159,61 @@ pub fn spawn_update(
                 let _ = tx.send(event);
             },
         );
+    });
+    BackgroundTask::new(rx)
+}
+
+/// Spawn a background add. Clones/copies the source (no skills are installed).
+/// Reports git progress as `CloneLine` events and finishes with `AddDone`
+/// carrying the count of items *found* in the source.
+pub fn spawn_add(source: String, is_url: bool, source_dir: PathBuf) -> BackgroundTask {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let forward = |evt: &crate::skills::CloneProgress, tx: &mpsc::Sender<TaskEvent>| {
+            if let crate::skills::CloneProgress::GitLine { line, is_err } = evt {
+                let _ = tx.send(TaskEvent::CloneLine {
+                    line: line.clone(),
+                    is_err: *is_err,
+                });
+            }
+        };
+
+        let result = if is_url {
+            crate::skills::clone_or_pull(&source, &source_dir, None, |evt| forward(&evt, &tx))
+        } else {
+            let path = crate::paths::expand_tilde(&source);
+            crate::skills::add_local_copy(&path, &source_dir, None, |evt| forward(&evt, &tx))
+        };
+
+        let event = match result {
+            Ok((repo_path, found_skills)) => {
+                let name = repo_path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("source")
+                    .to_string();
+                let skill_count = found_skills.len();
+                let agent_count = crate::skills::scan_agents(&repo_path).len();
+                let command_count = crate::skills::scan_commands(&repo_path).len();
+                TaskEvent::AddDone {
+                    name,
+                    skill_count,
+                    agent_count,
+                    command_count,
+                    success: true,
+                    message: "Added".to_string(),
+                }
+            }
+            Err(e) => TaskEvent::AddDone {
+                name: source.clone(),
+                skill_count: 0,
+                agent_count: 0,
+                command_count: 0,
+                success: false,
+                message: e.to_string(),
+            },
+        };
+        let _ = tx.send(event);
     });
     BackgroundTask::new(rx)
 }

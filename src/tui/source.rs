@@ -1363,66 +1363,25 @@ impl App {
             return;
         }
 
-        let source = skills::normalize_git_source(&source);
-
-        if skills::is_url(&source) {
-            let log = &mut self.log;
-            match skills::clone_or_pull(&source, &self.source_dir, None, |evt| {
-                push_clone_progress(log, &evt);
-            }) {
-                Ok((repo_path, found_skills)) => {
-                    let mut count = 0;
-                    for (name, skill_path) in &found_skills {
-                        if skills::install_skill(name, skill_path, &self.skills_dir).is_ok() {
-                            count += 1;
-                        }
-                    }
-                    let found_agents = skills::scan_agents(&repo_path);
-                    let mut agent_count = 0;
-                    for (name, agent_path) in &found_agents {
-                        if skills::install_agent(name, agent_path, &self.agents_dir).is_ok() {
-                            agent_count += 1;
-                        }
-                    }
-                    self.log.push(
-                        super::log::LogLevel::Success,
-                        format!("Added from URL: {count} skill(s), {agent_count} agent(s)"),
-                    );
-                    self.set_status(format!("Added: {count} skill(s), {agent_count} agent(s)"));
-                }
-                Err(e) => {
-                    self.log
-                        .push(super::log::LogLevel::Error, format!("Add error: {e}"));
-                    self.set_status(format!("Error: {e}"));
-                }
-            }
-        } else {
-            let source_path = expand_tilde(&source);
-            let log = &mut self.log;
-            match skills::add_local_copy(&source_path, &self.source_dir, None, |evt| {
-                push_clone_progress(log, &evt);
-            }) {
-                Ok((_dest, found_skills)) => {
-                    let mut count = 0;
-                    for (name, skill_path) in &found_skills {
-                        if skills::install_skill(name, skill_path, &self.skills_dir).is_ok() {
-                            count += 1;
-                        }
-                    }
-                    self.log.push(
-                        super::log::LogLevel::Success,
-                        format!("Added local: {count} skill(s)"),
-                    );
-                    self.set_status(format!("Added: {count} skill(s)"));
-                }
-                Err(e) => {
-                    self.log
-                        .push(super::log::LogLevel::Error, format!("Add error: {e}"));
-                    self.set_status(format!("Error: {e}"));
-                }
-            }
+        if self.background_task.as_ref().is_some_and(|t| t.is_running) {
+            self.set_status("A task is already in progress");
+            return;
         }
-        self.refresh();
+
+        let source = skills::normalize_git_source(&source);
+        let is_url = skills::is_url(&source);
+
+        // Run the clone/copy on a background thread so the UI stays responsive
+        // for large repos. Nothing is installed automatically — the new source
+        // appears in the list on completion and the user links what they want.
+        self.background_task = Some(super::background::spawn_add(
+            source,
+            is_url,
+            self.source_dir.clone(),
+        ));
+        self.log
+            .push(super::log::LogLevel::Info, "Add started");
+        self.set_status("⟳ Adding... (skills are not auto-installed; expand to link)");
     }
 
     fn start_rename(&mut self) {
@@ -2069,7 +2028,8 @@ fn render(app: &mut App, frame: &mut Frame) {
 
 fn render_list(app: &App, frame: &mut Frame, area: Rect) {
     let block = Block::default()
-        .title(" AGM Source Manager ")
+        .title(Line::from(" AGM Source Manager ").left_aligned())
+        .title(Line::from(format!(" v{} ", env!("CARGO_PKG_VERSION"))).right_aligned())
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
 
@@ -2642,6 +2602,41 @@ pub fn run(config: &mut Config) -> Result<()> {
                             super::log::LogLevel::Error
                         };
                         app.log.push(level, message);
+                    }
+                    TaskEvent::CloneLine { line, is_err } => {
+                        let level = if is_err {
+                            super::log::LogLevel::Warning
+                        } else {
+                            super::log::LogLevel::Info
+                        };
+                        app.log.push(level, line);
+                    }
+                    TaskEvent::AddDone {
+                        name,
+                        skill_count,
+                        agent_count,
+                        command_count,
+                        success,
+                        message,
+                    } => {
+                        if success {
+                            app.log.push(
+                                super::log::LogLevel::Success,
+                                format!(
+                                    "Added {}: {} skill(s), {} agent(s), {} command(s) found — expand to link",
+                                    name, skill_count, agent_count, command_count
+                                ),
+                            );
+                            app.refresh();
+                            app.set_status(format!(
+                                "Added {}: {} skill(s) found — expand to link",
+                                name, skill_count
+                            ));
+                        } else {
+                            app.log
+                                .push(super::log::LogLevel::Error, format!("Add error: {message}"));
+                            app.set_status(format!("Error: {message}"));
+                        }
                     }
                 }
             }

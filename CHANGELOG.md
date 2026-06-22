@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+- 2026-06-22: The Source Manager and Tool Manager TUI headers now show the current version (`v{x.y.z}`) right-aligned in the title bar.
+
+### Changed
+- 2026-06-22: Adding a source in the Source Manager TUI now runs the clone/copy on a background thread, so the UI stays responsive for large repos (previously the terminal froze during the clone). The add no longer auto-installs every skill it finds — the new source appears in the list and you expand it to link the skills you want.
+- 2026-06-22: `git clone` now uses `--depth 1` (shallow clone) to drastically reduce download size for large source repos. `git pull` updates still work.
+
 ## [v0.11.0] - 2026-06-03
 
 ### Added

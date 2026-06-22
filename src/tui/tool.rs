@@ -2207,7 +2207,8 @@ fn render(app: &mut ToolApp, frame: &mut Frame) {
 
 fn render_list(app: &ToolApp, frame: &mut Frame, area: Rect) {
     let block = Block::default()
-        .title(" AGM Tool Manager ")
+        .title(Line::from(" AGM Tool Manager ").left_aligned())
+        .title(Line::from(format!(" v{} ", env!("CARGO_PKG_VERSION"))).right_aligned())
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
     let inner = block.inner(area);
