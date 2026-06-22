@@ -829,6 +829,29 @@ impl App {
             Span::styled("Installed: ", Style::default().fg(Color::Yellow)),
             Span::raw(format!("{installed} / {total}")),
         ]));
+
+        // Duplicate names across all sources in this category: only one of each
+        // name can occupy the flat namespace, so the rest are skipped on install.
+        let duplicate_named = match category {
+            Category::Skills => duplicate_name_count(
+                self.groups.iter().flat_map(|g| &g.skills).map(|s| s.name.clone()),
+            ),
+            Category::Agents => duplicate_name_count(
+                self.groups.iter().flat_map(|g| &g.agents).map(|a| a.name.clone()),
+            ),
+            Category::Commands => duplicate_name_count(
+                self.groups.iter().flat_map(|g| &g.commands).map(|c| c.name.clone()),
+            ),
+        };
+        if duplicate_named > 0 {
+            lines.push(Line::from(vec![
+                Span::styled("Duplicate-named: ", Style::default().fg(Color::Yellow)),
+                Span::styled(
+                    format!("{duplicate_named} skipped (same name — only one of each links)"),
+                    Style::default().fg(Color::Red),
+                ),
+            ]));
+        }
         lines.push(Line::default());
 
         // List contributing sources
@@ -1210,6 +1233,28 @@ impl App {
             Span::styled("Commands: ", Style::default().fg(Color::Yellow)),
             Span::raw(format!("{}", group.commands.len())),
         ]));
+
+        // Duplicate names within this source: only one of each name can be
+        // linked into the flat namespace, so the rest are skipped on install.
+        let dup_skills = duplicate_name_count(group.skills.iter().map(|s| s.name.clone()));
+        let dup_agents = duplicate_name_count(group.agents.iter().map(|a| a.name.clone()));
+        let dup_commands = duplicate_name_count(group.commands.iter().map(|c| c.name.clone()));
+        if dup_skills + dup_agents + dup_commands > 0 {
+            lines.push(Line::default());
+            lines.push(Line::from(Span::styled(
+                "Duplicate-named (skipped — only one of each name links):",
+                Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            )));
+            for (label, dups) in [
+                ("Skills", dup_skills),
+                ("Agents", dup_agents),
+                ("Commands", dup_commands),
+            ] {
+                if dups > 0 {
+                    lines.push(Line::from(format!("  {label}: {dups}")));
+                }
+            }
+        }
 
         // Preload chars summary per-category
         let sum = |installed: bool, items_chars: &[(bool, usize)]| -> usize {
@@ -2695,6 +2740,21 @@ pub fn run(config: &mut Config) -> Result<()> {
     Ok(())
 }
 
+/// Count how many names are duplicates of an earlier name (i.e. total minus
+/// distinct). These are entries that can't all be linked, because skills/agents/
+/// commands share a single flat namespace keyed by name — only the first of each
+/// name wins; the rest are skipped as conflicts.
+fn duplicate_name_count<I: IntoIterator<Item = String>>(names: I) -> usize {
+    let mut seen = HashSet::new();
+    let mut dups = 0;
+    for n in names {
+        if !seen.insert(n) {
+            dups += 1;
+        }
+    }
+    dups
+}
+
 fn push_clone_progress(log: &mut super::log::LogBuffer, evt: &skills::CloneProgress) {
     use super::log::LogLevel;
     use skills::CloneProgress::*;
@@ -2733,5 +2793,23 @@ fn push_clone_progress(log: &mut super::log::LogBuffer, evt: &skills::CloneProgr
                 format!("{}: {}", name, message),
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::duplicate_name_count;
+
+    #[test]
+    fn duplicate_name_count_counts_repeats() {
+        let names = ["a", "a", "a", "b", "c", "c"].map(String::from);
+        // a repeats twice, c repeats once → 3 would be skipped.
+        assert_eq!(duplicate_name_count(names), 3);
+    }
+
+    #[test]
+    fn duplicate_name_count_zero_when_unique() {
+        let names = ["a", "b", "c"].map(String::from);
+        assert_eq!(duplicate_name_count(names), 0);
     }
 }
