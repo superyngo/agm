@@ -140,7 +140,7 @@ The TUI provides:
 
 ### Source Management
 
-- `agm source` - Open interactive TUI to manage skills & agents
+- `agm source` - Open interactive TUI to manage skills & agents. In the item list, press `s` to toggle-select an item, `Shift+↑/↓` to range-select, then `l` to install/uninstall all selected items at once; `Esc` clears the selection.
 - `agm source add <url>` - Add a source repo by URL
 - `agm source update` - Update all source repos
 - `agm source list` - List all sources with skills & agents

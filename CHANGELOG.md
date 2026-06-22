@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+- 2026-06-22: Multi-select in the Source Manager TUI. Press `s` to toggle-select the item under the cursor and `Shift+↑/↓` to continuously range-select across items (header rows are skipped). With items selected, `l` installs or uninstalls them all in one confirmed batch (direction is install-all if any selected item is not installed, otherwise uninstall-all). `Esc` clears the selection. Selected items show a `●` marker and a count in the status line.
+
 ## [v0.12.0] - 2026-06-22
 
 ### Added

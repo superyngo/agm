@@ -29,7 +29,7 @@ use crate::skills::{self, SkillInstallStatus, SourceGroup, SourceKind};
 // Data model
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 enum Category {
     Skills,
     Agents,
@@ -73,6 +73,9 @@ enum ConfirmState {
         category: Category,
         install: bool,
     },
+    BulkSelection {
+        install: bool,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -110,6 +113,8 @@ struct App {
     rename_mode: bool,
     rename_input: super::text_input::TextInput,
     rename_target_group_index: Option<usize>,
+    selected: HashSet<(Category, usize, usize)>,
+    select_anchor: Option<usize>,
 }
 
 impl App {
@@ -153,6 +158,8 @@ impl App {
             rename_mode: false,
             rename_input: super::text_input::TextInput::new(),
             rename_target_group_index: None,
+            selected: HashSet::new(),
+            select_anchor: None,
         };
         app.rebuild_rows();
         app
@@ -188,6 +195,9 @@ impl App {
         );
         self.rebuild_rows();
         self.clamp_cursor();
+        // Item indices may have changed after a rescan; drop stale selection.
+        self.selected.clear();
+        self.select_anchor = None;
     }
 
     fn clamp_cursor(&mut self) {
@@ -569,6 +579,101 @@ impl App {
             }
         }
         self.confirm_state = None;
+    }
+
+    fn toggle_select(&mut self) {
+        let key = match self.current_row().and_then(row_leaf_key) {
+            Some(k) => k,
+            None => {
+                self.set_status("Only items can be selected");
+                return;
+            }
+        };
+        if !self.selected.remove(&key) {
+            self.selected.insert(key);
+        }
+        self.select_anchor = Some(self.cursor);
+    }
+
+    fn extend_selection(&mut self, delta: isize) {
+        let vis = self.visible_rows();
+        if vis.is_empty() {
+            return;
+        }
+        // Seed from the current row when starting a fresh range drag.
+        if self.select_anchor.is_none() {
+            self.select_anchor = Some(self.cursor);
+            if let Some(key) = self.current_row().and_then(row_leaf_key) {
+                self.selected.insert(key);
+            }
+        }
+        let new = (self.cursor as isize + delta).clamp(0, vis.len() as isize - 1) as usize;
+        self.cursor = new;
+        // Paint the newly-entered row into the selection (leaves only).
+        if let Some(key) = vis.get(new).and_then(|&i| self.rows.get(i)).and_then(row_leaf_key) {
+            self.selected.insert(key);
+        }
+    }
+
+    fn start_bulk_selection(&mut self) {
+        // Direction mirrors source-level bulk toggle: if anything selected is not
+        // installed, install all; otherwise uninstall all.
+        let install = self.selected.iter().any(|&(cat, gi, ii)| {
+            self.item_status(cat, gi, ii) == Some(SkillInstallStatus::NotInstalled)
+        });
+        self.confirm_state = Some(ConfirmState::BulkSelection { install });
+    }
+
+    fn item_status(
+        &self,
+        category: Category,
+        group_index: usize,
+        item_index: usize,
+    ) -> Option<SkillInstallStatus> {
+        let group = self.groups.get(group_index)?;
+        match category {
+            Category::Skills => group.skills.get(item_index).map(|s| s.install_status),
+            Category::Agents => group.agents.get(item_index).map(|a| a.install_status),
+            Category::Commands => group.commands.get(item_index).map(|c| c.install_status),
+        }
+    }
+
+    fn execute_bulk_selection(&mut self, install: bool) {
+        let target = if install {
+            SkillInstallStatus::Installed
+        } else {
+            SkillInstallStatus::NotInstalled
+        };
+        // Sort for stable, grouped processing; iterate a snapshot since the
+        // per-item toggles borrow self mutably.
+        let mut keys: Vec<(Category, usize, usize)> = self.selected.iter().copied().collect();
+        keys.sort();
+        let mut count = 0usize;
+        for (category, gi, ii) in keys {
+            let feature = match category {
+                Category::Skills => "skills",
+                Category::Agents => "agents",
+                Category::Commands => "commands",
+            };
+            if self.config.agm.is_disabled(feature) {
+                continue;
+            }
+            if self.item_status(category, gi, ii) == Some(target) {
+                continue;
+            }
+            match category {
+                Category::Skills => self.toggle_skill(gi, ii),
+                Category::Agents => self.toggle_agent(gi, ii),
+                Category::Commands => self.toggle_command(gi, ii),
+            }
+            if self.item_status(category, gi, ii) == Some(target) {
+                count += 1;
+            }
+        }
+        let action = if install { "Installed" } else { "Uninstalled" };
+        self.set_status(format!("{action} {count} selected item(s)"));
+        self.selected.clear();
+        self.select_anchor = None;
     }
 
     fn start_bulk_toggle(&mut self, group_index: usize, category: Category) {
@@ -1613,6 +1718,16 @@ impl App {
                         self.set_status("Cancelled");
                     }
                 },
+                ConfirmState::BulkSelection { install } => match code {
+                    KeyCode::Char('y') | KeyCode::Char('Y') => {
+                        self.execute_bulk_selection(install);
+                        self.confirm_state = None;
+                    }
+                    _ => {
+                        self.confirm_state = None;
+                        self.set_status("Cancelled");
+                    }
+                },
             }
             return;
         }
@@ -1692,8 +1807,11 @@ impl App {
             KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
                 self.should_quit = true;
             }
+            KeyCode::Up if modifiers.contains(KeyModifiers::SHIFT) => self.extend_selection(-1),
+            KeyCode::Down if modifiers.contains(KeyModifiers::SHIFT) => self.extend_selection(1),
             KeyCode::Up | KeyCode::Char('k') => self.move_cursor(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_cursor(1),
+            KeyCode::Char('s') => self.toggle_select(),
             KeyCode::PageUp => {
                 let page = self.page_size(area_height) as isize;
                 self.move_cursor(-page);
@@ -1736,7 +1854,10 @@ impl App {
                     _ => {}
                 }
             }
-            // Link/install toggle: l
+            // Link/install toggle: l (batch when items are selected)
+            KeyCode::Char('l') if !self.selected.is_empty() => {
+                self.start_bulk_selection();
+            }
             KeyCode::Char('l') => {
                 let row = self.current_row().cloned();
                 match row {
@@ -1822,12 +1943,18 @@ impl App {
                 self.log_popup = Some(popup);
             }
             KeyCode::Esc => {
-                if self.filtered_rows.is_some() {
-                    self.search_query.clear();
-                    self.filtered_rows = None;
-                    self.cursor = 0;
+                if !self.selected.is_empty() {
+                    self.selected.clear();
+                    self.select_anchor = None;
+                    self.set_status("Selection cleared");
+                } else {
+                    if self.filtered_rows.is_some() {
+                        self.search_query.clear();
+                        self.filtered_rows = None;
+                        self.cursor = 0;
+                    }
+                    self.status_message = None;
                 }
-                self.status_message = None;
             }
             _ => {}
         }
@@ -1935,6 +2062,26 @@ fn build_rows(
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Stable selection key for a leaf row (skill/agent/command). Header rows
+/// return `None` — only leaf items are selectable.
+fn row_leaf_key(row: &ListRow) -> Option<(Category, usize, usize)> {
+    match row {
+        ListRow::SkillItem {
+            group_index,
+            skill_index,
+        } => Some((Category::Skills, *group_index, *skill_index)),
+        ListRow::AgentItem {
+            group_index,
+            agent_index,
+        } => Some((Category::Agents, *group_index, *agent_index)),
+        ListRow::CommandItem {
+            group_index,
+            command_index,
+        } => Some((Category::Commands, *group_index, *command_index)),
+        _ => None,
+    }
+}
+
 fn kind_icon(kind: &SourceKind) -> &'static str {
     match kind {
         SourceKind::Repo { .. } => "📦",
@@ -1979,6 +2126,7 @@ fn render_item_line(
     name: &str,
     status: &SkillInstallStatus,
     is_cursor: bool,
+    is_selected: bool,
     prefix_char: &str,
     match_indices: Option<&[usize]>,
 ) -> Line<'static> {
@@ -1986,21 +2134,24 @@ fn render_item_line(
     let color = status_color(status);
     let label = status_label(status);
 
+    // The 8-char gutter shows the cursor caret and/or a selection marker.
+    let marker = if is_selected { "●" } else { " " };
     let prefix = if is_cursor {
-        format!("      {prefix_char} ")
+        format!("    {marker} {prefix_char} ")
     } else {
-        "        ".to_string()
+        format!("    {marker}   ")
+    };
+
+    let prefix_style = if is_cursor {
+        Style::default().fg(Color::Yellow).bg(Color::DarkGray)
+    } else if is_selected {
+        Style::default().fg(Color::Magenta)
+    } else {
+        Style::default()
     };
 
     let mut spans = vec![
-        Span::styled(
-            prefix,
-            if is_cursor {
-                Style::default().fg(Color::Yellow).bg(Color::DarkGray)
-            } else {
-                Style::default()
-            },
-        ),
+        Span::styled(prefix, prefix_style),
         Span::styled(
             format!("{icon} "),
             if is_cursor {
@@ -2276,10 +2427,14 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                 } else {
                     None
                 };
+                let is_selected =
+                    app.selected
+                        .contains(&(Category::Skills, *group_index, *skill_index));
                 let line = render_item_line(
                     &skill.name,
                     &skill.install_status,
                     is_cursor,
+                    is_selected,
                     ">",
                     indices.as_deref(),
                 );
@@ -2302,10 +2457,14 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                 } else {
                     None
                 };
+                let is_selected =
+                    app.selected
+                        .contains(&(Category::Agents, *group_index, *agent_index));
                 let line = render_item_line(
                     &agent.name,
                     &agent.install_status,
                     is_cursor,
+                    is_selected,
                     ">",
                     indices.as_deref(),
                 );
@@ -2328,10 +2487,14 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                 } else {
                     None
                 };
+                let is_selected =
+                    app.selected
+                        .contains(&(Category::Commands, *group_index, *command_index));
                 let line = render_item_line(
                     &command.name,
                     &command.install_status,
                     is_cursor,
+                    is_selected,
                     ">",
                     indices.as_deref(),
                 );
@@ -2386,6 +2549,8 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
         Some(ListRow::SkillItem { .. }) => {
             spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
             spans.extend([hint_key("l"), hint_text(" install  ")]);
+            spans.extend([hint_key("s"), hint_text(" select  ")]);
+            spans.extend([hint_key("⇧↑↓"), hint_text(" range  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
             spans.extend([hint_key("d"), hint_text(" del  ")]);
             spans.extend([hint_key("r"), hint_text(" rename  ")]);
@@ -2397,6 +2562,8 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
         Some(ListRow::AgentItem { .. }) => {
             spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
             spans.extend([hint_key("l"), hint_text(" install  ")]);
+            spans.extend([hint_key("s"), hint_text(" select  ")]);
+            spans.extend([hint_key("⇧↑↓"), hint_text(" range  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
             spans.extend([hint_key("r"), hint_text(" rename  ")]);
             spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
@@ -2407,6 +2574,8 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
         Some(ListRow::CommandItem { .. }) => {
             spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
             spans.extend([hint_key("l"), hint_text(" install  ")]);
+            spans.extend([hint_key("s"), hint_text(" select  ")]);
+            spans.extend([hint_key("⇧↑↓"), hint_text(" range  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
             spans.extend([hint_key("r"), hint_text(" rename  ")]);
             spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
@@ -2505,6 +2674,10 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
                 };
                 format!("{action} {count} {kind} from \"{}\"? [y/N]", g.name)
             }
+            ConfirmState::BulkSelection { install } => {
+                let action = if *install { "Install" } else { "Uninstall" };
+                format!("{action} {} selected item(s)? [y/N]", app.selected.len())
+            }
         };
         let p = Paragraph::new(Line::from(Span::styled(
             prompt,
@@ -2552,6 +2725,11 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             ))
         } else if let Some((ref msg, _)) = app.status_message {
             Line::from(Span::styled(msg.clone(), Style::default().fg(Color::Green)))
+        } else if !app.selected.is_empty() {
+            Line::from(Span::styled(
+                format!("{} selected — l to install/uninstall, Esc to clear", app.selected.len()),
+                Style::default().fg(Color::Magenta),
+            ))
         } else {
             Line::default()
         };
@@ -2798,7 +2976,45 @@ fn push_clone_progress(log: &mut super::log::LogBuffer, evt: &skills::CloneProgr
 
 #[cfg(test)]
 mod tests {
-    use super::duplicate_name_count;
+    use super::{duplicate_name_count, row_leaf_key, Category, ListRow};
+
+    #[test]
+    fn row_leaf_key_maps_leaves_and_skips_headers() {
+        assert_eq!(
+            row_leaf_key(&ListRow::SkillItem {
+                group_index: 1,
+                skill_index: 2,
+            }),
+            Some((Category::Skills, 1, 2))
+        );
+        assert_eq!(
+            row_leaf_key(&ListRow::AgentItem {
+                group_index: 3,
+                agent_index: 4,
+            }),
+            Some((Category::Agents, 3, 4))
+        );
+        assert_eq!(
+            row_leaf_key(&ListRow::CommandItem {
+                group_index: 5,
+                command_index: 6,
+            }),
+            Some((Category::Commands, 5, 6))
+        );
+        assert_eq!(
+            row_leaf_key(&ListRow::CategoryHeader {
+                category: Category::Skills
+            }),
+            None
+        );
+        assert_eq!(
+            row_leaf_key(&ListRow::SourceHeader {
+                category: Category::Skills,
+                group_index: 0,
+            }),
+            None
+        );
+    }
 
     #[test]
     fn duplicate_name_count_counts_repeats() {
