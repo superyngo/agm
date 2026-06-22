@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [v0.12.0] - 2026-06-22
+
 ### Added
 - 2026-06-22: The Source Manager and Tool Manager TUI headers now show the current version (`v{x.y.z}`) right-aligned in the title bar.
 
