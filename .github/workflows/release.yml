@@ -22,6 +22,9 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_NET_RETRY: 10
+  CARGO_HTTP_MULTIPLEXING: false
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
 
 jobs:
   build:
@@ -95,7 +98,32 @@ jobs:
 
       - name: Install cross (for musl targets)
         if: matrix.target == 'i686-unknown-linux-musl' || matrix.target == 'armv7-unknown-linux-musleabihf' || matrix.target == 'aarch64-unknown-linux-musl'
-        run: cargo install cross --git https://github.com/cross-rs/cross
+        run: |
+          for attempt in 1 2 3; do
+            if cargo install cross --git https://github.com/cross-rs/cross; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "cargo install cross failed after 3 attempts"
+              exit 1
+            fi
+            echo "cargo install cross failed (attempt $attempt), retrying..."
+            sleep $((attempt * 10))
+          done
+
+      - name: Fetch dependencies (retry)
+        run: |
+          for attempt in 1 2 3; do
+            if cargo fetch --locked; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "cargo fetch failed after 3 attempts"
+              exit 1
+            fi
+            echo "cargo fetch failed (attempt $attempt), retrying..."
+            sleep $((attempt * 10))
+          done
 
       - name: Install native tools (simple targets)
         if: matrix.os == 'ubuntu-latest' && matrix.target != 'i686-unknown-linux-musl' && matrix.target != 'armv7-unknown-linux-musleabihf' && matrix.target != 'aarch64-unknown-linux-musl'
@@ -141,7 +169,18 @@ jobs:
           matrix.target != 'i686-unknown-linux-musl'
           && matrix.target != 'armv7-unknown-linux-musleabihf'
           && matrix.target != 'aarch64-unknown-linux-musl'
-        run: cargo build --release --target ${{ matrix.target }}
+        run: |
+          for attempt in 1 2 3; do
+            if cargo build --release --target ${{ matrix.target }}; then
+              exit 0
+            fi
+            if [ "$attempt" -eq 3 ]; then
+              echo "cargo build failed after 3 attempts"
+              exit 1
+            fi
+            echo "cargo build failed (attempt $attempt), retrying..."
+            sleep $((attempt * 10))
+          done
 
       - name: Run tests (Windows)
         if: matrix.os == 'windows-latest'
