@@ -112,6 +112,7 @@ jobs:
           done
 
       - name: Fetch dependencies (retry)
+        shell: bash
         run: |
           for attempt in 1 2 3; do
             if cargo fetch --locked; then
@@ -169,6 +170,7 @@ jobs:
           matrix.target != 'i686-unknown-linux-musl'
           && matrix.target != 'armv7-unknown-linux-musleabihf'
           && matrix.target != 'aarch64-unknown-linux-musl'
+        shell: bash
         run: |
           for attempt in 1 2 3; do
             if cargo build --release --target ${{ matrix.target }}; then
