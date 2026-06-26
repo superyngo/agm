@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Changed
+- 2026-06-26: Shift+↑/↓ multi-select now uses a temporary preview overlay — the shift-drag range is shown visually but not committed to the selection until Shift is released (any non-Shift action). This prevents accidentally clearing manually-selected items when the shift range overlaps them. Anchor-based: reversing direction shrinks the preview instead of accumulating.
+
+### Added
+- 2026-06-24: `Ctrl+A` in the Source Manager TUI selects all items belonging to the same source/repo as the cursor. Works on SourceHeader, SkillItem, AgentItem, and CommandItem rows.
+
 ## [v0.13.0] - 2026-06-22
 
 ### Added

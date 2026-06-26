@@ -115,6 +115,7 @@ struct App {
     rename_target_group_index: Option<usize>,
     selected: HashSet<(Category, usize, usize)>,
     select_anchor: Option<usize>,
+    shift_range: HashSet<(Category, usize, usize)>,
 }
 
 impl App {
@@ -160,6 +161,7 @@ impl App {
             rename_target_group_index: None,
             selected: HashSet::new(),
             select_anchor: None,
+            shift_range: HashSet::new(),
         };
         app.rebuild_rows();
         app
@@ -198,6 +200,7 @@ impl App {
         // Item indices may have changed after a rescan; drop stale selection.
         self.selected.clear();
         self.select_anchor = None;
+        self.shift_range.clear();
     }
 
     fn clamp_cursor(&mut self) {
@@ -226,11 +229,43 @@ impl App {
         vis.get(self.cursor).and_then(|&i| self.rows.get(i))
     }
 
+    /// Merge the temporary shift-drag preview into the committed selection
+    /// and reset shift state.  Call this on any non-Shift action so the
+    /// preview becomes permanent without clobbering manually-selected items.
+    fn commit_shift_range(&mut self) {
+        for key in self.shift_range.drain() {
+            self.selected.insert(key);
+        }
+        self.select_anchor = None;
+    }
+
+    /// Check whether `key` is in the effective (committed + preview) selection.
+    fn is_effectively_selected(&self, key: &(Category, usize, usize)) -> bool {
+        self.selected.contains(key) || self.shift_range.contains(key)
+    }
+
+    /// Total count of effectively-selected items.
+    fn effective_selection_len(&self) -> usize {
+        // shift_range items may overlap with selected; count the union.
+        self.selected.len()
+            + self
+                .shift_range
+                .iter()
+                .filter(|k| !self.selected.contains(k))
+                .count()
+    }
+
+    /// Whether the effective selection is non-empty.
+    fn has_effective_selection(&self) -> bool {
+        !self.selected.is_empty() || !self.shift_range.is_empty()
+    }
+
     fn move_cursor(&mut self, delta: isize) {
         let vis = self.visible_rows();
         if vis.is_empty() {
             return;
         }
+        self.commit_shift_range();
         let new = (self.cursor as isize + delta).clamp(0, vis.len() as isize - 1);
         self.cursor = new as usize;
     }
@@ -589,6 +624,7 @@ impl App {
                 return;
             }
         };
+        self.commit_shift_range();
         if !self.selected.remove(&key) {
             self.selected.insert(key);
         }
@@ -600,28 +636,61 @@ impl App {
         if vis.is_empty() {
             return;
         }
-        // Seed from the current row when starting a fresh range drag.
+        // Seed anchor from the current row when starting a fresh range drag.
         if self.select_anchor.is_none() {
             self.select_anchor = Some(self.cursor);
-            if let Some(key) = self.current_row().and_then(row_leaf_key) {
-                self.selected.insert(key);
-            }
         }
         let new = (self.cursor as isize + delta).clamp(0, vis.len() as isize - 1) as usize;
         self.cursor = new;
-        // Paint the newly-entered row into the selection (leaves only).
-        if let Some(key) = vis
-            .get(new)
-            .and_then(|&i| self.rows.get(i))
-            .and_then(row_leaf_key)
-        {
-            self.selected.insert(key);
+
+        // Recompute the temporary preview range (anchor..=cursor).
+        // This only writes to shift_range; `selected` is never touched.
+        self.shift_range.clear();
+        let anchor = self.select_anchor.unwrap_or(new);
+        let lo = anchor.min(new);
+        let hi = anchor.max(new);
+        for vi in lo..=hi {
+            if let Some(key) = vis
+                .get(vi)
+                .and_then(|&i| self.rows.get(i))
+                .and_then(row_leaf_key)
+            {
+                self.shift_range.insert(key);
+            }
         }
+    }
+
+    fn select_all_in_group(&mut self) {
+        self.commit_shift_range();
+        // Determine the group_index from the current row.
+        let gi = match self.current_row() {
+            Some(ListRow::SourceHeader { group_index, .. }) => *group_index,
+            Some(ListRow::SkillItem { group_index, .. }) => *group_index,
+            Some(ListRow::AgentItem { group_index, .. }) => *group_index,
+            Some(ListRow::CommandItem { group_index, .. }) => *group_index,
+            _ => {
+                self.set_status("Move cursor to a source or item row first");
+                return;
+            }
+        };
+        let vis = self.visible_rows();
+        let mut count = 0usize;
+        for &ri in &vis {
+            if let Some(key) = self.rows.get(ri).and_then(row_leaf_key) {
+                if key.1 == gi {
+                    self.selected.insert(key);
+                    count += 1;
+                }
+            }
+        }
+        let name = self.groups.get(gi).map(|g| g.name.as_str()).unwrap_or("?");
+        self.set_status(format!("Selected {count} item(s) in {name}"));
     }
 
     fn start_bulk_selection(&mut self) {
         // Direction mirrors source-level bulk toggle: if anything selected is not
         // installed, install all; otherwise uninstall all.
+        self.commit_shift_range();
         let install = self.selected.iter().any(|&(cat, gi, ii)| {
             self.item_status(cat, gi, ii) == Some(SkillInstallStatus::NotInstalled)
         });
@@ -678,6 +747,7 @@ impl App {
         self.set_status(format!("{action} {count} selected item(s)"));
         self.selected.clear();
         self.select_anchor = None;
+        self.shift_range.clear();
     }
 
     fn start_bulk_toggle(&mut self, group_index: usize, category: Category) {
@@ -1832,8 +1902,12 @@ impl App {
                 let page = self.page_size(area_height) as isize;
                 self.move_cursor(page);
             }
-            KeyCode::Home => self.cursor = 0,
+            KeyCode::Home => {
+                self.commit_shift_range();
+                self.cursor = 0;
+            }
             KeyCode::End => {
+                self.commit_shift_range();
                 let vis = self.visible_rows();
                 if !vis.is_empty() {
                     self.cursor = vis.len() - 1;
@@ -1867,7 +1941,7 @@ impl App {
                 }
             }
             // Link/install toggle: l (batch when items are selected)
-            KeyCode::Char('l') if !self.selected.is_empty() => {
+            KeyCode::Char('l') if self.has_effective_selection() => {
                 self.start_bulk_selection();
             }
             KeyCode::Char('l') => {
@@ -1930,6 +2004,9 @@ impl App {
                 self.start_rename();
             }
             KeyCode::Char('u') => self.do_update(),
+            KeyCode::Char('a') if modifiers.contains(KeyModifiers::CONTROL) => {
+                self.select_all_in_group();
+            }
             KeyCode::Char('a') => self.do_add(),
             KeyCode::Char('0') => {
                 self.collapse_all();
@@ -1955,9 +2032,10 @@ impl App {
                 self.log_popup = Some(popup);
             }
             KeyCode::Esc => {
-                if !self.selected.is_empty() {
+                if self.has_effective_selection() {
                     self.selected.clear();
                     self.select_anchor = None;
+                    self.shift_range.clear();
                     self.set_status("Selection cleared");
                 } else {
                     if self.filtered_rows.is_some() {
@@ -2440,8 +2518,7 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                     None
                 };
                 let is_selected =
-                    app.selected
-                        .contains(&(Category::Skills, *group_index, *skill_index));
+                    app.is_effectively_selected(&(Category::Skills, *group_index, *skill_index));
                 let line = render_item_line(
                     &skill.name,
                     &skill.install_status,
@@ -2470,8 +2547,7 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                     None
                 };
                 let is_selected =
-                    app.selected
-                        .contains(&(Category::Agents, *group_index, *agent_index));
+                    app.is_effectively_selected(&(Category::Agents, *group_index, *agent_index));
                 let line = render_item_line(
                     &agent.name,
                     &agent.install_status,
@@ -2499,9 +2575,11 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
                 } else {
                     None
                 };
-                let is_selected =
-                    app.selected
-                        .contains(&(Category::Commands, *group_index, *command_index));
+                let is_selected = app.is_effectively_selected(&(
+                    Category::Commands,
+                    *group_index,
+                    *command_index,
+                ));
                 let line = render_item_line(
                     &command.name,
                     &command.install_status,
@@ -2563,6 +2641,7 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("l"), hint_text(" install  ")]);
             spans.extend([hint_key("s"), hint_text(" select  ")]);
             spans.extend([hint_key("⇧↑↓"), hint_text(" range  ")]);
+            spans.extend([hint_key("^A"), hint_text(" sel repo  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
             spans.extend([hint_key("d"), hint_text(" del  ")]);
             spans.extend([hint_key("r"), hint_text(" rename  ")]);
@@ -2688,7 +2767,10 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             }
             ConfirmState::BulkSelection { install } => {
                 let action = if *install { "Install" } else { "Uninstall" };
-                format!("{action} {} selected item(s)? [y/N]", app.selected.len())
+                format!(
+                    "{action} {} selected item(s)? [y/N]",
+                    app.effective_selection_len()
+                )
             }
         };
         let p = Paragraph::new(Line::from(Span::styled(
@@ -2737,11 +2819,11 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             ))
         } else if let Some((ref msg, _)) = app.status_message {
             Line::from(Span::styled(msg.clone(), Style::default().fg(Color::Green)))
-        } else if !app.selected.is_empty() {
+        } else if app.has_effective_selection() {
             Line::from(Span::styled(
                 format!(
                     "{} selected — l to install/uninstall, Esc to clear",
-                    app.selected.len()
+                    app.effective_selection_len()
                 ),
                 Style::default().fg(Color::Magenta),
             ))
