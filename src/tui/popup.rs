@@ -11,6 +11,10 @@ pub const MAX_CONTENT_LINES: usize = 5000;
 
 pub struct ScrollablePopup {
     pub title: String,
+    /// Optional styled title that overrides `title` when set. Used by panels
+    /// that need richer title rendering (e.g., the tab-bar on the Help/About
+    /// panel showing both tabs at once).
+    pub title_line: Option<Line<'static>>,
     pub lines: Vec<Line<'static>>,
     pub scroll_offset: usize,
     visible_height: usize,
@@ -31,6 +35,7 @@ impl ScrollablePopup {
         let content_height = lines.len();
         Self {
             title: title.into(),
+            title_line: None,
             lines,
             scroll_offset: 0,
             visible_height: 1, // Will be updated on first render
@@ -41,6 +46,13 @@ impl ScrollablePopup {
 
     pub fn with_close_hint(mut self, hint: impl Into<String>) -> Self {
         self.close_hint = hint.into();
+        self
+    }
+
+    /// Override the plain string title with a styled `Line`. Use this for
+    /// titles that mix styles (e.g., a tab bar with active/inactive segments).
+    pub fn with_title_line(mut self, line: Line<'static>) -> Self {
+        self.title_line = Some(line);
         self
     }
 
@@ -87,11 +99,26 @@ impl ScrollablePopup {
         let title_text = format!(" {} ", self.title);
         let close_hint_text = format!(" {} ", self.close_hint);
 
-        let block = Block::default()
+        let mut block = Block::default()
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(Color::Cyan))
-            .title(title_text)
-            .title_bottom(close_hint_text.as_str());
+            .border_style(Style::default().fg(Color::Cyan));
+
+        // Prefer the styled title line when one is set; it usually encodes
+        // mixed styles (e.g., a tab bar). Surround it with single spaces so
+        // it lines up with the plain-text variant.
+        block = if let Some(line) = self.title_line.clone() {
+            let padded = Line::from({
+                let mut spans = Vec::with_capacity(line.spans.len() + 2);
+                spans.push(Span::raw(" "));
+                spans.extend(line.spans);
+                spans.push(Span::raw(" "));
+                spans
+            });
+            block.title(padded)
+        } else {
+            block.title(title_text)
+        };
+        block = block.title_bottom(close_hint_text.as_str());
 
         let inner_area = block.inner(popup_rect);
 

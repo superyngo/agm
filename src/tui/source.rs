@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::io::{self, stdout};
 use std::path::PathBuf;
-use std::time::Instant;
 
 use anyhow::Result;
 use crossterm::{
@@ -88,9 +87,9 @@ struct App {
     rows: Vec<ListRow>,
     cursor: usize,
     scroll_offset: usize,
-    status_message: Option<(String, Instant)>,
+    status_message: super::style::StatusLine,
     search_mode: bool,
-    search_query: String,
+    search_query: super::text_input::TextInput,
     filtered_rows: Option<Vec<usize>>,
     should_quit: bool,
     skills_dir: PathBuf,
@@ -108,6 +107,7 @@ struct App {
     log_popup: Option<super::popup::ScrollablePopup>,
     background_task: Option<super::background::BackgroundTask>,
     info_popup: Option<super::popup::ScrollablePopup>,
+    help: Option<super::help::HelpPopup>,
     add_mode: bool,
     add_input: super::text_input::TextInput,
     rename_mode: bool,
@@ -134,9 +134,9 @@ impl App {
             rows,
             cursor: 0,
             scroll_offset: 0,
-            status_message: None,
+            status_message: super::style::StatusLine::new(),
             search_mode: false,
-            search_query: String::new(),
+            search_query: super::text_input::TextInput::new(),
             filtered_rows: None,
             should_quit: false,
             skills_dir,
@@ -154,6 +154,7 @@ impl App {
             log_popup: None,
             background_task: None,
             info_popup: None,
+            help: None,
             add_mode: false,
             add_input: super::text_input::TextInput::new(),
             rename_mode: false,
@@ -186,6 +187,34 @@ impl App {
     }
 
     fn refresh(&mut self) {
+        // Snapshot the selection by (category, group_name, item_name) so we
+        // can restore it after a rescan shifts indices. Principle 8: preserve
+        // state across redraws by identity, not by index. Previously the
+        // entire selection was dropped whenever the underlying groups were
+        // re-scanned.
+        let snapshot: Vec<(Category, String, String)> = self
+            .selected
+            .iter()
+            .filter_map(|(cat, gi, ii)| {
+                let group = self.groups.get(*gi)?;
+                let (item_name, group_name) = match cat {
+                    Category::Skills => group
+                        .skills
+                        .get(*ii)
+                        .map(|s| (s.name.clone(), group.name.clone())),
+                    Category::Agents => group
+                        .agents
+                        .get(*ii)
+                        .map(|a| (a.name.clone(), group.name.clone())),
+                    Category::Commands => group
+                        .commands
+                        .get(*ii)
+                        .map(|c| (c.name.clone(), group.name.clone())),
+                }?;
+                Some((*cat, group_name, item_name))
+            })
+            .collect();
+
         let _ = skills::prune_broken_skills(&self.skills_dir);
         let _ = skills::prune_broken_agents(&self.agents_dir);
         let _ = skills::prune_broken_commands(&self.commands_dir);
@@ -197,10 +226,26 @@ impl App {
         );
         self.rebuild_rows();
         self.clamp_cursor();
-        // Item indices may have changed after a rescan; drop stale selection.
+
+        // Re-resolve the snapshot against the new indices. Entries whose
+        // group or item disappeared are dropped (no longer selectable).
         self.selected.clear();
         self.select_anchor = None;
         self.shift_range.clear();
+        for (cat, group_name, item_name) in snapshot {
+            let Some(gi) = self.groups.iter().position(|g| g.name == group_name) else {
+                continue;
+            };
+            let group = &self.groups[gi];
+            let ii = match cat {
+                Category::Skills => group.skills.iter().position(|s| s.name == item_name),
+                Category::Agents => group.agents.iter().position(|a| a.name == item_name),
+                Category::Commands => group.commands.iter().position(|c| c.name == item_name),
+            };
+            if let Some(ii) = ii {
+                self.selected.insert((cat, gi, ii));
+            }
+        }
     }
 
     fn clamp_cursor(&mut self) {
@@ -213,15 +258,11 @@ impl App {
     }
 
     fn set_status(&mut self, msg: impl Into<String>) {
-        self.status_message = Some((msg.into(), Instant::now()));
+        self.status_message.set(msg);
     }
 
     fn clear_expired_status(&mut self) {
-        if let Some((_, when)) = &self.status_message {
-            if when.elapsed().as_secs() >= 3 {
-                self.status_message = None;
-            }
-        }
+        self.status_message.clear_expired();
     }
 
     fn current_row(&self) -> Option<&ListRow> {
@@ -284,11 +325,11 @@ impl App {
     }
 
     fn apply_search_filter(&mut self) {
-        if self.search_query.is_empty() {
+        if self.search_query.text().is_empty() {
             self.filtered_rows = None;
             return;
         }
-        let query = &self.search_query;
+        let query = self.search_query.text();
 
         // Phase 1: Determine matching groups from self.groups directly
         // (decoupled from expansion state of rows)
@@ -1712,6 +1753,14 @@ impl App {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         area_height: u16,
     ) {
+        // Help/About popup intercepts all keys when visible.
+        if let Some(ref mut help) = self.help {
+            if help.handle_key(code) == super::popup::PopupAction::Close {
+                self.help = None;
+            }
+            return;
+        }
+
         // Log popup intercepts all keys when visible
         if self.show_log {
             match code {
@@ -1862,23 +1911,23 @@ impl App {
                     self.search_mode = false;
                     // Keep filter active
                 }
-                KeyCode::Backspace => {
-                    self.search_query.pop();
-                    self.apply_search_filter();
-                    self.cursor = 0;
-                }
-                KeyCode::Char(c) if !modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.search_query.push(c);
-                    self.apply_search_filter();
-                    self.cursor = 0;
-                }
                 KeyCode::Up | KeyCode::Char('k') if modifiers.contains(KeyModifiers::CONTROL) => {
                     self.move_cursor(-1);
                 }
                 KeyCode::Down | KeyCode::Char('j') if modifiers.contains(KeyModifiers::CONTROL) => {
                     self.move_cursor(1);
                 }
-                _ => {}
+                other => {
+                    // Delegate to the text input. Only re-run the filter when
+                    // the buffer actually changed, so navigation keys don't
+                    // bounce the cursor back to 0.
+                    let before = self.search_query.text().to_string();
+                    self.search_query.handle_key(other, modifiers);
+                    if self.search_query.text() != before {
+                        self.apply_search_filter();
+                        self.cursor = 0;
+                    }
+                }
             }
             return;
         }
@@ -2031,6 +2080,11 @@ impl App {
                 popup.scroll_offset = popup.lines.len().saturating_sub(1);
                 self.log_popup = Some(popup);
             }
+            KeyCode::Char('?') => {
+                self.help = Some(super::help::HelpPopup::new(
+                    super::help::HelpSurface::Source,
+                ));
+            }
             KeyCode::Esc => {
                 if self.has_effective_selection() {
                     self.selected.clear();
@@ -2043,7 +2097,7 @@ impl App {
                         self.filtered_rows = None;
                         self.cursor = 0;
                     }
-                    self.status_message = None;
+                    self.status_message.clear();
                 }
             }
             _ => {}
@@ -2339,11 +2393,15 @@ fn render(app: &mut App, frame: &mut Frame) {
     if let Some(ref mut popup) = app.info_popup {
         popup.render(frame, frame.area());
     }
+    // Help/About is rendered last so it sits above every other popup.
+    if let Some(ref mut help) = app.help {
+        help.render(frame, frame.area());
+    }
 }
 
 fn render_list(app: &App, frame: &mut Frame, area: Rect) {
     let block = Block::default()
-        .title(Line::from(" AGM Source Manager ").left_aligned())
+        .title(Line::from(format!(" {} — Source Manager ", env!("CARGO_PKG_NAME"))).left_aligned())
         .title(Line::from(format!(" v{} ", env!("CARGO_PKG_VERSION"))).right_aligned())
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
@@ -2353,7 +2411,7 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
 
     let visible = app.visible_rows();
     if visible.is_empty() {
-        let msg = if app.search_query.is_empty() {
+        let msg = if app.search_query.text().is_empty() {
             "No sources found. Press 'a' to add one."
         } else {
             "No matching items."
@@ -2510,9 +2568,10 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
             } => {
                 let skill = &app.groups[*group_index].skills[*skill_index];
                 let disabled = app.config.agm.is_disabled("skills");
-                let indices = if app.filtered_rows.is_some() && !app.search_query.is_empty() {
+                let indices = if app.filtered_rows.is_some() && !app.search_query.text().is_empty()
+                {
                     app.matcher
-                        .fuzzy_indices(&skill.name, &app.search_query)
+                        .fuzzy_indices(&skill.name, app.search_query.text())
                         .map(|(_, idx)| idx)
                 } else {
                     None
@@ -2539,9 +2598,10 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
             } => {
                 let agent = &app.groups[*group_index].agents[*agent_index];
                 let disabled = app.config.agm.is_disabled("agents");
-                let indices = if app.filtered_rows.is_some() && !app.search_query.is_empty() {
+                let indices = if app.filtered_rows.is_some() && !app.search_query.text().is_empty()
+                {
                     app.matcher
-                        .fuzzy_indices(&agent.name, &app.search_query)
+                        .fuzzy_indices(&agent.name, app.search_query.text())
                         .map(|(_, idx)| idx)
                 } else {
                     None
@@ -2568,9 +2628,10 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
             } => {
                 let command = &app.groups[*group_index].commands[*command_index];
                 let disabled = app.config.agm.is_disabled("commands");
-                let indices = if app.filtered_rows.is_some() && !app.search_query.is_empty() {
+                let indices = if app.filtered_rows.is_some() && !app.search_query.text().is_empty()
+                {
                     app.matcher
-                        .fuzzy_indices(&command.name, &app.search_query)
+                        .fuzzy_indices(&command.name, app.search_query.text())
                         .map(|(_, idx)| idx)
                 } else {
                     None
@@ -2603,11 +2664,11 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
 }
 
 fn hint_key(k: &str) -> Span<'static> {
-    Span::styled(k.to_string(), Style::default().fg(Color::Yellow))
+    super::style::hint_key(k)
 }
 
 fn hint_text(t: &str) -> Span<'static> {
-    Span::raw(t.to_string())
+    super::style::hint_text(t)
 }
 
 fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
@@ -2622,7 +2683,12 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
-            spans.extend([hint_key("q"), hint_text(" quit")]);
+            spans.extend([
+                hint_key("?"),
+                hint_text(" help  "),
+                hint_key("q"),
+                hint_text(" quit"),
+            ]);
         }
         Some(ListRow::SourceHeader { .. }) => {
             spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
@@ -2634,7 +2700,12 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
-            spans.extend([hint_key("q"), hint_text(" quit")]);
+            spans.extend([
+                hint_key("?"),
+                hint_text(" help  "),
+                hint_key("q"),
+                hint_text(" quit"),
+            ]);
         }
         Some(ListRow::SkillItem { .. }) => {
             spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
@@ -2648,7 +2719,12 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
-            spans.extend([hint_key("q"), hint_text(" quit")]);
+            spans.extend([
+                hint_key("?"),
+                hint_text(" help  "),
+                hint_key("q"),
+                hint_text(" quit"),
+            ]);
         }
         Some(ListRow::AgentItem { .. }) => {
             spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
@@ -2660,7 +2736,12 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
-            spans.extend([hint_key("q"), hint_text(" quit")]);
+            spans.extend([
+                hint_key("?"),
+                hint_text(" help  "),
+                hint_key("q"),
+                hint_text(" quit"),
+            ]);
         }
         Some(ListRow::CommandItem { .. }) => {
             spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
@@ -2672,7 +2753,12 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
-            spans.extend([hint_key("q"), hint_text(" quit")]);
+            spans.extend([
+                hint_key("?"),
+                hint_text(" help  "),
+                hint_key("q"),
+                hint_text(" quit"),
+            ]);
         }
         None => {
             spans.extend([hint_key("a"), hint_text(" add  ")]);
@@ -2680,7 +2766,12 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
-            spans.extend([hint_key("q"), hint_text(" quit")]);
+            spans.extend([
+                hint_key("?"),
+                hint_text(" help  "),
+                hint_key("q"),
+                hint_text(" quit"),
+            ]);
         }
     }
     Line::from(spans)
@@ -2797,7 +2888,7 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             .render_line("Rename → ", prefix_style, text_style);
         frame.render_widget(Paragraph::new(line), inner);
     } else if app.search_mode {
-        let prompt = format!("/{}", app.search_query);
+        let prompt = format!("/{}", app.search_query.text());
         let p = Paragraph::new(Line::from(Span::styled(
             prompt,
             Style::default().fg(Color::Yellow),
@@ -2817,8 +2908,8 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
                 progress_text,
                 Style::default().fg(Color::Yellow),
             ))
-        } else if let Some((ref msg, _)) = app.status_message {
-            Line::from(Span::styled(msg.clone(), Style::default().fg(Color::Green)))
+        } else if app.status_message.is_set() {
+            app.status_message.to_line()
         } else if app.has_effective_selection() {
             Line::from(Span::styled(
                 format!(
@@ -2838,7 +2929,7 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
                 .split(inner);
             frame.render_widget(Paragraph::new(hints), sub[0]);
             frame.render_widget(Paragraph::new(status_line), sub[1]);
-        } else if app.status_message.is_some() {
+        } else if app.status_message.is_set() {
             frame.render_widget(Paragraph::new(status_line), inner);
         } else {
             frame.render_widget(Paragraph::new(hints), inner);
@@ -2902,7 +2993,14 @@ pub fn run(config: &mut Config) -> Result<()> {
     loop {
         let area_height = terminal.size()?.height;
         app.ensure_visible(area_height);
-        terminal.draw(|frame| render(&mut app, frame))?;
+        terminal.draw(|frame| {
+            render(&mut app, frame);
+            // Honor NO_COLOR by stripping ANSI colors at the buffer level,
+            // keeping modifiers (bold, etc.) so the focus cursor stays visible.
+            if super::style::no_color() {
+                super::style::strip_colors(frame.buffer_mut());
+            }
+        })?;
 
         app.clear_expired_status();
 
@@ -3124,5 +3222,21 @@ mod tests {
     fn duplicate_name_count_zero_when_unique() {
         let names = ["a", "b", "c"].map(String::from);
         assert_eq!(duplicate_name_count(names), 0);
+    }
+
+    /// Regression: App.search_query was previously `String`, edited in
+    /// handle_key via `query.push(c)` and `query.pop()`. `String::pop` removes
+    /// the last BYTE; on a trailing multibyte char this PANICS. The field is
+    /// now a char-indexed TextInput, so multibyte queries round-trip safely.
+    #[test]
+    fn search_query_handles_multibyte_without_panic() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let mut q = crate::tui::text_input::TextInput::new();
+        q.handle_key(KeyCode::Char('中'), KeyModifiers::NONE);
+        q.handle_key(KeyCode::Char('文'), KeyModifiers::NONE);
+        // Backspace the trailing multibyte char — byte-pop would panic here.
+        q.handle_key(KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(q.text(), "中");
     }
 }

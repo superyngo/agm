@@ -136,7 +136,35 @@ The TUI provides:
 - Edit prompt, settings, auth, and MCP files with `e` key
 - Edit central paths (skills, agents, source) inline
 - File picker popup for multi-file fields
-- Log popup (`l` key) for operation history
+- Log popup (`o` key) for operation history
+
+### TUI Keybindings
+
+Both TUIs (Tool Manager and Source Manager) share the same global keys:
+
+| Key | Action |
+| --- | --- |
+| `↑`/`↓` (`k`/`j`) | Move cursor |
+| `PgUp`/`PgDn` | Scroll by page |
+| `Home`/`End` | Jump to top / bottom |
+| `␣` / `⏎` | Toggle fold / open info |
+| `9` / `0` | Expand / collapse all |
+| `i` | Info popup for the row under the cursor |
+| `o` | Open the log popup |
+| `?` | Open the **Help / About** panel — title shows `▸ Help  ·  About`; `Tab` switches tabs, `?`/`Esc` closes |
+| `Esc` | Close popup / clear status (one layer) — does NOT quit |
+| `q` / `Ctrl+C` | Quit |
+
+In the **Source Manager**, additional keys: `s` toggle-select, `Shift+↑/↓` range-select, `Ctrl+A` select-all-in-source, `l` install/uninstall (batch when items are selected), `e` edit, `d` delete source, `a` add, `r` rename, `u` update, `F5` refresh, `/` fuzzy search. Selection is preserved across refresh/add/delete/rename.
+
+In the **Tool Manager**, additional keys: `e` edit file or path, `l` toggle link / feature.
+
+### Environment
+
+| Variable | Effect |
+| --- | --- |
+| `NO_COLOR` | When set (to any value, including empty), both TUIs and the CLI strip ANSI color codes. Bold/italic modifiers are preserved so the focus cursor stays visible. |
+| `EDITOR` | Used by `agm config` and the TUIs' edit actions; falls back to the platform default. |
 
 ### Source Management
 

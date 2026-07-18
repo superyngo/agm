@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::io::stdout;
 use std::path::PathBuf;
-use std::time::Instant;
 
 use anyhow::Result;
 use crossterm::{
@@ -249,8 +248,7 @@ pub enum PopupState {
     },
     PathEditor {
         field: AgmField,
-        value: String,
-        cursor_pos: usize,
+        input: super::text_input::TextInput,
     },
     ConfirmCreate {
         path: PathBuf,
@@ -274,8 +272,9 @@ pub struct ToolApp {
     scroll_offset: usize,
     expanded: HashSet<String>,
     log: super::log::LogBuffer,
-    status_message: Option<(String, Instant)>,
+    status_message: super::style::StatusLine,
     popup: Option<PopupState>,
+    help: Option<super::help::HelpPopup>,
     should_quit: bool,
     pending_editor_path: Option<PathBuf>,
 }
@@ -293,8 +292,9 @@ impl ToolApp {
             scroll_offset: 0,
             expanded,
             log: super::log::LogBuffer::new(500),
-            status_message: None,
+            status_message: super::style::StatusLine::new(),
             popup: None,
+            help: None,
             should_quit: false,
             pending_editor_path: None,
         }
@@ -312,15 +312,11 @@ impl ToolApp {
     }
 
     fn set_status(&mut self, msg: impl Into<String>) {
-        self.status_message = Some((msg.into(), Instant::now()));
+        self.status_message.set(msg);
     }
 
     fn clear_expired_status(&mut self) {
-        if let Some((_, when)) = &self.status_message {
-            if when.elapsed().as_secs() >= 3 {
-                self.status_message = None;
-            }
-        }
+        self.status_message.clear_expired();
     }
 
     fn move_cursor(&mut self, delta: isize) {
@@ -363,8 +359,23 @@ impl ToolApp {
         terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
         area_height: u16,
     ) {
+        // Help/About popup intercepts all keys when visible (Esc peels one
+        // layer — closes the help, not the app).
+        if let Some(ref mut help) = self.help {
+            if help.handle_key(code) == super::popup::PopupAction::Close {
+                self.help = None;
+            }
+            return;
+        }
+
         if self.popup.is_some() {
             self.handle_popup_key(code, terminal);
+            return;
+        }
+
+        // Top-level help shortcut.
+        if let KeyCode::Char('?') = code {
+            self.help = Some(super::help::HelpPopup::new(super::help::HelpSurface::Tool));
             return;
         }
 
@@ -518,11 +529,9 @@ impl ToolApp {
                                 AgmField::Source => self.config.agm.source_dir.clone(),
                                 _ => unreachable!(),
                             };
-                            let len = current_value.len();
                             self.popup = Some(PopupState::PathEditor {
                                 field: cf.clone(),
-                                value: current_value,
-                                cursor_pos: len,
+                                input: super::text_input::TextInput::with_text(current_value),
                             });
                         }
                         _ => self.handle_edit(&row, terminal),
@@ -539,8 +548,15 @@ impl ToolApp {
                 self.popup = Some(PopupState::Log(popup));
             }
 
-            // Quit
-            KeyCode::Char('q') | KeyCode::Esc => self.should_quit = true,
+            // Quit: only `q` quits. Esc peels one layer (clears the status
+            // line) but does not exit, matching the Source Manager's Esc
+            // semantics (principle 14: Esc = cancel/back, not quit).
+            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Esc => {
+                if self.status_message.is_set() {
+                    self.status_message.clear();
+                }
+            }
 
             _ => {}
         }
@@ -573,38 +589,20 @@ impl ToolApp {
         } else if is_path {
             if let Some(PopupState::PathEditor {
                 ref field,
-                ref mut value,
-                ref mut cursor_pos,
+                ref mut input,
             }) = self.popup
             {
                 match code {
-                    KeyCode::Char(c) => {
-                        value.insert(*cursor_pos, c);
-                        *cursor_pos += 1;
-                    }
-                    KeyCode::Backspace => {
-                        if *cursor_pos > 0 {
-                            value.remove(*cursor_pos - 1);
-                            *cursor_pos -= 1;
-                        }
-                    }
-                    KeyCode::Delete => {
-                        if *cursor_pos < value.len() {
-                            value.remove(*cursor_pos);
-                        }
-                    }
-                    KeyCode::Left => *cursor_pos = cursor_pos.saturating_sub(1),
-                    KeyCode::Right => *cursor_pos = (*cursor_pos + 1).min(value.len()),
-                    KeyCode::Home => *cursor_pos = 0,
-                    KeyCode::End => *cursor_pos = value.len(),
                     KeyCode::Enter => {
                         let field_clone = field.clone();
-                        let value_clone = value.clone();
+                        let value_clone = input.text().to_string();
                         self.popup = None;
                         self.save_agm_path(field_clone, value_clone);
                     }
                     KeyCode::Esc => self.popup = None,
-                    _ => {}
+                    other => {
+                        input.handle_key(other, crossterm::event::KeyModifiers::NONE);
+                    }
                 }
             }
         } else if is_confirm {
@@ -2082,11 +2080,11 @@ fn compute_tool_status(config: &Config, tool_key: &str) -> (u8, &'static str, Co
 }
 
 fn hint_key(k: &str) -> Span<'static> {
-    Span::styled(k.to_string(), Style::default().fg(Color::Yellow))
+    super::style::hint_key(k)
 }
 
 fn hint_text(t: &str) -> Span<'static> {
-    Span::raw(t.to_string())
+    super::style::hint_text(t)
 }
 
 fn build_tool_hints(row: Option<&ToolRow>, config: &Config) -> Line<'static> {
@@ -2095,26 +2093,46 @@ fn build_tool_hints(row: Option<&ToolRow>, config: &Config) -> Line<'static> {
         Some(ToolRow::AgmHeader) => {
             spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
-            spans.extend([hint_key("q"), hint_text(" quit")]);
+            spans.extend([
+                hint_key("?"),
+                hint_text(" help  "),
+                hint_key("q"),
+                hint_text(" quit"),
+            ]);
         }
         Some(ToolRow::ToolHeader { .. }) => {
             spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
-            spans.extend([hint_key("q"), hint_text(" quit")]);
+            spans.extend([
+                hint_key("?"),
+                hint_text(" help  "),
+                hint_key("q"),
+                hint_text(" quit"),
+            ]);
         }
         Some(ToolRow::AgmItem(AgmField::Source)) => {
             spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
             spans.extend([hint_key("e"), hint_text(" edit path  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
-            spans.extend([hint_key("q"), hint_text(" quit")]);
+            spans.extend([
+                hint_key("?"),
+                hint_text(" help  "),
+                hint_key("q"),
+                hint_text(" quit"),
+            ]);
         }
         Some(ToolRow::AgmItem(AgmField::Prompt)) => {
             spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
             spans.extend([hint_key("l"), hint_text(" toggle  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
-            spans.extend([hint_key("q"), hint_text(" quit")]);
+            spans.extend([
+                hint_key("?"),
+                hint_text(" help  "),
+                hint_key("q"),
+                hint_text(" quit"),
+            ]);
         }
         Some(ToolRow::AgmItem(_)) => {
             // Skills, Agents, Commands
@@ -2122,13 +2140,23 @@ fn build_tool_hints(row: Option<&ToolRow>, config: &Config) -> Line<'static> {
             spans.extend([hint_key("e"), hint_text(" edit path  ")]);
             spans.extend([hint_key("l"), hint_text(" toggle  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
-            spans.extend([hint_key("q"), hint_text(" quit")]);
+            spans.extend([
+                hint_key("?"),
+                hint_text(" help  "),
+                hint_key("q"),
+                hint_text(" quit"),
+            ]);
         }
         Some(ToolRow::StatusHeader { .. }) => {
             spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
             spans.extend([hint_key("l"), hint_text(" link all  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
-            spans.extend([hint_key("q"), hint_text(" quit")]);
+            spans.extend([
+                hint_key("?"),
+                hint_text(" help  "),
+                hint_key("q"),
+                hint_text(" quit"),
+            ]);
         }
         Some(ToolRow::LinkItem {
             field: LinkField::Prompt,
@@ -2138,13 +2166,23 @@ fn build_tool_hints(row: Option<&ToolRow>, config: &Config) -> Line<'static> {
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
             spans.extend([hint_key("l"), hint_text(" link  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
-            spans.extend([hint_key("q"), hint_text(" quit")]);
+            spans.extend([
+                hint_key("?"),
+                hint_text(" help  "),
+                hint_key("q"),
+                hint_text(" quit"),
+            ]);
         }
         Some(ToolRow::LinkItem { .. }) => {
             spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
             spans.extend([hint_key("l"), hint_text(" link  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
-            spans.extend([hint_key("q"), hint_text(" quit")]);
+            spans.extend([
+                hint_key("?"),
+                hint_text(" help  "),
+                hint_key("q"),
+                hint_text(" quit"),
+            ]);
         }
         Some(ToolRow::FileGroupHeader { tool_key, group }) => {
             let files: &[String] = match config.tools.get(tool_key) {
@@ -2162,17 +2200,32 @@ fn build_tool_hints(row: Option<&ToolRow>, config: &Config) -> Line<'static> {
                 spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
             }
             spans.extend([hint_key("o"), hint_text(" log  ")]);
-            spans.extend([hint_key("q"), hint_text(" quit")]);
+            spans.extend([
+                hint_key("?"),
+                hint_text(" help  "),
+                hint_key("q"),
+                hint_text(" quit"),
+            ]);
         }
         Some(ToolRow::FileItem { .. }) => {
             spans.extend([hint_key("␣/⏎/i"), hint_text(" info  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
-            spans.extend([hint_key("q"), hint_text(" quit")]);
+            spans.extend([
+                hint_key("?"),
+                hint_text(" help  "),
+                hint_key("q"),
+                hint_text(" quit"),
+            ]);
         }
         None => {
             spans.extend([hint_key("o"), hint_text(" log  ")]);
-            spans.extend([hint_key("q"), hint_text(" quit")]);
+            spans.extend([
+                hint_key("?"),
+                hint_text(" help  "),
+                hint_key("q"),
+                hint_text(" quit"),
+            ]);
         }
     }
     Line::from(spans)
@@ -2203,11 +2256,16 @@ fn render(app: &mut ToolApp, frame: &mut Frame) {
         }
         None => {}
     }
+
+    // Help/About is rendered last so it sits above every other popup.
+    if let Some(ref mut help) = app.help {
+        help.render(frame, frame.area());
+    }
 }
 
 fn render_list(app: &ToolApp, frame: &mut Frame, area: Rect) {
     let block = Block::default()
-        .title(Line::from(" AGM Tool Manager ").left_aligned())
+        .title(Line::from(format!(" {} — Tool Manager ", env!("CARGO_PKG_NAME"))).left_aligned())
         .title(Line::from(format!(" v{} ", env!("CARGO_PKG_VERSION"))).right_aligned())
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
@@ -2514,11 +2572,7 @@ fn render_footer(app: &ToolApp, frame: &mut Frame, area: Rect) {
 
     let hints = build_tool_hints(app.current_row(), &app.config);
 
-    let status_line = if let Some((ref msg, _)) = app.status_message {
-        Line::from(Span::styled(msg.clone(), Style::default().fg(Color::Green)))
-    } else {
-        Line::default()
-    };
+    let status_line = app.status_message.to_line();
 
     if inner.height >= 2 {
         let sub = Layout::default()
@@ -2527,7 +2581,7 @@ fn render_footer(app: &ToolApp, frame: &mut Frame, area: Rect) {
             .split(inner);
         frame.render_widget(Paragraph::new(hints), sub[0]);
         frame.render_widget(Paragraph::new(status_line), sub[1]);
-    } else if app.status_message.is_some() {
+    } else if app.status_message.is_set() {
         frame.render_widget(Paragraph::new(status_line), inner);
     } else {
         frame.render_widget(Paragraph::new(hints), inner);
@@ -2537,8 +2591,7 @@ fn render_footer(app: &ToolApp, frame: &mut Frame, area: Rect) {
 fn render_path_editor(app: &ToolApp, frame: &mut Frame, area: Rect) {
     if let Some(PopupState::PathEditor {
         ref field,
-        ref value,
-        cursor_pos,
+        ref input,
     }) = app.popup
     {
         let popup_area = super::dialog_area(area, 3);
@@ -2558,24 +2611,8 @@ fn render_path_editor(app: &ToolApp, frame: &mut Frame, area: Rect) {
         let inner = block.inner(popup_area);
         frame.render_widget(block, popup_area);
 
-        let mut spans = Vec::new();
-        for (i, ch) in value.chars().enumerate() {
-            if i == cursor_pos {
-                spans.push(Span::styled(
-                    ch.to_string(),
-                    Style::default().fg(Color::Black).bg(Color::White),
-                ));
-            } else {
-                spans.push(Span::raw(ch.to_string()));
-            }
-        }
-        if cursor_pos >= value.len() {
-            spans.push(Span::styled(
-                " ",
-                Style::default().fg(Color::Black).bg(Color::White),
-            ));
-        }
-        frame.render_widget(Paragraph::new(Line::from(spans)), inner);
+        let line = input.render_line("", Style::default(), Style::default().fg(Color::White));
+        frame.render_widget(Paragraph::new(line), inner);
     }
 }
 
@@ -2652,13 +2689,26 @@ pub fn run(config_path: Option<PathBuf>) -> Result<()> {
     loop {
         let area_height = terminal.size()?.height;
         app.ensure_visible(area_height);
-        terminal.draw(|frame| render(&mut app, frame))?;
+        terminal.draw(|frame| {
+            render(&mut app, frame);
+            // Honor NO_COLOR by stripping ANSI colors at the buffer level,
+            // keeping modifiers (bold, etc.) so the focus cursor stays visible.
+            if super::style::no_color() {
+                super::style::strip_colors(frame.buffer_mut());
+            }
+        })?;
 
         app.clear_expired_status();
 
         if event::poll(std::time::Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
+                    // Ctrl+C always quits, mirroring the Source Manager.
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(event::KeyModifiers::CONTROL)
+                    {
+                        break;
+                    }
                     app.handle_key(key.code, &mut terminal, area_height);
                 }
             }
@@ -3030,5 +3080,48 @@ config_dir = "~/.copilot"
     fn test_replace_tool_section_not_found() {
         let result = replace_tool_section(SAMPLE_CONFIG, "nonexistent", "whatever");
         assert!(result.is_none());
+    }
+
+    /// Regression: PathEditor previously stored `value: String, cursor_pos: usize`
+    /// (byte-indexed) and the popup handler edited the string with
+    /// `value.insert(byte_pos, c)` / `value.remove(byte_pos)`, both of which
+    /// PANIC on multibyte chars because cursor_pos advanced per-char. The
+    /// variant now wraps a char-indexed TextInput, so CJK paths edit safely.
+    #[test]
+    fn path_editor_handles_cjk_without_panic() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        // Construct the popup with a multibyte path (the panic site).
+        let mut input = crate::tui::text_input::TextInput::with_text("~/.local/share/agm/中文");
+
+        // Walk the cursor into the multibyte region and edit — each of these
+        // would have panicked under the old byte-indexed String implementation.
+        for _ in 0..2 {
+            input.handle_key(KeyCode::Left, KeyModifiers::NONE);
+        }
+        input.handle_key(KeyCode::Char('字'), KeyModifiers::NONE);
+        for _ in 0..3 {
+            input.handle_key(KeyCode::Backspace, KeyModifiers::NONE);
+        }
+        // If we reach here without panicking, the regression holds: the field
+        // never sliced the buffer mid-codepoint.
+        let _s = input.text();
+    }
+
+    /// Compile-time guarantee that the PathEditor variant exposes a TextInput
+    /// (so any future revert to the byte-indexed String pair fails to compile).
+    #[test]
+    fn path_editor_variant_holds_text_input() {
+        let popup = PopupState::PathEditor {
+            field: AgmField::Skills,
+            input: crate::tui::text_input::TextInput::with_text("any-path"),
+        };
+        // Force a downcast that only succeeds if the field is TextInput.
+        match popup {
+            PopupState::PathEditor { input, .. } => {
+                assert_eq!(input.text(), "any-path");
+            }
+            _ => unreachable!(),
+        }
     }
 }

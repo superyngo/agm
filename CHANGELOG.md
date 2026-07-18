@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+- 2026-07-18: Help / About panel in both TUIs (Tool Manager and Source Manager). Press `?` to open a scrollable popup with two tabs — `Help` (surface-specific keybindings) and `About` (app name, version, description, single-sourced from `CARGO_PKG_*`). The title bar shows BOTH tabs at once (`▸ Help  ·  About`) so it is obvious the panel is switchable; `Tab` cycles tabs, `?`/`Esc` closes. The footer hints now include `?` for help.
+- 2026-07-18: `NO_COLOR` is now honored by the TUIs (not just the CLI). When the env var is set, the TUI strips fg/bg colors at the buffer level while keeping bold/italic modifiers, so the cursor marker and headers remain visible in monochrome.
+
+### Changed
+- 2026-07-18: Both TUI title bars now derive the app name from `CARGO_PKG_NAME` (`agm — Tool Manager`, `agm — Source Manager`) instead of a hardcoded `"AGM …"` string, so the manifest stays the single source of truth.
+- 2026-07-18: `Esc` is now consistent across both TUIs — it peels ONE layer (closes the open popup, clears the status line, or clears the search/selection filter) and no longer quits the Tool Manager. Use `q` or `Ctrl+C` to quit either TUI (matches the Source Manager's pre-existing behavior; principle 14).
+- 2026-07-18: Extracted shared TUI helpers (`hint_key`, `hint_text`, `StatusLine`, NO_COLOR strip) into `src/tui/style.rs` to deduplicate `tool.rs` and `source.rs`.
+
+### Fixed
+- 2026-07-18: Path-editor popup (`e` on agm skills/agents/commands/source paths in the Tool Manager) no longer panics on non-ASCII paths. The popup now uses the char-indexed `TextInput` instead of byte-indexed `String::insert`/`remove`, which panicked when the cursor sat inside a multibyte codepoint (CJK, emoji).
+- 2026-07-18: Fuzzy search input in the Source Manager no longer panics when the trailing character of the query is multibyte and the user presses `Backspace`. The query is now a `TextInput`; the previous `String::pop` removed the last byte and could slice mid-codepoint.
+- 2026-07-18: Multi-selection in the Source Manager is now preserved across rescans (refresh, source add, source delete, source rename). Previously the selection was dropped whenever the underlying groups were re-scanned; now it is snapshotted by (group name, item name) and re-resolved against the new indices.
+- 2026-07-18: README corrected — the Tool Manager log popup is opened with `o`, not `l`.
+- Update Cargo.lock to match v0.14.0 (CI builds were failing due to lock file mismatch)
+
 ## [v0.14.0] - 2026-06-26
 
 ### Changed
