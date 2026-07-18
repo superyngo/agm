@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [v0.15.0] - 2026-07-18
+
 ### Added
 - 2026-07-18: Help / About panel in both TUIs (Tool Manager and Source Manager). Press `?` to open a scrollable popup with two tabs — `Help` (surface-specific keybindings) and `About` (app name, version, description, single-sourced from `CARGO_PKG_*`). The title bar shows BOTH tabs at once (`▸ Help  ·  About`) so it is obvious the panel is switchable; `Tab` cycles tabs, `?`/`Esc` closes. The footer hints now include `?` for help.
 - 2026-07-18: `NO_COLOR` is now honored by the TUIs (not just the CLI). When the env var is set, the TUI strips fg/bg colors at the buffer level while keeping bold/italic modifiers, so the cursor marker and headers remain visible in monochrome.
