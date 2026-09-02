@@ -12,6 +12,7 @@ _None._
 
 | Date | Document | Status |
 |---|---|---|
+| 2026-09-02 | [2026-09-02-unified-shell-tab-switching.md](2026-09-02-unified-shell-tab-switching.md) — merge Tool Manager and Source Manager into one shell process, switched with `Tab` | Shipped (2026-09-02) |
 | 2026-05-20 | [2026-05-20-cli-refactor-and-source-improvements.md](2026-05-20-cli-refactor-and-source-improvements.md) — `tool`/`source` command split, source rename and relink | Shipped (2026-05-20) |
 | 2026-04-02 | [2026-04-02-central-feature-toggle.md](2026-04-02-central-feature-toggle.md) — per-tool enable/disable of prompt, skills, agents, commands | Shipped (2026-04-03) |
 | 2026-04-02 | [2026-04-02-commands-support.md](2026-04-02-commands-support.md) — commands as a fourth linkable feature | Shipped (2026-04-02) |

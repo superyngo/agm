@@ -7,7 +7,7 @@ A Rust CLI tool for centralized management of AI coding agent CLI tools (Claude 
 - **Centralized Configuration**: Manage prompts, skills, agents, and configs for all AI CLI tools in one place
 - **Symlink Management**: Automatically create and maintain links from each tool to central sources (symlinks on Unix, junctions + hardlinks on Windows)
 - **Skills & Agents Management**: Install skills (directory-based) and agents (single `.md` files) from local paths or git repos, with auto-update support
-- **Interactive TUI**: Browse, search, and toggle skills/agents with a ratatui-based terminal UI
+- **Interactive TUI**: Browse, search, and toggle skills/agents with a ratatui-based terminal UI — Tool Manager and Source Manager live in one shell, switched with `Tab`
 - **Registry-Driven**: Add new tools by editing TOML config—no code changes needed
 - **Status Monitoring**: Check link health and tool installation status at a glance
 
@@ -105,6 +105,9 @@ agm tool link
 # Add a source from a git repo
 agm source add https://github.com/anthropics/claude-code-skills
 
+# Open the unified shell (Tab switches between Tool Manager and Source Manager)
+agm
+
 # Open interactive TUI to manage skills & agents
 agm source
 
@@ -140,7 +143,12 @@ The TUI provides:
 
 ### TUI Keybindings
 
-Both TUIs (Tool Manager and Source Manager) share the same global keys:
+`agm` (bare), `agm tool`, and `agm source` all open the same unified shell — `agm tool` /
+`agm source` just focus the matching screen on start. `Tab` / `Shift+Tab` switches between the
+**Tool Manager** and **Source Manager** screens (only when no popup/input is active); the title
+bar shows both with the active one bracketed, e.g. `agm — [Tool] · Source`.
+
+Both screens share the same global keys:
 
 | Key | Action |
 | --- | --- |
@@ -151,6 +159,7 @@ Both TUIs (Tool Manager and Source Manager) share the same global keys:
 | `9` / `0` | Expand / collapse all |
 | `i` | Info popup for the row under the cursor |
 | `o` | Open the log popup |
+| `Tab` / `Shift+Tab` | Switch between Tool Manager and Source Manager |
 | `?` | Open the **Help / About** panel — title shows `▸ Help  ·  About`; `Tab` switches tabs, `?`/`Esc` closes |
 | `Esc` | Close popup / clear status (one layer) — does NOT quit |
 | `q` / `Ctrl+C` | Quit |

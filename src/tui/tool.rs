@@ -2,9 +2,8 @@ use std::collections::HashSet;
 use std::io::stdout;
 use std::path::PathBuf;
 
-use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::KeyCode,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
@@ -280,7 +279,7 @@ pub struct ToolApp {
 }
 
 impl ToolApp {
-    fn new(config: Config, config_path: Option<PathBuf>) -> Self {
+    pub(crate) fn new(config: Config, config_path: Option<PathBuf>) -> Self {
         let mut expanded = HashSet::new();
         expanded.insert("agm".to_string());
         let rows = build_rows(&config, &expanded);
@@ -300,6 +299,27 @@ impl ToolApp {
         }
     }
 
+    pub(crate) fn config(&self) -> &Config {
+        &self.config
+    }
+
+    pub(crate) fn is_modal(&self) -> bool {
+        self.help.is_some() || self.popup.is_some()
+    }
+
+    pub(crate) fn should_quit(&self) -> bool {
+        self.should_quit
+    }
+
+    pub(crate) fn drain_pending_editor(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
+    ) {
+        if let Some(path) = self.pending_editor_path.take() {
+            self.open_in_editor(terminal, &[path]);
+        }
+    }
+
     fn rebuild_rows(&mut self) {
         self.rows = build_rows(&self.config, &self.expanded);
         if self.cursor >= self.rows.len() {
@@ -315,7 +335,7 @@ impl ToolApp {
         self.status_message.set(msg);
     }
 
-    fn clear_expired_status(&mut self) {
+    pub(crate) fn clear_expired_status(&mut self) {
         self.status_message.clear_expired();
     }
 
@@ -331,7 +351,7 @@ impl ToolApp {
         (area_height.saturating_sub(5)) as usize
     }
 
-    fn ensure_visible(&mut self, area_height: u16) {
+    pub(crate) fn ensure_visible(&mut self, area_height: u16) {
         let page = self.page_size(area_height).max(1);
         if self.cursor < self.scroll_offset {
             self.scroll_offset = self.cursor;
@@ -353,7 +373,7 @@ impl ToolApp {
     // Key handling
     // ------------------------------------------------------------------
 
-    fn handle_key(
+    pub(crate) fn handle_key(
         &mut self,
         code: KeyCode,
         terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
@@ -2235,7 +2255,7 @@ fn build_tool_hints(row: Option<&ToolRow>, config: &Config) -> Line<'static> {
 // Rendering
 // ---------------------------------------------------------------------------
 
-fn render(app: &mut ToolApp, frame: &mut Frame) {
+pub(crate) fn render(app: &mut ToolApp, frame: &mut Frame) {
     let area = frame.area();
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -2265,7 +2285,7 @@ fn render(app: &mut ToolApp, frame: &mut Frame) {
 
 fn render_list(app: &ToolApp, frame: &mut Frame, area: Rect) {
     let block = Block::default()
-        .title(Line::from(format!(" {} — Tool Manager ", env!("CARGO_PKG_NAME"))).left_aligned())
+        .title(Line::from(format!(" {} — [Tool] · Source ", env!("CARGO_PKG_NAME"))).left_aligned())
         .title(Line::from(format!(" v{} ", env!("CARGO_PKG_VERSION"))).right_aligned())
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
@@ -2570,7 +2590,9 @@ fn render_footer(app: &ToolApp, frame: &mut Frame, area: Rect) {
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let hints = build_tool_hints(app.current_row(), &app.config);
+    let mut hints = build_tool_hints(app.current_row(), &app.config);
+    hints.spans.push(hint_key("Tab"));
+    hints.spans.push(hint_text(" source  "));
 
     let status_line = app.status_message.to_line();
 
@@ -2662,71 +2684,6 @@ fn render_confirm_toggle_feature(app: &ToolApp, frame: &mut Frame, area: Rect) {
         let paragraph = Paragraph::new(text).wrap(Wrap { trim: true });
         frame.render_widget(paragraph, inner);
     }
-}
-
-// ---------------------------------------------------------------------------
-// Entry point
-// ---------------------------------------------------------------------------
-
-/// Entry point for the tool TUI.
-pub fn run(config_path: Option<PathBuf>) -> Result<()> {
-    let config = Config::load_from(config_path.clone())?;
-    let mut app = ToolApp::new(config, config_path);
-
-    let prev_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |info| {
-        let _ = disable_raw_mode();
-        let _ = stdout().execute(LeaveAlternateScreen);
-        prev_hook(info);
-    }));
-
-    enable_raw_mode()?;
-    stdout().execute(EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout());
-    let mut terminal = Terminal::new(backend)?;
-    terminal.clear()?;
-
-    loop {
-        let area_height = terminal.size()?.height;
-        app.ensure_visible(area_height);
-        terminal.draw(|frame| {
-            render(&mut app, frame);
-            // Honor NO_COLOR by stripping ANSI colors at the buffer level,
-            // keeping modifiers (bold, etc.) so the focus cursor stays visible.
-            if super::style::no_color() {
-                super::style::strip_colors(frame.buffer_mut());
-            }
-        })?;
-
-        app.clear_expired_status();
-
-        if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    // Ctrl+C always quits, mirroring the Source Manager.
-                    if key.code == KeyCode::Char('c')
-                        && key.modifiers.contains(event::KeyModifiers::CONTROL)
-                    {
-                        break;
-                    }
-                    app.handle_key(key.code, &mut terminal, area_height);
-                }
-            }
-        }
-
-        // Process pending editor from popup
-        if let Some(path) = app.pending_editor_path.take() {
-            app.open_in_editor(&mut terminal, &[path]);
-        }
-
-        if app.should_quit {
-            break;
-        }
-    }
-
-    disable_raw_mode()?;
-    stdout().execute(LeaveAlternateScreen)?;
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------

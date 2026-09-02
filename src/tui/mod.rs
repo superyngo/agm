@@ -2,6 +2,7 @@ pub mod background;
 pub mod help;
 pub mod log;
 pub mod popup;
+pub mod shell;
 pub mod source;
 pub mod style;
 pub mod text_input;

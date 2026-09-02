@@ -2,9 +2,8 @@ use std::collections::HashSet;
 use std::io::{self, stdout};
 use std::path::PathBuf;
 
-use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
+    event::{KeyCode, KeyModifiers},
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     ExecutableCommand,
 };
@@ -81,7 +80,7 @@ enum ConfirmState {
 // App state
 // ---------------------------------------------------------------------------
 
-struct App {
+pub(crate) struct App {
     config: Config,
     groups: Vec<SourceGroup>,
     rows: Vec<ListRow>,
@@ -166,6 +165,150 @@ impl App {
         };
         app.rebuild_rows();
         app
+    }
+
+    /// Construct a fully-scanned, background-update-kicked-off App from a loaded
+    /// Config. This replaces the setup previously inlined at the top of the old
+    /// standalone `run()`, minus terminal/panic-hook setup (now shell-owned) and
+    /// minus the empty-sources early return (the existing empty-state message in
+    /// `render_list` already covers zero sources).
+    pub(crate) fn build(config: Config) -> App {
+        let skills_dir = expand_tilde(&config.agm.skills_source);
+        let agents_dir = expand_tilde(&config.agm.agents_source);
+        let commands_dir = expand_tilde(&config.agm.commands_source);
+        let source_dir = expand_tilde(&config.agm.source_dir);
+
+        let _ = skills::prune_broken_skills(&skills_dir);
+        let _ = skills::prune_broken_agents(&agents_dir);
+        let _ = skills::prune_broken_commands(&commands_dir);
+
+        let groups = skills::scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir);
+
+        let mut app = Self::new(
+            config,
+            groups,
+            skills_dir,
+            agents_dir,
+            commands_dir,
+            source_dir,
+        );
+        app.do_update();
+        app
+    }
+
+    pub(crate) fn config(&self) -> &Config {
+        &self.config
+    }
+
+    /// Called when the shell switches into this screen and the Tool Manager may
+    /// have written config.toml in the meantime (Source never persists config
+    /// changes itself).
+    pub(crate) fn sync_config(&mut self, config: Config) {
+        self.config = config;
+        self.rebuild_rows();
+    }
+
+    pub(crate) fn is_modal(&self) -> bool {
+        self.help.is_some()
+            || self.log_popup.is_some()
+            || self.info_popup.is_some()
+            || self.search_mode
+            || self.add_mode
+            || self.rename_mode
+            || self.confirm_state.is_some()
+    }
+
+    pub(crate) fn should_quit(&self) -> bool {
+        self.should_quit
+    }
+
+    /// Drain background TaskEvents. Must run every shell tick regardless of
+    /// which screen is active, so a `git pull` kicked off from Source keeps
+    /// progressing while the user is looking at the Tool Manager tab.
+    pub(crate) fn tick(&mut self) {
+        if let Some(task) = &mut self.background_task {
+            for event in task.poll() {
+                use super::background::TaskEvent;
+                match event {
+                    TaskEvent::UpdateRepoStart { name } => {
+                        self.log
+                            .push(super::log::LogLevel::Info, format!("Updating {}...", name));
+                    }
+                    TaskEvent::UpdateRepoComplete {
+                        name,
+                        success,
+                        message,
+                    } => {
+                        let level = if success {
+                            super::log::LogLevel::Success
+                        } else {
+                            super::log::LogLevel::Error
+                        };
+                        self.log.push(level, format!("{}: {}", name, message));
+                    }
+                    TaskEvent::UpdateAllDone {
+                        total,
+                        updated,
+                        new_skills,
+                        new_agents,
+                        new_commands,
+                    } => {
+                        self.log.push(
+                            super::log::LogLevel::Success,
+                            format!(
+                                "Update complete: {} repos, {} updated, {} new skills, {} new agents, {} new commands",
+                                total, updated, new_skills, new_agents, new_commands
+                            ),
+                        );
+                        self.refresh();
+                        self.set_status("Update complete");
+                    }
+                    TaskEvent::OperationResult { message, success } => {
+                        let level = if success {
+                            super::log::LogLevel::Success
+                        } else {
+                            super::log::LogLevel::Error
+                        };
+                        self.log.push(level, message);
+                    }
+                    TaskEvent::CloneLine { line, is_err } => {
+                        let level = if is_err {
+                            super::log::LogLevel::Warning
+                        } else {
+                            super::log::LogLevel::Info
+                        };
+                        self.log.push(level, line);
+                    }
+                    TaskEvent::AddDone {
+                        name,
+                        skill_count,
+                        agent_count,
+                        command_count,
+                        success,
+                        message,
+                    } => {
+                        if success {
+                            self.log.push(
+                                super::log::LogLevel::Success,
+                                format!(
+                                    "Added {}: {} skill(s), {} agent(s), {} command(s) found — expand to link",
+                                    name, skill_count, agent_count, command_count
+                                ),
+                            );
+                            self.refresh();
+                            self.set_status(format!(
+                                "Added {}: {} skill(s) found — expand to link",
+                                name, skill_count
+                            ));
+                        } else {
+                            self.log
+                                .push(super::log::LogLevel::Error, format!("Add error: {message}"));
+                            self.set_status(format!("Error: {message}"));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn rebuild_rows(&mut self) {
@@ -261,7 +404,7 @@ impl App {
         self.status_message.set(msg);
     }
 
-    fn clear_expired_status(&mut self) {
+    pub(crate) fn clear_expired_status(&mut self) {
         self.status_message.clear_expired();
     }
 
@@ -315,7 +458,7 @@ impl App {
         (area_height.saturating_sub(5)) as usize
     }
 
-    fn ensure_visible(&mut self, area_height: u16) {
+    pub(crate) fn ensure_visible(&mut self, area_height: u16) {
         let page = self.page_size(area_height).max(1);
         if self.cursor < self.scroll_offset {
             self.scroll_offset = self.cursor;
@@ -1746,7 +1889,7 @@ impl App {
         self.refresh();
     }
 
-    fn handle_key(
+    pub(crate) fn handle_key(
         &mut self,
         code: KeyCode,
         modifiers: KeyModifiers,
@@ -2375,7 +2518,7 @@ fn render_item_line(
 // Rendering
 // ---------------------------------------------------------------------------
 
-fn render(app: &mut App, frame: &mut Frame) {
+pub(crate) fn render(app: &mut App, frame: &mut Frame) {
     let area = frame.area();
 
     let chunks = Layout::default()
@@ -2401,7 +2544,7 @@ fn render(app: &mut App, frame: &mut Frame) {
 
 fn render_list(app: &App, frame: &mut Frame, area: Rect) {
     let block = Block::default()
-        .title(Line::from(format!(" {} — Source Manager ", env!("CARGO_PKG_NAME"))).left_aligned())
+        .title(Line::from(format!(" {} — Tool · [Source] ", env!("CARGO_PKG_NAME"))).left_aligned())
         .title(Line::from(format!(" v{} ", env!("CARGO_PKG_VERSION"))).right_aligned())
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::Cyan));
@@ -2895,7 +3038,9 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
         )));
         frame.render_widget(p, inner);
     } else {
-        let hints = build_source_hints(app.current_row());
+        let mut hints = build_source_hints(app.current_row());
+        hints.spans.push(hint_key("Tab"));
+        hints.spans.push(hint_text(" tool  "));
 
         let status_line = if app.background_task.as_ref().is_some_and(|t| t.is_running) {
             let progress_text = app
@@ -2935,182 +3080,6 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             frame.render_widget(Paragraph::new(hints), inner);
         }
     }
-}
-
-// ---------------------------------------------------------------------------
-// Entry point
-// ---------------------------------------------------------------------------
-
-/// Interactive TUI for managing skills and agents.
-pub fn run(config: &mut Config) -> Result<()> {
-    let skills_dir = expand_tilde(&config.agm.skills_source);
-    let agents_dir = expand_tilde(&config.agm.agents_source);
-    let commands_dir = expand_tilde(&config.agm.commands_source);
-    let source_dir = expand_tilde(&config.agm.source_dir);
-
-    // Prune broken symlinks before loading
-    let _ = skills::prune_broken_skills(&skills_dir);
-    let _ = skills::prune_broken_agents(&agents_dir);
-    let _ = skills::prune_broken_commands(&commands_dir);
-
-    // Load groups
-    let groups = skills::scan_all_sources(&source_dir, &skills_dir, &agents_dir, &commands_dir);
-
-    if groups.is_empty() {
-        println!("No sources found. Use `agm source --add <url>` to add sources.");
-        return Ok(());
-    }
-
-    // Install panic hook for terminal safety
-    let original_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |panic_info| {
-        let _ = disable_raw_mode();
-        let _ = stdout().execute(LeaveAlternateScreen);
-        original_hook(panic_info);
-    }));
-
-    // Enter alternate screen + raw mode
-    stdout().execute(EnterAlternateScreen)?;
-    enable_raw_mode()?;
-
-    let backend = CrosstermBackend::new(stdout());
-    let mut terminal = Terminal::new(backend)?;
-    terminal.clear()?;
-
-    let mut app = App::new(
-        config.clone(),
-        groups,
-        skills_dir,
-        agents_dir,
-        commands_dir,
-        source_dir,
-    );
-
-    // Start background update immediately (non-blocking)
-    app.do_update();
-
-    // Event loop
-    loop {
-        let area_height = terminal.size()?.height;
-        app.ensure_visible(area_height);
-        terminal.draw(|frame| {
-            render(&mut app, frame);
-            // Honor NO_COLOR by stripping ANSI colors at the buffer level,
-            // keeping modifiers (bold, etc.) so the focus cursor stays visible.
-            if super::style::no_color() {
-                super::style::strip_colors(frame.buffer_mut());
-            }
-        })?;
-
-        app.clear_expired_status();
-
-        // Poll background task for events
-        if let Some(ref mut task) = app.background_task {
-            for event in task.poll() {
-                use super::background::TaskEvent;
-                match event {
-                    TaskEvent::UpdateRepoStart { name } => {
-                        app.log
-                            .push(super::log::LogLevel::Info, format!("Updating {}...", name));
-                    }
-                    TaskEvent::UpdateRepoComplete {
-                        name,
-                        success,
-                        message,
-                    } => {
-                        let level = if success {
-                            super::log::LogLevel::Success
-                        } else {
-                            super::log::LogLevel::Error
-                        };
-                        app.log.push(level, format!("{}: {}", name, message));
-                    }
-                    TaskEvent::UpdateAllDone {
-                        total,
-                        updated,
-                        new_skills,
-                        new_agents,
-                        new_commands,
-                    } => {
-                        app.log.push(
-                            super::log::LogLevel::Success,
-                            format!(
-                            "Update complete: {} repos, {} updated, {} new skills, {} new agents, {} new commands",
-                            total, updated, new_skills, new_agents, new_commands
-                        ),
-                        );
-                        app.refresh();
-                        app.set_status("Update complete");
-                    }
-                    TaskEvent::OperationResult { message, success } => {
-                        let level = if success {
-                            super::log::LogLevel::Success
-                        } else {
-                            super::log::LogLevel::Error
-                        };
-                        app.log.push(level, message);
-                    }
-                    TaskEvent::CloneLine { line, is_err } => {
-                        let level = if is_err {
-                            super::log::LogLevel::Warning
-                        } else {
-                            super::log::LogLevel::Info
-                        };
-                        app.log.push(level, line);
-                    }
-                    TaskEvent::AddDone {
-                        name,
-                        skill_count,
-                        agent_count,
-                        command_count,
-                        success,
-                        message,
-                    } => {
-                        if success {
-                            app.log.push(
-                                super::log::LogLevel::Success,
-                                format!(
-                                    "Added {}: {} skill(s), {} agent(s), {} command(s) found — expand to link",
-                                    name, skill_count, agent_count, command_count
-                                ),
-                            );
-                            app.refresh();
-                            app.set_status(format!(
-                                "Added {}: {} skill(s) found — expand to link",
-                                name, skill_count
-                            ));
-                        } else {
-                            app.log
-                                .push(super::log::LogLevel::Error, format!("Add error: {message}"));
-                            app.set_status(format!("Error: {message}"));
-                        }
-                    }
-                }
-            }
-        }
-
-        if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind == KeyEventKind::Press {
-                    app.handle_key(key.code, key.modifiers, &mut terminal, area_height);
-                }
-            }
-        }
-
-        if app.should_quit {
-            break;
-        }
-    }
-
-    // Restore terminal
-    disable_raw_mode()?;
-    stdout().execute(LeaveAlternateScreen)?;
-    let _ = std::panic::take_hook();
-
-    // Write back any config changes
-    *config = app.config;
-
-    Ok(())
 }
 
 /// Count how many names are duplicates of an earlier name (i.e. total minus

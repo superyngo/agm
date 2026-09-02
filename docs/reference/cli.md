@@ -6,7 +6,7 @@ Current command surface of the `agm` binary, as defined in `src/main.rs`. Terms 
 ## Global
 
 ```
-agm [--config <PATH>] [-v|--version] <command>
+agm [--config <PATH>] [-v|--version] [<command>]
 ```
 
 | Flag | Effect |
@@ -14,9 +14,10 @@ agm [--config <PATH>] [-v|--version] <command>
 | `-v`, `--version` | Print `agm <version>` and exit 0. The clap-generated `--version` is disabled; this flag is hand-rolled. |
 | `--config <PATH>` | Override the config file path. Global — accepted on every subcommand. |
 
-Invoking `agm` with no subcommand, an unknown subcommand, or a missing required argument prints
-**full help** (not clap's brief error) and exits **1**. All other parse errors use clap's default
-handling.
+Invoking `agm` with no subcommand opens the unified **Shell** (see [tui.md](tui.md)) on the
+**Tool Manager** tab. An unknown subcommand or a missing required argument still prints
+**full help** (not clap's brief error) and exits **1**. All other parse errors use clap's
+default handling.
 
 ## Commands
 
@@ -24,11 +25,11 @@ handling.
 |---|---|---|
 | `agm init` | no | Create the config file and the **Central store** directories. See [config.md](config.md#agm-init). |
 | `agm config` | opens editor | Open the config file in the resolved editor. |
-| `agm tool` | TUI | Open the **Tool Manager**. See [tui.md](tui.md). |
+| `agm tool` | TUI | Open the **Shell** on the **Tool Manager** tab. See [tui.md](tui.md). |
 | `agm tool link` | no | Link every installed **Tool**. |
 | `agm tool unlink` | no | Unlink every installed **Tool** and copy content back. |
 | `agm tool status` | no | Print the status table. |
-| `agm source` | TUI | Open the **Source Manager**. See [tui.md](tui.md). |
+| `agm source` | TUI | Open the **Shell** on the **Source Manager** tab. See [tui.md](tui.md). |
 | `agm source add <source> [-n\|--name <name>] [--all]` | prompts | Add a **Source** from a URL, `user/repo` shorthand, or local path. |
 | `agm source update` | no | `git pull` every repo **Source**, then re-sync links. |
 | `agm source list` | no | List every **Source** with its **Item**s. |

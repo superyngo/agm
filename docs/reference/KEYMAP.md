@@ -1,9 +1,10 @@
 # Keymap
 
-Every key handled by the two TUIs, as bound in `src/tui/`. Surfaces are the **Tool Manager**
-(`agm tool`) and the **Source Manager** (`agm source`); see [tui.md](tui.md) for what they show.
+Every key handled by the unified shell, as bound in `src/tui/`. The shell hosts two screens —
+the **Tool Manager** (`agm tool`) and the **Source Manager** (`agm source`) — see
+[tui.md](tui.md) for what they show and how the shell switches between them.
 
-## Global — both managers, normal mode
+## Global — both screens, normal mode
 
 | Key | Action |
 |---|---|
@@ -17,18 +18,19 @@ Every key handled by the two TUIs, as bound in `src/tui/`. Surfaces are the **To
 | `e` | Edit — see per-surface rows below |
 | `l` | Link action — see per-surface rows below |
 | `o` | Open the log popup (scrolled to the newest entry) |
+| `Tab` / `Shift+Tab` | Switch screen (Tool Manager ↔ Source Manager) — only when no modal is open; otherwise routed to the surface below |
 | `?` | Open the Help / About panel |
 | `Esc` | Peel exactly one layer (see below) — never quits |
 | `q` / `Ctrl+C` | Quit |
 
-## Tool Manager
+## Tool Manager screen
 
 | Key | Action |
 |---|---|
 | `e` | On a central path row: open the inline path editor. On a tool row: open the tool's TOML section, prompt, or config file in the editor; offers to create the file if missing |
 | `l` | On a central row: confirm enabling/disabling that **Feature** for all installed tools. On the status header: link/unlink everything for that tool. On a single link row: toggle that link |
 
-## Source Manager
+## Source Manager screen
 
 | Key | Action |
 |---|---|
@@ -63,7 +65,7 @@ Popup-specific:
 | `i` | Info popup | Close |
 | `e` | Info popup | Close and open the subject path in the editor |
 | `l` | Info popup (Tool Manager) | Toggle that link or **Feature** |
-| `Tab` / `Shift+Tab` | Help / About | Switch tab |
+| `Tab` / `Shift+Tab` | Help / About | Switch Help/About tab (does not switch the shell screen) |
 | `?` | Help / About | Close |
 
 ## Confirmations and inline prompts

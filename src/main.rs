@@ -729,13 +729,7 @@ fn main() -> anyhow::Result<()> {
     // Extract command (required if not showing version)
     let command = match cli.command {
         Some(cmd) => cmd,
-        None => {
-            // No subcommand provided - show help and exit
-            let mut cmd = Cli::command();
-            cmd.print_help()?;
-            println!();
-            std::process::exit(1);
-        }
+        None => return tui::shell::run(cli.config.clone(), tui::shell::Tab::Tool),
     };
 
     match command {
@@ -750,7 +744,7 @@ fn main() -> anyhow::Result<()> {
             editor::open_files(&ed, &[&path])
         }
         Commands::Tool { action } => match action {
-            None => tui::tool::run(cli.config.clone()),
+            None => tui::shell::run(cli.config.clone(), tui::shell::Tab::Tool),
             Some(ToolAction::Link) => {
                 let config = config::Config::load_from(cli.config.clone())?;
                 link_all(&config, cli.config.as_deref())
@@ -762,13 +756,13 @@ fn main() -> anyhow::Result<()> {
             Some(ToolAction::Status) => status::status(),
         },
         Commands::Source { action } => {
-            let mut config = config::Config::load_from(cli.config.clone())?;
+            let config = config::Config::load_from(cli.config.clone())?;
             let skills_dir = paths::expand_tilde(&config.agm.skills_source);
             let agents_dir = paths::expand_tilde(&config.agm.agents_source);
             let commands_dir = paths::expand_tilde(&config.agm.commands_source);
             let source_dir = paths::expand_tilde(&config.agm.source_dir);
             match action {
-                None => tui::source::run(&mut config),
+                None => tui::shell::run(cli.config.clone(), tui::shell::Tab::Source),
                 Some(SourceAction::Add { source, name, all }) => source_add(
                     &source,
                     name.as_deref(),

@@ -14,6 +14,7 @@ _None._
 
 | Date | Document | Status |
 |---|---|---|
+| 2026-09-02 | [2026-09-02-unified-shell-tab-switching.md](2026-09-02-unified-shell-tab-switching.md) | Shipped (2026-09-02) |
 | 2026-05-20 | [2026-05-20-cli-refactor-and-source-improvements.md](2026-05-20-cli-refactor-and-source-improvements.md) | Shipped (2026-05-20) |
 | 2026-04-02 | [2026-04-02-central-feature-toggle.md](2026-04-02-central-feature-toggle.md) | Shipped (2026-04-03) |
 | 2026-04-02 | [2026-04-02-commands-support.md](2026-04-02-commands-support.md) | Shipped (2026-04-02) |

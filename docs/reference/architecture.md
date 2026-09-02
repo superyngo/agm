@@ -19,9 +19,10 @@ All source is flat under `src/`, except the TUI, which is a module directory.
 | `status.rs` | the read-only `agm tool status` table |
 | `init.rs` | `agm init`: default config plus **Central store** directories |
 | `editor.rs` | editor resolution and process launch |
-| `tui/` | the two ratatui surfaces and their shared widgets |
+| `tui/` | the unified shell (Tool Manager / Source Manager screens behind Tab) and shared widgets |
 
-`tui/` splits into `mod.rs` (shared helpers), `tool.rs` and `source.rs` (the two managers),
+`tui/` splits into `mod.rs` (shared helpers), `shell.rs` (the unified entry point — terminal
+lifecycle, event loop, screen switching), `tool.rs` and `source.rs` (the two screens),
 `popup.rs` / `help.rs` / `log.rs` (overlays), `text_input.rs` (inline fields), `style.rs`
 (style tokens, `NO_COLOR`), `background.rs` (off-thread git work).
 

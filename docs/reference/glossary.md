@@ -98,14 +98,21 @@ The character cost an **Item** imposes on a **Tool**'s context before use: for a
 **Command**, the whole file's character count. Shown in the **Source Manager**.
 _Avoid_: Token count, size, weight.
 
+**Shell**:
+The unified TUI process (`src/tui/shell.rs`) opened by bare `agm`, `agm tool`, or `agm source`.
+Owns the terminal lifecycle and hosts the **Tool Manager** and **Source Manager** as two
+screens switched with `Tab` / `Shift+Tab`.
+_Avoid_: App, main loop, TUI (ambiguous between the shell and a screen).
+
 **Tool Manager**:
-The TUI opened by `agm tool` — one row group per **Tool**, showing **Link status** per
-**Feature** and allowing edit and toggle. Lives in `src/tui/tool.rs`.
+The **Shell** screen focused by `agm tool` (and the default when opening bare `agm`) — one row
+group per **Tool**, showing **Link status** per **Feature** and allowing edit and toggle. Lives
+in `src/tui/tool.rs`.
 _Avoid_: Tool TUI, tool pane.
 
 **Source Manager**:
-The TUI opened by `agm source` — a tree of **Source**s and their **Item**s, with search,
-multi-select, and install/uninstall. Lives in `src/tui/source.rs`.
+The **Shell** screen focused by `agm source` — a tree of **Source**s and their **Item**s, with
+search, multi-select, and install/uninstall. Lives in `src/tui/source.rs`.
 _Avoid_: Source TUI, skills TUI.
 
 **Migration**:

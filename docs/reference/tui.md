@@ -1,24 +1,38 @@
 # TUI
 
-Structure and behavior of the two ratatui interfaces. Keys live in [KEYMAP.md](KEYMAP.md);
-terms in [glossary.md](glossary.md).
+Structure and behavior of the unified shell and its two screens. Keys live in
+[KEYMAP.md](KEYMAP.md); terms in [glossary.md](glossary.md).
+
+## The Shell
+
+`agm` (bare), `agm tool`, and `agm source` all open one process — the **Shell**
+(`src/tui/shell.rs`) — which owns the terminal lifecycle (panic hook, raw mode, alternate
+screen) and hosts exactly one of two screens at a time: the **Tool Manager** or the **Source
+Manager**. `agm tool` / `agm source` start on the matching screen; bare `agm` starts on the
+**Tool Manager**.
+
+`Tab` / `Shift+Tab` switches screens when the active screen has no modal open (no popup, no
+search/add/rename input, no confirmation). The title bar shows both screens with the active one
+bracketed — `agm — [Tool] · Source` or `agm — Tool · [Source]` — and the footer's hint line ends
+with `Tab source` / `Tab tool`.
+
+A screen is only constructed the first time it is visited, so `agm tool` alone never triggers
+the **Source Manager**'s startup scan/background update, and vice versa. Once built, both
+screens stay alive for the rest of the process — switching away does not drop cursor position,
+expanded rows, or the log, and the **Source Manager**'s background `git` work keeps draining
+every tick regardless of which screen is on top. Switching *into* the **Source Manager**
+reloads its copy of the config (the **Tool Manager** is the only screen that persists config
+edits to disk), so a change made on the Tool tab is visible immediately after switching.
 
 ## Common shape
 
-Both managers render: a title bar (`agm — <surface> Manager` left, `v<version>` right), a
+Both screens render: a title bar (`agm — <chip> ` left, `v<version>` right), a
 flat-rendered tree list, and a three-row footer whose top line is a context-sensitive key hint
 built from the row under the cursor and whose bottom line shows, in priority order, background
 task progress (`⟳ …`), a status message, a selection count, or nothing. Status messages expire
 after 3 seconds.
 
-The list is a `Vec` of row enums rebuilt from config/disk state plus an `expanded` set — there is
-no persistent tree object. Fold arrows are `▼` / `▶`; the cursor row is prefixed `▸`.
-
-Popups render after the list, and the Help / About panel renders after everything else, so it is
-always on top. Scrollable popups cap content at 5000 lines and append
-`[truncated — content too large]` beyond that.
-
-## Tool Manager (`agm tool`)
+## Tool Manager screen (`agm tool`)
 
 Rows: a central `agm` header with one row per configured path (source, prompt, skills, agents,
 commands), then one header per **Tool** in **Tool key** order. Under each tool: a status header
@@ -32,7 +46,7 @@ path through an inline path editor. Editing a missing file first asks whether to
 Link operations use `linker::create_link_quiet` / `remove_link_quiet` so results land in the log
 popup instead of the terminal.
 
-## Source Manager (`agm source`)
+## Source Manager screen (`agm source`)
 
 Rows: three category headers — Skills, Agents, Commands — each expanding into **Source** headers,
 each expanding into **Item** rows. Headers carry an `[installed/total]` count; source headers
@@ -92,4 +106,4 @@ a monochrome terminal.
 
 ## Machine-checked claims
 
-None. The TUIs have no automated coverage; behavior here was read from `src/tui/`.
+None. The Shell has no automated coverage; behavior here was read from `src/tui/`.

@@ -7,13 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+- 2026-09-02: `src/tui/shell.rs` — a unified shell process hosting the **Tool Manager** and
+  **Source Manager** as two screens switched with `Tab` / `Shift+Tab`. `Tab` is intercepted only
+  when the active screen has no modal open, so search input, add/rename prompts, confirmations,
+  and the Help/About panel's own `Tab` cycle are unaffected. A screen is built lazily on first
+  visit; once built it stays alive (cursor, expanded rows, log preserved across switches), and
+  the Source Manager's background `git` work keeps draining every tick regardless of which
+  screen is active. See [ADR 0006](docs/adr/0006-unified-shell-with-tab-switching.md).
+- 2026-09-02: `docs/reference/` — the new source of truth for current behavior: `glossary.md` (canonical vocabulary), `architecture.md`, `cli.md`, `config.md`, `linking.md`, `sources.md`, `tui.md`, `KEYMAP.md`.
+- 2026-09-02: `docs/adr/` — six ADRs recording decisions: config-only tool registry (0001), links not copies (0002), Windows junction/hardlink abstraction (0003), `SKILL.md` marker with filesystem-derived state (0004), ratatui TUI as primary interface (0005), unified shell with Tab switching (0006).
+
 ### Changed
+- 2026-09-02: Bare `agm` (no subcommand) now opens the unified shell on the Tool Manager tab,
+  instead of printing help and exiting 1. `agm tool` and `agm source` now open the same shell,
+  focused on the matching screen. `agm tool link|unlink|status` and
+  `agm source add|update|list|del|rename` are unchanged.
+- 2026-09-02: Removed `tool::run` and `source::run` (the two former standalone TUI entry
+  points); their terminal-lifecycle and event-loop code moved into `shell::run`. Switching into
+  the Source Manager now refreshes its config from the Tool Manager's in-memory copy
+  (`App::sync_config`), fixing a pre-existing dead write where the old `source::run` mutated a
+  `&mut Config` its caller never persisted.
 - 2026-09-02: Documentation restructured to the `wens-dev-principles docs` layout. Root `CONTEXT.md` is now the single documentation entry point; `docs/` holds the fixed folder set `reference/ adr/ spec/ plan/ debug/ audit/ tmp/`, each with an indexing `README.md`. `docs/specs/` + `docs/superpowers/specs/` merged into `docs/spec/`, `docs/plans/` + `docs/superpowers/plans/` into `docs/plan/`, filenames normalized to `YYYY-MM-DD-kebab-title.md` so a spec and its plan pair by slug, and all 20 historical records given a `Status:` line. `RELEASE.md` moved to `docs/reference/releasing.md`; `tui-mockups.html` moved into `docs/spec/2026-04-01-tui-redesign/`.
 - 2026-09-02: `GEMINI.md` and `.github/copilot-instructions.md` reduced to repo conduct plus a pointer to `CONTEXT.md`; they no longer restate behavior, which now lives only in `docs/reference/`. Fixed the README link to a design doc that no longer existed.
 
-### Added
-- 2026-09-02: `docs/reference/` — the new source of truth for current behavior: `glossary.md` (canonical vocabulary), `architecture.md`, `cli.md`, `config.md`, `linking.md`, `sources.md`, `tui.md`, `KEYMAP.md`.
-- 2026-09-02: `docs/adr/` — five retro ADRs recording decisions previously implicit in the specs: config-only tool registry (0001), links not copies (0002), Windows junction/hardlink abstraction (0003), `SKILL.md` marker with filesystem-derived state (0004), ratatui TUI as primary interface (0005).
+### Docs
+- 2026-09-02: `docs/reference/cli.md`, `tui.md`, `KEYMAP.md`, `architecture.md`, `glossary.md`,
+  and `README.md` updated for the unified shell; added
+  [ADR 0006](docs/adr/0006-unified-shell-with-tab-switching.md) and its paired
+  [spec](docs/spec/2026-09-02-unified-shell-tab-switching.md) /
+  [plan](docs/plan/2026-09-02-unified-shell-tab-switching.md).
 
 ## [v0.15.0] - 2026-07-18
 

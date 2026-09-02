@@ -10,10 +10,14 @@ Current behavior lives in [`../reference/`](../reference/README.md).
 | [0002](0002-links-not-copies.md) | One central store, reached by links rather than copies | Implemented (2026-02-14) |
 | [0003](0003-platform-abstraction-for-windows-links.md) | Windows uses junctions and hardlinks behind a single `platform.rs` boundary | Implemented (2026-03-20) |
 | [0004](0004-skill-md-marker-and-derived-state.md) | `SKILL.md` is the only marker; install state is derived from the filesystem | Implemented (2026-03-21) |
-| [0005](0005-ratatui-tui-as-primary-interface.md) | The ratatui TUIs are the primary interface; git work runs off the UI thread | Implemented (2026-04-01) |
+| [0005](0005-ratatui-tui-as-primary-interface.md) | The ratatui TUIs are the primary interface; git work runs off the UI thread | Implemented (2026-04-01); partially superseded by [0006](0006-unified-shell-with-tab-switching.md) |
+| [0006](0006-unified-shell-with-tab-switching.md) | One shell process hosts both TUI screens, switched with Tab, instead of two independent processes | Implemented (2026-09-02) |
 
-Partial supersessions: none.
+Partial supersessions: [0006](0006-unified-shell-with-tab-switching.md) replaces 0005's "two
+independent ratatui programs" entry-point shape with one shell process; 0005's structural rules
+(nothing blocks the UI thread, nothing prints) still hold.
 
-These five records were written on 2026-09-02, after the fact, from the design specs in
-[`../spec/`](../spec/README.md) and the shipped code. The dates above are the dates the
-decisions landed, not the dates the records were written.
+Records 0001–0005 were written on 2026-09-02, after the fact, from the design specs in
+[`../spec/`](../spec/README.md) and the shipped code — their dates are when the decisions
+landed, not when the records were written. 0006 was written contemporaneously with the change
+it describes.
