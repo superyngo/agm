@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Changed
+- 2026-09-02: Documentation restructured to the `wens-dev-principles docs` layout. Root `CONTEXT.md` is now the single documentation entry point; `docs/` holds the fixed folder set `reference/ adr/ spec/ plan/ debug/ audit/ tmp/`, each with an indexing `README.md`. `docs/specs/` + `docs/superpowers/specs/` merged into `docs/spec/`, `docs/plans/` + `docs/superpowers/plans/` into `docs/plan/`, filenames normalized to `YYYY-MM-DD-kebab-title.md` so a spec and its plan pair by slug, and all 20 historical records given a `Status:` line. `RELEASE.md` moved to `docs/reference/releasing.md`; `tui-mockups.html` moved into `docs/spec/2026-04-01-tui-redesign/`.
+- 2026-09-02: `GEMINI.md` and `.github/copilot-instructions.md` reduced to repo conduct plus a pointer to `CONTEXT.md`; they no longer restate behavior, which now lives only in `docs/reference/`. Fixed the README link to a design doc that no longer existed.
+
+### Added
+- 2026-09-02: `docs/reference/` — the new source of truth for current behavior: `glossary.md` (canonical vocabulary), `architecture.md`, `cli.md`, `config.md`, `linking.md`, `sources.md`, `tui.md`, `KEYMAP.md`.
+- 2026-09-02: `docs/adr/` — five retro ADRs recording decisions previously implicit in the specs: config-only tool registry (0001), links not copies (0002), Windows junction/hardlink abstraction (0003), `SKILL.md` marker with filesystem-derived state (0004), ratatui TUI as primary interface (0005).
+
 ## [v0.15.0] - 2026-07-18
 
 ### Added

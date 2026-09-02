@@ -204,7 +204,9 @@ Default central directories:
 - Agents: `~/.local/share/agm/agents/`
 - Source repos: `~/.local/share/agm/source/`
 
-See [design doc](docs/plans/2026-02-14-agm-design.md) for detailed architecture.
+See [`CONTEXT.md`](CONTEXT.md) for the documentation index, or
+[`docs/reference/config.md`](docs/reference/config.md) for the full config schema and
+[`docs/reference/architecture.md`](docs/reference/architecture.md) for the architecture.
 
 ## Supported Tools
 

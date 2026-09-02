@@ -14,5 +14,6 @@
 .DS_Store
 Thumbs.db
 
-# dispatch-agent artifacts
+# Scratch: loose files stay local, archived tarballs are kept
 docs/tmp/
+!docs/tmp/archive/

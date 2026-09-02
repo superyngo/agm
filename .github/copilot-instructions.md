@@ -1,50 +1,42 @@
 # AGM — Copilot Instructions
 
-## Build, Test, and Run
+Read [`../CONTEXT.md`](../CONTEXT.md) first: it indexes every document in this repo. Start with
+[`../docs/reference/glossary.md`](../docs/reference/glossary.md) for the vocabulary, then
+[`../docs/reference/architecture.md`](../docs/reference/architecture.md) for the module map and
+data flow.
 
-```bash
-cargo build                        # debug build
-cargo build --release              # release binary → target/release/agm
-cargo test                         # run all tests
-cargo test <test_name>             # run a single test, e.g. cargo test test_scan_skills_single
-cargo test -- --nocapture          # show println! output during tests
+This file holds repo conduct only and deliberately does not restate reference material.
+
+## Build, test, run
+
+```sh
+cargo build                 # debug
+cargo build --release       # → target/release/agm
+cargo test                  # unit + integration
+cargo test <name>           # single test, e.g. cargo test test_scan_skills_single
+cargo test -- --nocapture   # show println! output
 ```
 
-## Architecture
+## Where things are
 
-AGM is a single-binary Rust CLI. All source is flat under `src/`:
-
-| File | Responsibility |
+| Looking for | Read |
 |---|---|
-| `main.rs` | CLI definition (clap), command routing, interactive prompts |
-| `config.rs` | `Config` / `ToolConfig` structs, TOML load/save at `~/.config/agm/config.toml` |
-| `linker.rs` | `LinkStatus` enum, symlink create/check/remove logic |
-| `skills.rs` | Skill discovery (`SKILL.md` convention), git clone/pull, add/remove |
-| `paths.rs` | `expand_tilde` / `contract_tilde` utilities |
-| `editor.rs` | Editor resolution: `config.editor` → `$EDITOR` → `vi` |
-| `init.rs` | First-run setup: write default config + create central directories |
-| `status.rs` | `status`, `list`, `check` commands — read-only display |
+| Vocabulary | [`../docs/reference/glossary.md`](../docs/reference/glossary.md) |
+| Module map, layering, invariants | [`../docs/reference/architecture.md`](../docs/reference/architecture.md) |
+| Commands, flags, env vars | [`../docs/reference/cli.md`](../docs/reference/cli.md) |
+| `config.toml` schema and path rules | [`../docs/reference/config.md`](../docs/reference/config.md) |
+| Link statuses and decision tables | [`../docs/reference/linking.md`](../docs/reference/linking.md) |
+| Source/skill/agent/command behavior | [`../docs/reference/sources.md`](../docs/reference/sources.md) |
+| TUI structure and keys | [`../docs/reference/tui.md`](../docs/reference/tui.md), [`../docs/reference/KEYMAP.md`](../docs/reference/KEYMAP.md) |
+| Why the design is what it is | [`../docs/adr/README.md`](../docs/adr/README.md) |
 
-**Data flow for `agm link`:** `Config::load()` → iterate `config.tools` (skipping tools where `is_installed()` is false) → call `linker::create_link()` for each skills dir and prompt file.
+## Conduct
 
-**Central store layout** (defaults, overridable in config.toml):
-```
-~/.local/share/agm/
-  prompts/MASTER.md      ← shared prompt; symlinked into each tool's config dir
-  skills/                ← central skills dir; symlinked as each tool's skills dir
-  source/                ← git-cloned skill repos live here
-```
-
-## Key Conventions
-
-**Tool registration is config-only.** Tools are defined in `~/.config/agm/config.toml` under `[tools.<key>]`. A tool is considered "installed" if its `config_dir` directory exists on disk (`ToolConfig::is_installed()`). No code changes are needed to add a new tool.
-
-**Skills are identified by `SKILL.md`.** A directory is a skill if it contains a `SKILL.md` file. `skills::scan_skills()` recurses up to depth 3 to find them. The central skills directory holds symlinks to the individual skill directories.
-
-**Always use `paths::expand_tilde` / `contract_tilde`.** All paths from config are stored with `~/` prefix and must be expanded before use. Display paths back with `contract_tilde` for readability.
-
-**`BTreeMap` for tools.** `Config.tools` is `BTreeMap<String, ToolConfig>`, so tools are always iterated in alphabetical order.
-
-**Unix-only.** Symlink creation uses `std::os::unix::fs::symlink`; the tool is not designed for Windows.
-
-**Tests use `tempfile`.** Unit tests in each module create isolated temp dirs with the `tempfile` crate. Integration tests use `assert_cmd`. Auth-file paths in `ToolConfig.auth` may be absolute (checked with `is_absolute()`) while all other per-tool file paths are relative to `config_dir`.
+- Behavior change → update the matching `docs/reference/` file in the same commit.
+- New term → add its glossary entry in the same commit.
+- Landed documents in `docs/spec|plan|debug|audit/` are frozen; only their `Status:` line may
+  change.
+- New document → add its row to the folder's `README.md` in the same commit.
+- Keep platform `#[cfg]` inside `src/platform.rs`; keep printing out of anything reachable from
+  `src/tui/`.
+- Prefer the smallest change that solves the problem, and match the surrounding style.
