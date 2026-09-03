@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## [v0.16.0] - 2026-09-03
+
 ### Added
 - 2026-09-02: `src/tui/shell.rs` — a unified shell process hosting the **Tool Manager** and
   **Source Manager** as two screens switched with `Tab` / `Shift+Tab`. `Tab` is intercepted only
