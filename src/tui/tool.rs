@@ -2087,262 +2087,319 @@ fn render_row(
     let cursor_prefix = if is_cursor { "▸ " } else { "  " };
 
     match row {
-        ToolRow::AgmHeader => {
-            let arrow = if expanded.contains("agm") {
-                "▼"
-            } else {
-                "▶"
-            };
-            let style = if is_cursor {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD)
-            };
-            Line::from(Span::styled(
-                format!("{}{} agm", cursor_prefix, arrow),
-                style,
-            ))
-        }
-
-        ToolRow::AgmItem(field) => {
-            let (label, value) = match field {
-                AgmField::Source => (
-                    "source".to_string(),
-                    contract_tilde(&expand_tilde(&config.agm.source_dir)),
-                ),
-                AgmField::Prompt => (
-                    "prompt".to_string(),
-                    contract_tilde(&expand_tilde(&config.agm.prompt_source)),
-                ),
-                AgmField::Skills => (
-                    "skills".to_string(),
-                    contract_tilde(&expand_tilde(&config.agm.skills_source)),
-                ),
-                AgmField::Agents => (
-                    "agents".to_string(),
-                    contract_tilde(&expand_tilde(&config.agm.agents_source)),
-                ),
-                AgmField::Commands => (
-                    "commands".to_string(),
-                    contract_tilde(&expand_tilde(&config.agm.commands_source)),
-                ),
-            };
-
-            let is_feature = matches!(
-                field,
-                AgmField::Prompt | AgmField::Skills | AgmField::Agents | AgmField::Commands
-            );
-            let is_disabled = is_feature && config.agm.is_disabled(&label);
-
-            let (indicator, indicator_style) = if !is_feature {
-                ("  ".to_string(), Style::default())
-            } else if is_disabled {
-                ("✗ ".to_string(), Style::default().fg(Color::Red))
-            } else {
-                ("✓ ".to_string(), Style::default().fg(Color::Green))
-            };
-
-            let value_style = if is_cursor {
-                Style::default().fg(Color::Yellow)
-            } else if is_disabled {
-                Style::default().fg(Color::DarkGray)
-            } else {
-                Style::default().fg(Color::White)
-            };
-
-            Line::from(vec![
-                Span::raw(format!("{}    ", cursor_prefix)),
-                Span::styled(indicator, indicator_style),
-                Span::styled(
-                    format!("{:<8}", label),
-                    Style::default().fg(Color::DarkGray),
-                ),
-                Span::styled(value, value_style),
-            ])
-        }
-
+        ToolRow::AgmHeader => render_agm_header(is_cursor, cursor_prefix, expanded),
+        ToolRow::AgmItem(field) => render_agm_item(field, is_cursor, cursor_prefix, config),
         ToolRow::ToolHeader {
             key,
             name,
             installed,
-        } => {
-            let arrow = if expanded.contains(key) { "▼" } else { "▶" };
-            let status = if *installed { "" } else { " (not installed)" };
-            let style = if is_cursor {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD)
-            } else if !installed {
-                Style::default()
-                    .fg(Color::DarkGray)
-                    .add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-                    .fg(Color::White)
-                    .add_modifier(Modifier::BOLD)
-            };
-            Line::from(Span::styled(
-                format!("{}{} {} ({}){}", cursor_prefix, arrow, key, name, status),
-                style,
-            ))
-        }
-
+        } => render_tool_header(key, name, *installed, is_cursor, cursor_prefix, expanded),
         ToolRow::StatusHeader { tool_key } => {
-            let status_key = format!("{}:status", tool_key);
-            let arrow = if expanded.contains(&status_key) {
-                "▼"
-            } else {
-                "▶"
-            };
-            let (_, status_text, status_color) =
-                cache
-                    .tool
-                    .get(tool_key)
-                    .copied()
-                    .unwrap_or((0, "Not linked", Color::DarkGray));
-            let spans = vec![
-                Span::raw(format!("{}    {} ", cursor_prefix, arrow)),
-                Span::styled("status", Style::default().fg(Color::DarkGray)),
-                Span::raw("   "),
-                Span::styled(status_text.to_string(), Style::default().fg(status_color)),
-            ];
-            if is_cursor {
-                Line::from(spans).style(Style::default().fg(Color::Yellow))
-            } else {
-                Line::from(spans)
-            }
+            render_status_header(tool_key, is_cursor, cursor_prefix, expanded, cache)
         }
-
         ToolRow::LinkItem { tool_key, field } => {
-            let tool = match config.tools.get(tool_key) {
-                Some(t) => t,
-                None => return Line::from(""),
-            };
-            let label = field.key();
-            let link_path = match tool.resolved_link_path(label) {
-                Some(p) => p,
-                None => return Line::from(""),
-            };
-            let status = cache
-                .link
-                .get(&(tool_key.clone(), label))
-                .cloned()
-                .unwrap_or(LinkStatus::Missing);
-            let feature_disabled = config.agm.is_disabled(label);
-
-            if feature_disabled {
-                let spans = vec![
-                    Span::raw(format!("{}      ", cursor_prefix)),
-                    Span::styled(
-                        format!("{:<8} ", label),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                    Span::styled("disabled", Style::default().fg(Color::DarkGray)),
-                    Span::raw(format!(" → {}", contract_tilde(&link_path))),
-                ];
-                if is_cursor {
-                    Line::from(spans).style(Style::default().fg(Color::Yellow))
-                } else {
-                    Line::from(spans)
-                }
-            } else {
-                let status_spans = link_status_spans(&status, &link_path);
-                let mut spans = vec![
-                    Span::raw(format!("{}      ", cursor_prefix)),
-                    Span::styled(
-                        format!("{:<8} ", label),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                ];
-                spans.extend(status_spans);
-                if is_cursor {
-                    Line::from(spans).style(Style::default().fg(Color::Yellow))
-                } else {
-                    Line::from(spans)
-                }
-            }
+            render_link_item(tool_key, field, is_cursor, cursor_prefix, config, cache)
         }
-
         ToolRow::FileGroupHeader { tool_key, group } => {
-            let tool = match config.tools.get(tool_key) {
-                Some(t) => t,
-                None => return Line::from(""),
-            };
-            let label = group_label(group);
-            let files: &[String] = match group {
-                FileGroup::Settings => &tool.settings,
-                FileGroup::Auth => &tool.auth,
-                FileGroup::Mcp => &tool.mcp,
-            };
-
-            if files.len() <= 1 {
-                // Single file: inline display
-                let display = files
-                    .first()
-                    .map(|f| resolve_display(tool, f))
-                    .unwrap_or_default();
-                let style = if is_cursor {
-                    Style::default().fg(Color::Yellow)
-                } else {
-                    Style::default()
-                };
-                Line::from(vec![
-                    Span::raw(format!("{}    ", cursor_prefix)),
-                    Span::styled(
-                        format!("{:<8} ", label),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                    Span::styled(display, style),
-                ])
-            } else {
-                // Multi file: expandable
-                let gk = format!("{}:{}", tool_key, group_key_suffix(group));
-                let arrow = if expanded.contains(&gk) { "▼" } else { "▶" };
-                let style = if is_cursor {
-                    Style::default().fg(Color::Yellow)
-                } else {
-                    Style::default()
-                };
-                Line::from(vec![
-                    Span::raw(format!("{}    {} ", cursor_prefix, arrow)),
-                    Span::styled(label.to_string(), style),
-                ])
-            }
+            render_file_group_header(tool_key, group, is_cursor, cursor_prefix, config, expanded)
         }
-
         ToolRow::FileItem {
             tool_key,
             group,
             index,
-        } => {
-            let tool = match config.tools.get(tool_key) {
-                Some(t) => t,
-                None => return Line::from(""),
-            };
-            let files: &[String] = match group {
-                FileGroup::Settings => &tool.settings,
-                FileGroup::Auth => &tool.auth,
-                FileGroup::Mcp => &tool.mcp,
-            };
-            let display = files
-                .get(*index)
-                .map(|f| resolve_display(tool, f))
-                .unwrap_or_default();
-            let style = if is_cursor {
-                Style::default().fg(Color::Yellow)
-            } else {
-                Style::default()
-            };
-            Line::from(vec![
-                Span::raw(format!("{}      ", cursor_prefix)),
-                Span::styled(display, style),
-            ])
+        } => render_file_item(tool_key, group, *index, is_cursor, cursor_prefix, config),
+    }
+}
+
+fn render_agm_header(
+    is_cursor: bool,
+    cursor_prefix: &str,
+    expanded: &HashSet<String>,
+) -> Line<'static> {
+    let arrow = if expanded.contains("agm") {
+        "▼"
+    } else {
+        "▶"
+    };
+    let style = if is_cursor {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
+    };
+    Line::from(Span::styled(
+        format!("{}{} agm", cursor_prefix, arrow),
+        style,
+    ))
+}
+
+fn render_agm_item(
+    field: &AgmField,
+    is_cursor: bool,
+    cursor_prefix: &str,
+    config: &Config,
+) -> Line<'static> {
+    let (label, value) = match field {
+        AgmField::Source => (
+            "source".to_string(),
+            contract_tilde(&expand_tilde(&config.agm.source_dir)),
+        ),
+        AgmField::Prompt => (
+            "prompt".to_string(),
+            contract_tilde(&expand_tilde(&config.agm.prompt_source)),
+        ),
+        AgmField::Skills => (
+            "skills".to_string(),
+            contract_tilde(&expand_tilde(&config.agm.skills_source)),
+        ),
+        AgmField::Agents => (
+            "agents".to_string(),
+            contract_tilde(&expand_tilde(&config.agm.agents_source)),
+        ),
+        AgmField::Commands => (
+            "commands".to_string(),
+            contract_tilde(&expand_tilde(&config.agm.commands_source)),
+        ),
+    };
+
+    let is_feature = matches!(
+        field,
+        AgmField::Prompt | AgmField::Skills | AgmField::Agents | AgmField::Commands
+    );
+    let is_disabled = is_feature && config.agm.is_disabled(&label);
+
+    let (indicator, indicator_style) = if !is_feature {
+        ("  ".to_string(), Style::default())
+    } else if is_disabled {
+        ("✗ ".to_string(), Style::default().fg(Color::Red))
+    } else {
+        ("✓ ".to_string(), Style::default().fg(Color::Green))
+    };
+
+    let value_style = if is_cursor {
+        Style::default().fg(Color::Yellow)
+    } else if is_disabled {
+        Style::default().fg(Color::DarkGray)
+    } else {
+        Style::default().fg(Color::White)
+    };
+
+    Line::from(vec![
+        Span::raw(format!("{}    ", cursor_prefix)),
+        Span::styled(indicator, indicator_style),
+        Span::styled(
+            format!("{:<8}", label),
+            Style::default().fg(Color::DarkGray),
+        ),
+        Span::styled(value, value_style),
+    ])
+}
+
+fn render_tool_header(
+    key: &str,
+    name: &str,
+    installed: bool,
+    is_cursor: bool,
+    cursor_prefix: &str,
+    expanded: &HashSet<String>,
+) -> Line<'static> {
+    let arrow = if expanded.contains(key) { "▼" } else { "▶" };
+    let status = if installed { "" } else { " (not installed)" };
+    let style = if is_cursor {
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD)
+    } else if !installed {
+        Style::default()
+            .fg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::BOLD)
+    };
+    Line::from(Span::styled(
+        format!("{}{} {} ({}){}", cursor_prefix, arrow, key, name, status),
+        style,
+    ))
+}
+
+fn render_status_header(
+    tool_key: &str,
+    is_cursor: bool,
+    cursor_prefix: &str,
+    expanded: &HashSet<String>,
+    cache: &StatusCache,
+) -> Line<'static> {
+    let status_key = format!("{}:status", tool_key);
+    let arrow = if expanded.contains(&status_key) {
+        "▼"
+    } else {
+        "▶"
+    };
+    let (_, status_text, status_color) =
+        cache
+            .tool
+            .get(tool_key)
+            .copied()
+            .unwrap_or((0, "Not linked", Color::DarkGray));
+    let spans = vec![
+        Span::raw(format!("{}    {} ", cursor_prefix, arrow)),
+        Span::styled("status", Style::default().fg(Color::DarkGray)),
+        Span::raw("   "),
+        Span::styled(status_text.to_string(), Style::default().fg(status_color)),
+    ];
+    if is_cursor {
+        Line::from(spans).style(Style::default().fg(Color::Yellow))
+    } else {
+        Line::from(spans)
+    }
+}
+
+fn render_link_item(
+    tool_key: &String,
+    field: &LinkField,
+    is_cursor: bool,
+    cursor_prefix: &str,
+    config: &Config,
+    cache: &StatusCache,
+) -> Line<'static> {
+    let tool = match config.tools.get(tool_key) {
+        Some(t) => t,
+        None => return Line::from(""),
+    };
+    let label = field.key();
+    let link_path = match tool.resolved_link_path(label) {
+        Some(p) => p,
+        None => return Line::from(""),
+    };
+    let status = cache
+        .link
+        .get(&(tool_key.clone(), label))
+        .cloned()
+        .unwrap_or(LinkStatus::Missing);
+    let feature_disabled = config.agm.is_disabled(label);
+
+    if feature_disabled {
+        let spans = vec![
+            Span::raw(format!("{}      ", cursor_prefix)),
+            Span::styled(
+                format!("{:<8} ", label),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled("disabled", Style::default().fg(Color::DarkGray)),
+            Span::raw(format!(" → {}", contract_tilde(&link_path))),
+        ];
+        if is_cursor {
+            Line::from(spans).style(Style::default().fg(Color::Yellow))
+        } else {
+            Line::from(spans)
+        }
+    } else {
+        let status_spans = link_status_spans(&status, &link_path);
+        let mut spans = vec![
+            Span::raw(format!("{}      ", cursor_prefix)),
+            Span::styled(
+                format!("{:<8} ", label),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ];
+        spans.extend(status_spans);
+        if is_cursor {
+            Line::from(spans).style(Style::default().fg(Color::Yellow))
+        } else {
+            Line::from(spans)
         }
     }
+}
+
+fn render_file_group_header(
+    tool_key: &String,
+    group: &FileGroup,
+    is_cursor: bool,
+    cursor_prefix: &str,
+    config: &Config,
+    expanded: &HashSet<String>,
+) -> Line<'static> {
+    let tool = match config.tools.get(tool_key) {
+        Some(t) => t,
+        None => return Line::from(""),
+    };
+    let label = group_label(group);
+    let files: &[String] = match group {
+        FileGroup::Settings => &tool.settings,
+        FileGroup::Auth => &tool.auth,
+        FileGroup::Mcp => &tool.mcp,
+    };
+
+    if files.len() <= 1 {
+        // Single file: inline display
+        let display = files
+            .first()
+            .map(|f| resolve_display(tool, f))
+            .unwrap_or_default();
+        let style = if is_cursor {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default()
+        };
+        Line::from(vec![
+            Span::raw(format!("{}    ", cursor_prefix)),
+            Span::styled(
+                format!("{:<8} ", label),
+                Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled(display, style),
+        ])
+    } else {
+        // Multi file: expandable
+        let gk = format!("{}:{}", tool_key, group_key_suffix(group));
+        let arrow = if expanded.contains(&gk) { "▼" } else { "▶" };
+        let style = if is_cursor {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default()
+        };
+        Line::from(vec![
+            Span::raw(format!("{}    {} ", cursor_prefix, arrow)),
+            Span::styled(label.to_string(), style),
+        ])
+    }
+}
+
+fn render_file_item(
+    tool_key: &String,
+    group: &FileGroup,
+    index: usize,
+    is_cursor: bool,
+    cursor_prefix: &str,
+    config: &Config,
+) -> Line<'static> {
+    let tool = match config.tools.get(tool_key) {
+        Some(t) => t,
+        None => return Line::from(""),
+    };
+    let files: &[String] = match group {
+        FileGroup::Settings => &tool.settings,
+        FileGroup::Auth => &tool.auth,
+        FileGroup::Mcp => &tool.mcp,
+    };
+    let display = files
+        .get(index)
+        .map(|f| resolve_display(tool, f))
+        .unwrap_or_default();
+    let style = if is_cursor {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default()
+    };
+    Line::from(vec![
+        Span::raw(format!("{}      ", cursor_prefix)),
+        Span::styled(display, style),
+    ])
 }
 
 fn render_footer(app: &ToolApp, frame: &mut Frame, area: Rect) {
