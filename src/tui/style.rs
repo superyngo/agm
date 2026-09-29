@@ -144,6 +144,21 @@ pub fn section_style() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
+/// Rows that fit in a list of `area_height` (borders, header and footer take 5).
+pub fn page_size(area_height: u16) -> usize {
+    (area_height.saturating_sub(5)) as usize
+}
+
+/// Scroll `scroll_offset` just enough that `cursor` is inside the visible page.
+pub fn ensure_visible(cursor: usize, scroll_offset: &mut usize, area_height: u16) {
+    let page = page_size(area_height).max(1);
+    if cursor < *scroll_offset {
+        *scroll_offset = cursor;
+    } else if cursor >= *scroll_offset + page {
+        *scroll_offset = cursor - page + 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -209,20 +224,5 @@ mod tests {
         s.clear();
         assert!(!s.is_set());
         assert_eq!(s.to_line().to_string(), "");
-    }
-}
-
-/// Rows that fit in a list of `area_height` (borders, header and footer take 5).
-pub fn page_size(area_height: u16) -> usize {
-    (area_height.saturating_sub(5)) as usize
-}
-
-/// Scroll `scroll_offset` just enough that `cursor` is inside the visible page.
-pub fn ensure_visible(cursor: usize, scroll_offset: &mut usize, area_height: u16) {
-    let page = page_size(area_height).max(1);
-    if cursor < *scroll_offset {
-        *scroll_offset = cursor;
-    } else if cursor >= *scroll_offset + page {
-        *scroll_offset = cursor - page + 1;
     }
 }

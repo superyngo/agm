@@ -48,8 +48,8 @@ Dispatches on the current **Link status**:
 | `Blocked` | **refuse**, print `exists but is not a link, skipping` | `false` |
 
 `create_link` never deletes real content. Anything destructive — migrating a populated skills
-directory, deleting an empty one, backing up a non-empty **Prompt** — happens in the caller
-(`link_all`, see [cli.md](cli.md#agm-tool-link)), not here.
+directory, removing an empty one, backing up a non-empty **Prompt** — happens in the caller
+(`prepare_link` in `main.rs`, see [cli.md](cli.md#agm-tool-link)), not here.
 
 ## `remove_link`
 

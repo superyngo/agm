@@ -188,7 +188,7 @@ fn prepare_link(
                 if feature.is_dir {
                     platform::remove_link(link)
                 } else {
-                    fs::remove_file(link).map_err(Into::into)
+                    fs::remove_file(link)
                 }
                 .with_context(|| format!("removing old {} link {}", feature.key, link.display()))?;
                 println!(

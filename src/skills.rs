@@ -2709,7 +2709,7 @@ mod tests {
                 n.starts_with(&prefix) && n.ends_with(".bak")
             })
             .collect();
-        backups.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+        backups.sort_by_key(|b| std::cmp::Reverse(b.file_name()));
         assert!(!backups.is_empty());
         let latest = backups.first().unwrap();
         fs::rename(latest.path(), &prompt_path).unwrap();

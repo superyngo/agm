@@ -61,11 +61,13 @@ installed.
 | `install_skill` | create the central directory if needed, drop the name from the **Blocklist**, then link `skills/<name>` → the source directory. Already correctly linked → no-op. Name taken by another source → error `Skill '<name>' already exists (installed from another source). Uninstall it first.` |
 | `install_agent` / `install_command` | same, with a file link at `<name>.md`. Identity is checked with `same_file`, so a Windows hardlink counts as installed. |
 | `uninstall_skill` | remove the link and **add the name to the Blocklist**. Never touches `source/`. |
-| `uninstall_agent` / `uninstall_command` | remove the link. **No blocklist entry** — only skills are blocklisted. |
+| `uninstall_agent` / `uninstall_command` | remove the link and add `agent:<name>` / `command:<name>` to the **Blocklist**. |
+| `unlink_skill` / `unlink_agent` / `unlink_command` | remove the link only — no **Blocklist** entry. Used by `delete_source` and `rename_source`, which are not user intent to keep an item out. |
 
 The **Blocklist** exists so that `agm source update`, which re-scans and installs newly appeared
 **Skill**s, does not resurrect something the user deliberately removed. An explicit install
-clears the entry.
+clears the entry. Skills are stored under their bare name; agents and commands are prefixed
+(`agent:`, `command:`) so the kinds never shadow each other.
 
 ## `prune_broken_*`
 
@@ -106,9 +108,10 @@ new_agents, new_commands }`. Non-git sources (`local`, `agm_tools`) are skipped 
   excluded from the URL pass). Ambiguity and no-match are both errors.
 - `delete_source` removes every central **Link** owned by that **Source** — skills, agents,
   commands — and then deletes the source directory.
-- `rename_source` validates the new name, refuses an existing target, renames the directory, and
-  relinks only the **Item**s that were installed, reporting a `RenameReport` with per-kind
-  relink counts plus `relink_failures` and `rollback_failures`.
+- `rename_source` validates the new name, refuses an existing target and refuses `Migrated`
+  sources, **renames the directory first** (a failure leaves everything untouched), then unlinks
+  the now-dangling links and relinks from a fresh scan only the **Item**s that were installed,
+  reporting a `RenameReport` with per-kind relink counts plus `relink_failures`.
 
 URL comparison is normalized: trailing `/` and `.git` stripped, `git@host:user/repo` folded to
 `host/user/repo`, lowercased.
@@ -117,12 +120,12 @@ URL comparison is normalized: trailing `/` and `.git` stripped, `git@host:user/r
 
 When `agm tool link` finds real content where a **Skill** link belongs, `migrate_tool_dir_quiet`
 moves it into `source/agm_tools/<tool key>/` and links the migrated skills into the **Central
-store**. However, for `agents/`, `agm tool link` currently deletes a real directory rather than
-migrating it (tracked in [BACKLOG](../plan/BACKLOG.md) B1), and `commands/` is not linked at all by
-the CLI (tracked in [BACKLOG](../plan/BACKLOG.md) B2). Sibling migration functions
-(`migrate_agents_dir_quiet` and `migrate_commands_dir_quiet`) exist but are only invoked from the
-**Tool Manager** (`handle_blocked_link`), skipping the tool's `prompt_filename` so a `CLAUDE.md` is
-never adopted as an **Agent**. All three return `(count, messages)` rather than printing.
+store**. `agents/` and `commands/` use `migrate_agents_dir_quiet` / `migrate_commands_dir_quiet`,
+which skip the tool's `prompt_filename` so a `CLAUDE.md` is never adopted as an **Agent**.
+`migrate_feature_dir` is the single entry point used by both the CLI and the **Tool Manager**.
+All return `(count, messages)` rather than printing. Afterwards `finish_migration_dir` removes the
+tool's directory only if it is empty; otherwise it is renamed to `<dir>.agm-<timestamp>.bak` so
+unrecognised files and conflicting copies are never lost.
 
 ## Preload chars
 

@@ -51,8 +51,8 @@ tracked in [BACKLOG](../plan/BACKLOG.md) B11: the `#[cfg(windows)]` branches in
 
 1. `Config::load_from` reads the TOML.
 2. Filter `config.tools` to those where `ToolConfig::is_installed()` (the **Config dir** exists).
-3. Prune broken links in the **Central store** (skills and agents only).
-4. Per **Tool**, for `skills`, `agents`, and `prompt` (commands is omitted, tracked in [BACKLOG](../plan/BACKLOG.md) B2): `resolved_link_path` → inspect what is already there → migrate, back up, or delete as needed → `linker::create_link`.
+3. Prune broken links in the **Central store** (skills, agents and commands).
+4. Per **Tool**, for each entry of the `FEATURES` table (`prompt`, `skills`, `agents`, `commands`): `resolved_link_path` → `prepare_link` (migrate, keep leftovers as `.bak`, back up) → `linker::create_link`. Errors are collected per tool.
 
 See [cli.md](cli.md#agm-tool-link) for the full pre-handling table and
 [linking.md](linking.md) for the decision table.

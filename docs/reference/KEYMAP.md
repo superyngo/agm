@@ -40,8 +40,8 @@ the **Tool Manager** (`agm tool`) and the **Source Manager** (`agm source`) — 
 | `l` | With a selection: confirm bulk install/uninstall of the selected items. Without: toggle install of the item under the cursor, or bulk-toggle a whole **Source** header |
 | `e` | On a skill row: open `SKILL.md` in the editor. On an agent or command row: open the file in the editor. (Source directory rows do nothing) |
 | `a` | Add a **Source** — inline prompt for a URL or local path |
-| `r` | Rename the **Source** under the cursor — inline prompt |
-| `d` / `Del` | Delete the **Source** under the cursor (confirmation required) |
+| `r` | Rename the **Source** under the cursor — inline prompt (source rows only; refused for `Migrated` sources and while a background task runs) |
+| `d` / `Del` | Delete the **Source** under the cursor (source rows only; confirmation required; refused while a background task runs) |
 | `u` | `git pull` every **Source** in the background |
 | `F5` | Rescan sources and prune broken links |
 | `/` | Enter fuzzy search; expands all rows |

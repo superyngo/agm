@@ -93,8 +93,8 @@ or `Conflict` — the last meaning a different **Source** already owns that name
 _Avoid_: Enabled, active, linked (that is **Link status**, a different axis).
 
 **Blocklist**:
-The `.agm_uninstalled` file kept beside the **Central store**'s `skills/` directory, listing
-names the user explicitly uninstalled so a later `agm source update` does not re-install them.
+The `.agm_uninstalled` file kept beside the **Central store**'s directories, listing
+skill names (bare) and agent/command names (`agent:`/`command:` prefixed) the user explicitly uninstalled so a later `agm source update` does not re-install them.
 _Avoid_: Denylist, ignore file, exclusions.
 
 **Preload chars**:

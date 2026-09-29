@@ -45,26 +45,21 @@ Order of work in `main.rs` `link_all`:
 
 1. Prune broken **Skill** and **Agent** links from the **Central store**.
 2. Print the globally disabled **Feature** list, if any.
-3. For every installed **Tool**, in **Tool key** order: link `skills`, then `agents`, then
-   `prompt`.
+3. For every installed **Tool**, in **Tool key** order: link `prompt`, `skills`, `agents`, then
+   `commands` (the `FEATURES` table in `main.rs`). A failure in one **Tool** is reported and the
+   remaining tools are still processed; the command exits non-zero with a summary at the end.
 
-It runs non-interactively: every "Re-link? / Migrate? / Backup?" decision is auto-answered
-**yes** (`yes = true` in `link_all`), so the interactive `prompt_yes_no` path is currently
-unreachable from the CLI.
+It runs non-interactively: it never asks, and it never destroys content it does not recognize.
 Per-**Feature** pre-handling before the link is created:
 
-| Existing state at the link path | `skills` / `agents` | `prompt` |
+| Existing state at the link path | `skills` / `agents` / `commands` | `prompt` |
 |---|---|---|
 | Correct link | left alone (`skip … already linked`) | left alone |
 | Link to a different target | old link removed, relinked | old link removed, relinked |
-| Real directory with content | `skills`: content **migrated** to `source/agm_tools/<tool key>/`; `agents`: directory **deleted** (tracked in [BACKLOG](../plan/BACKLOG.md) B1) | n/a |
-| Empty real directory | deleted, then linked | n/a |
+| Real directory with content | recognised items **migrated** to `source/agm_tools/<tool key>/` (`agents/`, `commands/` subdirectories for those kinds); anything left behind (unrecognised files, the tool's own copy of an item already in the store) is kept by renaming the directory to `<dir>.agm-<YYYYMMDD_HHMMSS>.bak` and reported | n/a |
+| Empty real directory | removed, then linked | n/a |
 | Real file with content | n/a | renamed to `<name>.<YYYYMMDD_HHMMSS>.bak`, then linked |
 | Real file that is blank | n/a | deleted, then linked |
-
-**`commands` is not linked by `agm tool link`** (tracked in [BACKLOG](../plan/BACKLOG.md) B2).
-`link_all` handles `skills`, `agents`, and `prompt` only, while `unlink_all` removes all four.
-Linking a **Tool**'s `commands` directory is only reachable from the **Tool Manager**.
 
 A **Feature** is skipped when it is listed in `agm.disabled`, or when the **Tool**'s
 corresponding field is empty, or when the resolved link path would collide with the **Config
@@ -74,9 +69,10 @@ dir** itself (a warning is printed and the field skipped, `Config::resolved_link
 
 For every installed **Tool** and each of the four **Feature**s: remove the link, and if removal
 succeeded, **copy the Central store content back** into the tool's own path
-(`skills::copy_dir_all`, or `fs::copy` for the **Prompt**). A path that is not a link is left
-untouched with a warning. Unlink is therefore not a pure inverse of link — the tool ends up with
-real copies, not the pre-AGM content.
+(`skills::copy_dir_resolved`, which follows symlinks so the tool gets real files, or `fs::copy`
+for the **Prompt**). A path that is not a link is left untouched with a warning. Unlink is
+therefore not a pure inverse of link — the tool ends up with real copies, not the pre-AGM
+content. The **Tool Manager** unlinks with the same semantics (`linker::detach_copy`).
 
 ## `agm source add`
 

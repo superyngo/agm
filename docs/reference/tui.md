@@ -83,7 +83,14 @@ refresh path — `F5`, background add, background update, rename, delete — goe
 
 Deleting a `Repo` or `Local` **Source** takes a `y`/`Y` confirmation. Deleting a `Migrated`
 **Source** requires typing the literal word `delete`, because that content exists nowhere else —
-it was moved out of a **Tool**.
+it was moved out of a **Tool**. A `Migrated` **Source** cannot be renamed.
+
+While a background add or update is running, delete, rename, bulk install/uninstall and `F5`
+are refused with a "Busy" status so they cannot race the rescan. Per-source UI state (expanded
+sources, an open confirmation, the rename target) follows the **Source** across rescans.
+
+Unlinking a **Feature** from the **Tool Manager** leaves the **Tool** with real copies of the
+central content, exactly like `agm tool unlink` (`linker::detach_copy`).
 
 ## Background work
 
