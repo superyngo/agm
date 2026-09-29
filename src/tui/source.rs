@@ -358,15 +358,62 @@ impl App {
             })
             .collect();
 
-        let _ = skills::prune_broken_skills(&self.skills_dir);
-        let _ = skills::prune_broken_agents(&self.agents_dir);
-        let _ = skills::prune_broken_commands(&self.commands_dir);
+        for (what, result) in [
+            ("skills", skills::prune_broken_skills(&self.skills_dir)),
+            ("agents", skills::prune_broken_agents(&self.agents_dir)),
+            (
+                "commands",
+                skills::prune_broken_commands(&self.commands_dir),
+            ),
+        ] {
+            if let Err(e) = result {
+                self.log.push(
+                    super::log::LogLevel::Error,
+                    format!("Pruning broken {} links failed: {}", what, e),
+                );
+            }
+        }
+        // Group-index state (expanded sources, open confirmation, rename target)
+        // must follow the source, not the list position, across a rescan/re-sort.
+        let old_paths: Vec<PathBuf> = self.groups.iter().map(|g| g.path.clone()).collect();
         self.groups = skills::scan_all_sources(
             &self.source_dir,
             &self.skills_dir,
             &self.agents_dir,
             &self.commands_dir,
         );
+        let remap = |i: usize, groups: &[skills::SourceGroup]| -> Option<usize> {
+            let path = old_paths.get(i)?;
+            groups.iter().position(|g| &g.path == path)
+        };
+        let groups = &self.groups;
+        for set in [
+            &mut self.expanded_skills_sources,
+            &mut self.expanded_agents_sources,
+            &mut self.expanded_commands_sources,
+        ] {
+            *set = set.iter().filter_map(|&i| remap(i, groups)).collect();
+        }
+        self.rename_target_group_index = self
+            .rename_target_group_index
+            .and_then(|i| remap(i, groups));
+        self.confirm_state = match self.confirm_state.take() {
+            Some(ConfirmState::Normal { group_index }) => {
+                remap(group_index, groups).map(|group_index| ConfirmState::Normal { group_index })
+            }
+            Some(ConfirmState::Migrated { group_index, typed }) => remap(group_index, groups)
+                .map(|group_index| ConfirmState::Migrated { group_index, typed }),
+            Some(ConfirmState::BulkToggle {
+                group_index,
+                category,
+                install,
+            }) => remap(group_index, groups).map(|group_index| ConfirmState::BulkToggle {
+                group_index,
+                category,
+                install,
+            }),
+            other => other,
+        };
         self.rebuild_rows();
         self.clamp_cursor();
 

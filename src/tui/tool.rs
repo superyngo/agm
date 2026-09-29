@@ -270,6 +270,8 @@ pub struct ToolApp {
     cursor: usize,
     scroll_offset: usize,
     expanded: HashSet<String>,
+    /// Filesystem-derived status, recomputed in `rebuild_rows` so rendering does no I/O.
+    status_cache: StatusCache,
     log: super::log::LogBuffer,
     status_message: super::style::StatusLine,
     popup: Option<PopupState>,
@@ -283,12 +285,14 @@ impl ToolApp {
         let mut expanded = HashSet::new();
         expanded.insert("agm".to_string());
         let rows = build_rows(&config, &expanded);
+        let status_cache = StatusCache::compute(&config);
         Self {
             config,
             config_path,
             rows,
             cursor: 0,
             scroll_offset: 0,
+            status_cache,
             expanded,
             log: super::log::LogBuffer::new(500),
             status_message: super::style::StatusLine::new(),
@@ -321,6 +325,7 @@ impl ToolApp {
     }
 
     fn rebuild_rows(&mut self) {
+        self.status_cache = StatusCache::compute(&self.config);
         self.rows = build_rows(&self.config, &self.expanded);
         if self.cursor >= self.rows.len() {
             self.cursor = self.rows.len().saturating_sub(1);
@@ -2076,6 +2081,36 @@ fn link_status_spans(status: &LinkStatus, link_path: &std::path::Path) -> Vec<Sp
     }
 }
 
+/// Link/tool statuses gathered from the filesystem once per `rebuild_rows`.
+#[derive(Default)]
+struct StatusCache {
+    link: std::collections::HashMap<(String, &'static str), LinkStatus>,
+    tool: std::collections::HashMap<String, (u8, &'static str, Color)>,
+}
+
+impl StatusCache {
+    fn compute(config: &Config) -> Self {
+        let mut cache = Self::default();
+        for (key, tool) in &config.tools {
+            cache
+                .tool
+                .insert(key.clone(), compute_tool_status(config, key));
+            for (label, src, is_dir) in [
+                ("prompt", &config.agm.prompt_source, false),
+                ("skills", &config.agm.skills_source, true),
+                ("agents", &config.agm.agents_source, true),
+                ("commands", &config.agm.commands_source, true),
+            ] {
+                if let Some(link_path) = tool.resolved_link_path(label) {
+                    let status = linker::check_link(&link_path, &expand_tilde(src), is_dir);
+                    cache.link.insert((key.clone(), label), status);
+                }
+            }
+        }
+        cache
+    }
+}
+
 fn compute_tool_status(config: &Config, tool_key: &str) -> (u8, &'static str, Color) {
     let tool = match config.tools.get(tool_key) {
         Some(t) => t,
@@ -2328,7 +2363,13 @@ fn render_list(app: &ToolApp, frame: &mut Frame, area: Rect) {
     for idx in start..end {
         let is_cursor = idx == app.cursor;
         let row = &app.rows[idx];
-        let line = render_row(row, is_cursor, &app.config, &app.expanded);
+        let line = render_row(
+            row,
+            is_cursor,
+            &app.config,
+            &app.expanded,
+            &app.status_cache,
+        );
         lines.push(line);
     }
 
@@ -2341,6 +2382,7 @@ fn render_row(
     is_cursor: bool,
     config: &Config,
     expanded: &HashSet<String>,
+    cache: &StatusCache,
 ) -> Line<'static> {
     let cursor_prefix = if is_cursor { "▸ " } else { "  " };
 
@@ -2456,7 +2498,12 @@ fn render_row(
             } else {
                 "▶"
             };
-            let (_, status_text, status_color) = compute_tool_status(config, tool_key);
+            let (_, status_text, status_color) =
+                cache
+                    .tool
+                    .get(tool_key)
+                    .copied()
+                    .unwrap_or((0, "Not linked", Color::DarkGray));
             let spans = vec![
                 Span::raw(format!("{}    {} ", cursor_prefix, arrow)),
                 Span::styled("status", Style::default().fg(Color::DarkGray)),
@@ -2485,13 +2532,11 @@ fn render_row(
                 Some(p) => p,
                 None => return Line::from(""),
             };
-            let (target, is_dir) = match field {
-                LinkField::Prompt => (expand_tilde(&config.agm.prompt_source), false),
-                LinkField::Skills => (expand_tilde(&config.agm.skills_source), true),
-                LinkField::Agents => (expand_tilde(&config.agm.agents_source), true),
-                LinkField::Commands => (expand_tilde(&config.agm.commands_source), true),
-            };
-            let status = linker::check_link(&link_path, &target, is_dir);
+            let status = cache
+                .link
+                .get(&(tool_key.clone(), label))
+                .cloned()
+                .unwrap_or(LinkStatus::Missing);
             let feature_disabled = config.agm.is_disabled(label);
 
             if feature_disabled {

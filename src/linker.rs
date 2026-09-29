@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::platform;
 
 /// Status of a link check
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum LinkStatus {
     /// Correct link pointing to expected target
     Linked,
