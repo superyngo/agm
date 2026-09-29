@@ -26,6 +26,58 @@ pub fn status(config_path: Option<std::path::PathBuf>) -> anyhow::Result<()> {
             continue;
         }
 
+        let config_dir = contract_tilde(&tool.resolved_config_dir());
+        println!(
+            " {:<13} {:<23}",
+            format!("{} ({})", key, tool.name).dimmed(),
+            config_dir.dimmed(),
+        );
+
+        for (feature, source, is_dir) in [
+            ("prompt", &agm_prompt, false),
+            ("skills", &agm_skills, true),
+            ("agents", &agm_agents, true),
+            ("commands", &agm_commands, true),
+        ] {
+            let Some(link) = tool.resolved_link_path(feature) else {
+                continue;
+            };
+            print!("{}{:<8}", INDENT, feature);
+            if config.agm.is_disabled(feature) {
+                println!("{}", "disabled".dimmed());
+                continue;
+            }
+            match check_link(&link, source, is_dir) {
+                LinkStatus::Linked => println!(
+                    "{} → {}",
+                    "✓ linked".green(),
+                    contract_tilde(&link).dimmed()
+                ),
+                LinkStatus::Missing => println!(
+                    "{} → {}",
+                    "✗ missing".yellow(),
+                    contract_tilde(source).dimmed()
+                ),
+                LinkStatus::Broken => println!("{}", "✗ broken".red()),
+                LinkStatus::Wrong(t) => println!("{} → {}", "✗ wrong".red(), t.dimmed()),
+                LinkStatus::Blocked => println!(
+                    "{} → {}",
+                    "✗ not linked".yellow(),
+                    contract_tilde(&link).dimmed()
+                ),
+            }
+        }
+    }
+
+    println!("{}", "═".repeat(62));
+    println!(" {:<13} {:<23}", "Tool", "Config Dir");
+    println!("{}", "─".repeat(62));
+
+    for (key, tool) in &config.tools {
+        if !tool.is_installed() {
+            continue;
+        }
+
         let prompt_link = tool.resolved_link_path("prompt");
         let prompt_ls = prompt_link
             .as_ref()
