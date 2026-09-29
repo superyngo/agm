@@ -350,8 +350,7 @@ fn install_md_item(
         }
         anyhow::bail!(
             "{} '{}' already exists (installed from another source). Uninstall it first.",
-            kind.label()
-                .replacen(|_| true, &kind.label()[..1].to_uppercase(), 1),
+            kind.title(),
             name
         );
     }
