@@ -2393,7 +2393,7 @@ pub(crate) fn render(app: &mut App, frame: &mut Frame) {
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(3)])
+        .constraints([Constraint::Min(3), Constraint::Length(4)])
         .split(area);
 
     render_list(app, frame, chunks[0]);

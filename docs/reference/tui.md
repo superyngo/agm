@@ -27,12 +27,11 @@ edits to disk), so a change made on the Tool tab is visible immediately after sw
 ## Common shape
 
 Both screens render: a title bar (`agm — [Tool] · Source` / `agm — Tool · [Source]` left,
-`v<version>` right), a flat-rendered tree list, and a three-row bordered footer with one content
-line. That line shows the status message while one is set (it expires after 3 seconds), otherwise
-the context-sensitive key hints for the row under the cursor, then `Tab`. The Source Manager also
-builds a background-progress (`⟳ …`) and selection-count line, but it is only drawn when the footer
-has two content lines, which the fixed height never gives (tracked in
-[BACKLOG](../plan/BACKLOG.md) B12).
+`v<version>` right), a flat-rendered tree list, and a bordered footer. The Tool Manager's footer has
+one content line: the status message while one is set (it expires after 3 seconds), otherwise the
+context-sensitive key hints for the row under the cursor, then `Tab`. The Source Manager's footer
+has two content lines: the hints, then a status line showing background progress (`⟳ …`), the
+status message, or the selection count.
 
 ## Tool Manager screen (`agm tool`)
 
