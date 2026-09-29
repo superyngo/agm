@@ -7,15 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### 2026-09-29
-
-- 2026-09-29: Fix/refactor: closed the rest of the backlog. `agm source list` shows commands (B3); Ctrl+C listed in both helps (B6); the log popup closes on `⏎`/`␣` (B5); the Source Manager footer draws progress and selection count (B12); one `ToolConfig::resolve_path` (B7); linker branch tests (B8); offline git-output test (B10); `#[cfg]` and printing removed from outside `platform.rs`/CLI (B11, `Config::resolve_link`); feature-table helpers in `tool.rs` (B44); TOML section splicing moved to `config.rs` and shared `backup_path`/`migrate_feature_dir` (B45); one row/info-line/toggle implementation across skills/agents/commands in the Source Manager (B43); giant TUI functions split (B46).
-- 2026-09-29: Fix: code-audit findings B1–B8, B10–B50. `agm tool link` no longer deletes tool content: recognised items are migrated (skills, agents **and** commands) and leftovers are kept as `<dir>.agm-<timestamp>.bak`; commands are now linked by the CLI. `agm tool unlink` (and the Tool Manager) leave real copies instead of links into the store. Uninstalled agents/commands are blocklisted per kind; delete/rename no longer blocklist; `rename_source` renames first and refuses `Migrated` sources. Source Manager state follows sources across rescans, is gated while a background task runs, and unlink/link render no longer touches the filesystem per frame. Also: `tool status` honours `--config`, editors with arguments work, the config editor validates the schema and writes atomically, git never prompts on the TUI terminal, `ssh://`/`git://` URLs and derived names are handled, a crashed background worker no longer wedges the UI. New `tests/e2e.rs` runs the real binary against a temporary `$HOME`. Refactors: table-driven link/unlink, one `FileItemKind` implementation for agents and commands, shared migration and scroll/hint helpers, one `InputMode` enum.
-- 2026-09-29: Docs: landed the [code audit](docs/audit/2026-09-29-code-audit.md) (1 critical, 8 high, 12 medium, 9 low, 8 structural findings; three reproduced on the binary, including `agm tool link` migration deleting unrecognized tool content) and tracked every finding in [`docs/plan/BACKLOG.md`](docs/plan/BACKLOG.md) as B13–B50.
-- 2026-09-29: Docs: landed the [documentation audit](docs/audit/2026-09-29-documentation-audit.md) and [prompt audit](docs/audit/2026-09-29-prompt-audit.md). Corrected `docs/reference/` against the code: `cli.md`, `config.md`, `sources.md`, `architecture.md`, `linking.md`, `KEYMAP.md`, `tui.md`, `glossary.md` (new **Category** entry) and `releasing.md` (Windows targets). Also corrected `README.md` (the commands feature, editor resolution). Newly documented: shallow clone, duplicate-name reporting, greyed-out disabled features, and the bulk install/uninstall direction rule.
-- 2026-09-29: Docs: new living backlog [`docs/plan/BACKLOG.md`](docs/plan/BACKLOG.md) holding the code defects the audit found (B1–B12), including `agm tool link` deleting a non-empty `agents/` directory (B1).
-- 2026-09-29: Docs: moved agent conduct from `GEMINI.md` to `AGENTS.md`; `CLAUDE.md` and `GEMINI.md` now import it. Added a pointer to where `wens-dev-principles` lives.
-- 2026-09-29: Docs: spelled the changelog heading `## [Unreleased]`, put the v0.5.0/v0.4.0 sections in version order, and gave the v0.1.x headings the `v` prefix. Repaired dead spec paths in six frozen records.
+## [v0.16.1] - 2026-09-29
+### Fixed
+- Fixed every open backlog finding from the 2026-09-29 code audit (B1–B50): safer migration and unlink (no silent deletions, `.bak` leftovers kept), per-kind blocklists, source rename, Source Manager state and footer, CLI link/unlink feature table including commands, `$`/`~` path resolution, link-path collision refusal, git output routed through progress callbacks, `#[cfg]` confined to `src/platform.rs`, and config-editor schema validation with atomic writes.
+### Changed
+- Refactors (S1–S4): shared scan/install/link helpers, split oversized TUI handlers and renderers, one runtime path resolver, `StatusCache` to remove render-time filesystem I/O, and new e2e tests running the real binary against a temporary `$HOME`.
+### Docs
+- Updated `docs/reference/*`, `KEYMAP.md`, the glossary and the backlog; the audit report is marked resolved.
 
 ## [v0.16.0] - 2026-09-03
 
