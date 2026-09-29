@@ -57,6 +57,20 @@ fn check_dir_link(link_path: &Path, expected_target: &Path) -> LinkStatus {
     }
 }
 
+/// Give the tool real copies of what `source` provided (links followed), after its link
+/// was removed. Returns `false` when there is nothing to copy.
+pub fn detach_copy(source: &Path, link: &Path, is_dir: bool) -> anyhow::Result<bool> {
+    if !source.exists() {
+        return Ok(false);
+    }
+    if is_dir {
+        crate::skills::copy_dir_resolved(source, link)?;
+    } else {
+        fs::copy(source, link)?;
+    }
+    Ok(true)
+}
+
 /// Resolve a link's raw target to an absolute, canonical path when possible.
 /// Relative targets are resolved against the link's parent, so a missing target still
 /// compares equal to the expected path (reported as `Broken`, not `Wrong`).

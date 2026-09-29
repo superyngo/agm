@@ -350,12 +350,9 @@ fn unlink_tool(config: &config::Config, tool: &config::ToolConfig) -> anyhow::Re
             continue;
         };
         let source = feature_source(config, feature);
-        if linker::remove_link(&link, feature.key, feature.is_dir)? && source.exists() {
-            if feature.is_dir {
-                skills::copy_dir_resolved(&source, &link)?;
-            } else {
-                fs::copy(&source, &link)?;
-            }
+        if linker::remove_link(&link, feature.key, feature.is_dir)?
+            && linker::detach_copy(&source, &link, feature.is_dir)?
+        {
             println!("  {} {} copied back", " ok ".green(), feature.key);
         }
     }

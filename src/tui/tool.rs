@@ -1006,17 +1006,8 @@ impl ToolApp {
         }
     }
 
-    fn cleanup_empty_tool_store(&self, tool_store: &std::path::Path) {
-        if !tool_store.exists() {
-            return;
-        }
-        if let Ok(mut entries) = std::fs::read_dir(tool_store) {
-            if entries.next().is_none() {
-                let _ = std::fs::remove_dir(tool_store);
-            }
-        }
-    }
-
+    /// After unlinking, leave the tool with real copies of what AGM was providing
+    /// (the same semantics as `agm tool unlink`), so it keeps working without AGM.
     fn recover_after_unlink(
         &mut self,
         tool_key: &str,
@@ -1024,214 +1015,19 @@ impl ToolApp {
         link_path: &std::path::Path,
     ) {
         use super::log::LogLevel;
-        let source_dir = expand_tilde(&self.config.agm.source_dir);
-        let tool_store = source_dir.join("agm_tools").join(tool_key);
-
-        match field {
-            LinkField::Skills => {
-                if !tool_store.exists() {
-                    let _ = std::fs::create_dir_all(link_path);
-                    return;
-                }
-                // Create the tool's skills directory
-                if let Err(e) = std::fs::create_dir_all(link_path) {
-                    self.log.push(
-                        LogLevel::Warning,
-                        format!("[{}] Failed to create skills dir: {}", tool_key, e),
-                    );
-                    return;
-                }
-                // Move skill directories: any dir in tool_store that
-                // is not "agents" and contains SKILL.md
-                let mut count = 0usize;
-                if let Ok(entries) = std::fs::read_dir(&tool_store) {
-                    for entry in entries.flatten() {
-                        let name = entry.file_name().to_string_lossy().to_string();
-                        if name == "agents" {
-                            continue;
-                        }
-                        let path = entry.path();
-                        if !path.is_dir() {
-                            continue;
-                        }
-                        if !path.join("SKILL.md").exists() {
-                            continue;
-                        }
-                        let dest = link_path.join(&name);
-                        if dest.exists() {
-                            continue;
-                        }
-                        if std::fs::rename(&path, &dest).is_ok() {
-                            count += 1;
-                        }
-                    }
-                }
-                if count > 0 {
-                    self.log.push(
-                        LogLevel::Info,
-                        format!("[{}] Restored {} skill(s)", tool_key, count),
-                    );
-                }
-                self.cleanup_empty_tool_store(&tool_store);
-            }
-            LinkField::Agents => {
-                let agents_store = tool_store.join("agents");
-                if agents_store.exists() {
-                    // Selectively restore .md files from store
-                    if let Err(e) = std::fs::create_dir_all(link_path) {
-                        self.log.push(
-                            LogLevel::Warning,
-                            format!("[{}] Failed to create agents dir: {}", tool_key, e),
-                        );
-                        return;
-                    }
-                    let mut count = 0usize;
-                    if let Ok(entries) = std::fs::read_dir(&agents_store) {
-                        for entry in entries.flatten() {
-                            let path = entry.path();
-                            if !path.is_file() {
-                                continue;
-                            }
-                            let name = entry.file_name().to_string_lossy().to_string();
-                            if !name.ends_with(".md") {
-                                continue;
-                            }
-                            let dest = link_path.join(&name);
-                            if dest.exists() {
-                                continue;
-                            }
-                            if std::fs::rename(&path, &dest).is_ok() {
-                                count += 1;
-                            }
-                        }
-                    }
-                    if count > 0 {
-                        self.log.push(
-                            LogLevel::Info,
-                            format!("[{}] Restored {} agent(s)", tool_key, count),
-                        );
-                    }
-                    self.cleanup_empty_tool_store(&tool_store);
-                } else {
-                    match std::fs::create_dir_all(link_path) {
-                        Ok(()) => {
-                            self.log.push(
-                                LogLevel::Info,
-                                format!("[{}] Created empty agents directory", tool_key),
-                            );
-                        }
-                        Err(e) => {
-                            self.log.push(
-                                LogLevel::Warning,
-                                format!("[{}] Failed to create agents directory: {}", tool_key, e),
-                            );
-                        }
-                    }
-                }
-            }
-            LinkField::Commands => {
-                let commands_store = tool_store.join("commands");
-                if commands_store.exists() {
-                    // Selectively restore .md files from store
-                    if let Err(e) = std::fs::create_dir_all(link_path) {
-                        self.log.push(
-                            LogLevel::Warning,
-                            format!("[{}] Failed to create commands dir: {}", tool_key, e),
-                        );
-                        return;
-                    }
-                    let mut count = 0usize;
-                    if let Ok(entries) = std::fs::read_dir(&commands_store) {
-                        for entry in entries.flatten() {
-                            let path = entry.path();
-                            if !path.is_file() {
-                                continue;
-                            }
-                            let name = entry.file_name().to_string_lossy().to_string();
-                            if !name.ends_with(".md") {
-                                continue;
-                            }
-                            let dest = link_path.join(&name);
-                            if dest.exists() {
-                                continue;
-                            }
-                            if std::fs::rename(&path, &dest).is_ok() {
-                                count += 1;
-                            }
-                        }
-                    }
-                    if count > 0 {
-                        self.log.push(
-                            LogLevel::Info,
-                            format!("[{}] Restored {} command(s)", tool_key, count),
-                        );
-                    }
-                    self.cleanup_empty_tool_store(&tool_store);
-                } else {
-                    match std::fs::create_dir_all(link_path) {
-                        Ok(()) => {
-                            self.log.push(
-                                LogLevel::Info,
-                                format!("[{}] Created empty commands directory", tool_key),
-                            );
-                        }
-                        Err(e) => {
-                            self.log.push(
-                                LogLevel::Warning,
-                                format!(
-                                    "[{}] Failed to create commands directory: {}",
-                                    tool_key, e
-                                ),
-                            );
-                        }
-                    }
-                }
-            }
-            LinkField::Prompt => {
-                // Find and restore the most recent .bak backup.
-                // Backup naming: link_path.with_extension("{timestamp}.bak")
-                // e.g., AGENTS.md → AGENTS.20240101_120000.bak
-                if let Some(parent) = link_path.parent() {
-                    if let Some(stem) = link_path.file_stem().and_then(|f| f.to_str()) {
-                        let prefix = format!("{}.", stem);
-                        let mut backups: Vec<_> = std::fs::read_dir(parent)
-                            .into_iter()
-                            .flatten()
-                            .flatten()
-                            .filter(|e| {
-                                let n = e.file_name().to_string_lossy().to_string();
-                                n.starts_with(&prefix)
-                                    && n.ends_with(".bak")
-                                    && e.path() != *link_path
-                            })
-                            .collect();
-                        // Sort by name descending → most recent timestamp first
-                        backups.sort_by_key(|b| std::cmp::Reverse(b.file_name()));
-                        if let Some(latest) = backups.first() {
-                            let bak_path = latest.path();
-                            match std::fs::rename(&bak_path, link_path) {
-                                Ok(()) => {
-                                    self.log.push(
-                                        LogLevel::Info,
-                                        format!("[{}] Restored prompt from backup", tool_key),
-                                    );
-                                }
-                                Err(e) => {
-                                    self.log.push(
-                                        LogLevel::Warning,
-                                        format!("[{}] Failed to restore prompt: {}", tool_key, e),
-                                    );
-                                }
-                            }
-                        } else {
-                            self.log.push(
-                                LogLevel::Info,
-                                format!("[{}] No prompt backup found to restore", tool_key),
-                            );
-                        }
-                    }
-                }
-            }
+        let Some((_, target, is_dir, label)) = self.get_link_paths(tool_key, field) else {
+            return;
+        };
+        match linker::detach_copy(&target, link_path, is_dir) {
+            Ok(true) => self.log.push(
+                LogLevel::Info,
+                format!("[{}] Copied {} back into the tool", tool_key, label),
+            ),
+            Ok(false) => {}
+            Err(e) => self.log.push(
+                LogLevel::Error,
+                format!("[{}] Copying {} back failed: {}", tool_key, label, e),
+            ),
         }
     }
 
