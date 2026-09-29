@@ -844,7 +844,7 @@ impl ToolApp {
                 }
             }
             LinkStatus::Blocked => {
-                self.handle_blocked_link(tool_key, field, &link_path, &target, is_dir, label);
+                self.handle_blocked_link(tool_key, &link_path, &target, is_dir, label);
             }
         }
     }
@@ -852,7 +852,6 @@ impl ToolApp {
     fn handle_blocked_link(
         &mut self,
         tool_key: &str,
-        field: &LinkField,
         link_path: &std::path::Path,
         target: &std::path::Path,
         is_dir: bool,
@@ -863,44 +862,20 @@ impl ToolApp {
 
         if is_dir {
             let source_dir = expand_tilde(&self.config.agm.source_dir);
-            let tool_target = source_dir.join("agm_tools").join(tool_key);
-            let agm_dir = target;
-
-            let result = match field {
-                LinkField::Agents => {
-                    let agents_target = tool_target.join("agents");
-                    let prompt_fn = self
-                        .config
-                        .tools
-                        .get(tool_key)
-                        .map(|t| t.prompt_filename.as_str())
-                        .unwrap_or("");
-                    skills::migrate_agents_dir_quiet(
-                        link_path,
-                        &agents_target,
-                        agm_dir,
-                        tool_key,
-                        prompt_fn,
-                    )
-                }
-                LinkField::Commands => {
-                    let commands_target = tool_target.join("commands");
-                    let prompt_fn = self
-                        .config
-                        .tools
-                        .get(tool_key)
-                        .map(|t| t.prompt_filename.as_str())
-                        .unwrap_or("");
-                    skills::migrate_commands_dir_quiet(
-                        link_path,
-                        &commands_target,
-                        agm_dir,
-                        tool_key,
-                        prompt_fn,
-                    )
-                }
-                _ => skills::migrate_tool_dir_quiet(link_path, &tool_target, agm_dir, tool_key),
-            };
+            let prompt_fn = self
+                .config
+                .tools
+                .get(tool_key)
+                .map(|t| t.prompt_filename.clone())
+                .unwrap_or_default();
+            let result = skills::migrate_feature_dir(
+                label,
+                link_path,
+                &source_dir,
+                target,
+                tool_key,
+                &prompt_fn,
+            );
 
             match result {
                 Ok((count, msgs)) => {

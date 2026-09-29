@@ -1477,6 +1477,39 @@ pub fn migrate_commands_dir_quiet(
     Ok((migrated, msgs))
 }
 
+/// Migrate a tool's real `skills`/`agents`/`commands` directory into the agm store.
+/// The single entry point used by both the CLI and the TUI, so the two cannot diverge.
+/// `feature` is `"skills"`, `"agents"` or `"commands"`; items land under
+/// `source_dir/agm_tools/<tool_key>/` (agents and commands in a subdirectory).
+pub fn migrate_feature_dir(
+    feature: &str,
+    link: &Path,
+    source_dir: &Path,
+    agm_dir: &Path,
+    tool_key: &str,
+    prompt_filename: &str,
+) -> anyhow::Result<(usize, Vec<String>)> {
+    let store = source_dir.join("agm_tools").join(tool_key);
+    match feature {
+        "skills" => migrate_tool_dir_quiet(link, &store, agm_dir, tool_key),
+        "agents" => migrate_agents_dir_quiet(
+            link,
+            &store.join("agents"),
+            agm_dir,
+            tool_key,
+            prompt_filename,
+        ),
+        "commands" => migrate_commands_dir_quiet(
+            link,
+            &store.join("commands"),
+            agm_dir,
+            tool_key,
+            prompt_filename,
+        ),
+        other => anyhow::bail!("cannot migrate feature '{}'", other),
+    }
+}
+
 /// Recursively copy a directory, following symlinks so the destination holds real files.
 /// Broken links are skipped. Used by `unlink` so a tool keeps working after AGM steps out.
 pub fn copy_dir_resolved(src: &Path, dst: &Path) -> anyhow::Result<()> {

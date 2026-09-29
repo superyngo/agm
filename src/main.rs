@@ -230,24 +230,14 @@ fn prepare_link(
     }
 
     let source_dir = paths::expand_tilde(&config.agm.source_dir);
-    let store = source_dir.join("agm_tools").join(key);
-    let (added, msgs) = match feature.key {
-        "skills" => skills::migrate_tool_dir_quiet(link, &store, source, key)?,
-        "agents" => skills::migrate_agents_dir_quiet(
-            link,
-            &store.join("agents"),
-            source,
-            key,
-            &tool.prompt_filename,
-        )?,
-        _ => skills::migrate_commands_dir_quiet(
-            link,
-            &store.join("commands"),
-            source,
-            key,
-            &tool.prompt_filename,
-        )?,
-    };
+    let (added, msgs) = skills::migrate_feature_dir(
+        feature.key,
+        link,
+        &source_dir,
+        source,
+        key,
+        &tool.prompt_filename,
+    )?;
     for m in &msgs {
         println!("{}", m);
     }
