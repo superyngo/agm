@@ -751,160 +751,81 @@ pub fn scan_all_sources(
     agents_dir: &Path,
     commands_dir: &Path,
 ) -> Vec<SourceGroup> {
-    if !source_dir.is_dir() {
+    let Ok(entries) = fs::read_dir(source_dir) else {
         return vec![];
-    }
-
-    let mut groups = Vec::new();
-
-    let entries: Vec<_> = match fs::read_dir(source_dir) {
-        Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
-        Err(_) => return vec![],
+    };
+    let build = |name: String, kind: SourceKind, path: PathBuf| SourceGroup {
+        skills: scan_skills(&path)
+            .into_iter()
+            .map(|(name, sp)| SkillInfo {
+                install_status: check_install_status(&name, &sp, skills_dir),
+                preload_chars: skill_preload_chars(&sp),
+                name,
+                source_path: sp,
+            })
+            .collect(),
+        agents: scan_agents(&path)
+            .into_iter()
+            .map(|(name, sp)| AgentInfo {
+                install_status: check_agent_install_status(&name, &sp, agents_dir),
+                preload_chars: file_char_count(&sp),
+                name,
+                source_path: sp,
+            })
+            .collect(),
+        commands: scan_commands(&path)
+            .into_iter()
+            .map(|(name, sp)| CommandInfo {
+                install_status: check_command_install_status(&name, &sp, commands_dir),
+                preload_chars: file_char_count(&sp),
+                name,
+                source_path: sp,
+            })
+            .collect(),
+        name,
+        kind,
+        path,
+    };
+    // Directories directly under `dir`, with their names.
+    let subdirs = |dir: &Path| -> Vec<(String, PathBuf)> {
+        fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.is_dir())
+            .filter_map(|p| Some((p.file_name()?.to_str()?.to_string(), p)))
+            .collect()
     };
 
-    for entry in entries {
+    let mut groups = Vec::new();
+    for entry in entries.filter_map(|e| e.ok()) {
         let path = entry.path();
         if !path.is_dir() {
             continue;
         }
-        let dir_name = match path.file_name().and_then(|n| n.to_str()) {
-            Some(n) => n.to_string(),
-            None => continue,
+        let Some(dir_name) = path.file_name().and_then(|n| n.to_str()).map(String::from) else {
+            continue;
         };
-
-        if dir_name == "local" {
-            if let Ok(sub_entries) = fs::read_dir(&path) {
-                for sub_entry in sub_entries.filter_map(|e| e.ok()) {
-                    let sub_path = sub_entry.path();
-                    if !sub_path.is_dir() {
-                        continue;
-                    }
-                    let sub_name = match sub_path.file_name().and_then(|n| n.to_str()) {
-                        Some(n) => n.to_string(),
-                        None => continue,
-                    };
-                    let skills = scan_skills(&sub_path)
-                        .into_iter()
-                        .map(|(name, sp)| SkillInfo {
-                            install_status: check_install_status(&name, &sp, skills_dir),
-                            preload_chars: skill_preload_chars(&sp),
-                            name,
-                            source_path: sp,
-                        })
-                        .collect();
-                    let agents = scan_agents(&sub_path)
-                        .into_iter()
-                        .map(|(name, sp)| AgentInfo {
-                            install_status: check_agent_install_status(&name, &sp, agents_dir),
-                            preload_chars: file_char_count(&sp),
-                            name,
-                            source_path: sp,
-                        })
-                        .collect();
-                    let commands = scan_commands(&sub_path)
-                        .into_iter()
-                        .map(|(name, sp)| CommandInfo {
-                            install_status: check_command_install_status(&name, &sp, commands_dir),
-                            preload_chars: file_char_count(&sp),
-                            name,
-                            source_path: sp,
-                        })
-                        .collect();
-                    groups.push(SourceGroup {
-                        name: sub_name,
-                        kind: SourceKind::Local,
-                        path: sub_path,
-                        skills,
-                        agents,
-                        commands,
-                    });
+        match dir_name.as_str() {
+            "local" => {
+                for (name, sub) in subdirs(&path) {
+                    groups.push(build(name, SourceKind::Local, sub));
                 }
             }
-        } else if dir_name == "agm_tools" {
-            if let Ok(sub_entries) = fs::read_dir(&path) {
-                for sub_entry in sub_entries.filter_map(|e| e.ok()) {
-                    let sub_path = sub_entry.path();
-                    if !sub_path.is_dir() {
-                        continue;
-                    }
-                    let tool_name = match sub_path.file_name().and_then(|n| n.to_str()) {
-                        Some(n) => n.to_string(),
-                        None => continue,
-                    };
-                    let skills = scan_skills(&sub_path)
-                        .into_iter()
-                        .map(|(name, sp)| SkillInfo {
-                            install_status: check_install_status(&name, &sp, skills_dir),
-                            preload_chars: skill_preload_chars(&sp),
-                            name,
-                            source_path: sp,
-                        })
-                        .collect();
-                    let agents = scan_agents(&sub_path)
-                        .into_iter()
-                        .map(|(name, sp)| AgentInfo {
-                            install_status: check_agent_install_status(&name, &sp, agents_dir),
-                            preload_chars: file_char_count(&sp),
-                            name,
-                            source_path: sp,
-                        })
-                        .collect();
-                    let commands = scan_commands(&sub_path)
-                        .into_iter()
-                        .map(|(name, sp)| CommandInfo {
-                            install_status: check_command_install_status(&name, &sp, commands_dir),
-                            preload_chars: file_char_count(&sp),
-                            name,
-                            source_path: sp,
-                        })
-                        .collect();
-                    groups.push(SourceGroup {
-                        name: format!("agm_tools/{}", tool_name),
-                        kind: SourceKind::Migrated { tool: tool_name },
-                        path: sub_path,
-                        skills,
-                        agents,
-                        commands,
-                    });
+            "agm_tools" => {
+                for (tool, sub) in subdirs(&path) {
+                    groups.push(build(
+                        format!("agm_tools/{}", tool),
+                        SourceKind::Migrated { tool },
+                        sub,
+                    ));
                 }
             }
-        } else {
-            let url = resolve_repo_url(&path);
-            let skills = scan_skills(&path)
-                .into_iter()
-                .map(|(name, sp)| SkillInfo {
-                    install_status: check_install_status(&name, &sp, skills_dir),
-                    preload_chars: skill_preload_chars(&sp),
-                    name,
-                    source_path: sp,
-                })
-                .collect();
-            let agents = scan_agents(&path)
-                .into_iter()
-                .map(|(name, sp)| AgentInfo {
-                    install_status: check_agent_install_status(&name, &sp, agents_dir),
-                    preload_chars: file_char_count(&sp),
-                    name,
-                    source_path: sp,
-                })
-                .collect();
-            let commands = scan_commands(&path)
-                .into_iter()
-                .map(|(name, sp)| CommandInfo {
-                    install_status: check_command_install_status(&name, &sp, commands_dir),
-                    preload_chars: file_char_count(&sp),
-                    name,
-                    source_path: sp,
-                })
-                .collect();
-            groups.push(SourceGroup {
-                name: dir_name,
-                kind: SourceKind::Repo { url },
-                path,
-                skills,
-                agents,
-                commands,
-            });
+            _ => {
+                let url = resolve_repo_url(&path);
+                groups.push(build(dir_name, SourceKind::Repo { url }, path));
+            }
         }
     }
 
