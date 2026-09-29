@@ -16,7 +16,7 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use crate::config::{AgmConfig, Config};
+use crate::config::{extract_tool_section, replace_tool_section, AgmConfig, Config};
 use crate::editor;
 use crate::linker::{self, LinkStatus};
 use crate::paths::{contract_tilde, expand_tilde};
@@ -217,55 +217,6 @@ pub fn build_rows(config: &Config, expanded: &HashSet<String>) -> Vec<ToolRow> {
     }
 
     rows
-}
-
-/// Extract a [tools.{key}] section from raw config text.
-/// Returns (section_lines, start_line_index, end_line_index).
-fn extract_tool_section(config_text: &str, tool_key: &str) -> Option<(Vec<String>, usize, usize)> {
-    let header = format!("[tools.{}]", tool_key);
-    let lines: Vec<&str> = config_text.lines().collect();
-
-    let start = lines.iter().position(|l| l.trim() == header)?;
-
-    let sub_prefix = format!("[tools.{}.", tool_key);
-    let mut end = lines.len();
-    for (i, line) in lines.iter().enumerate().skip(start + 1) {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && !trimmed.starts_with(&sub_prefix) {
-            end = i;
-            break;
-        }
-    }
-
-    let section_lines: Vec<String> = lines[start..end].iter().map(|l| l.to_string()).collect();
-    Some((section_lines, start, end))
-}
-
-/// Replace a [tools.{key}] section in raw config text with new content.
-fn replace_tool_section(config_text: &str, tool_key: &str, new_section: &str) -> Option<String> {
-    let header = format!("[tools.{}]", tool_key);
-    let lines: Vec<&str> = config_text.lines().collect();
-
-    let start = lines.iter().position(|l| l.trim() == header)?;
-
-    let sub_prefix = format!("[tools.{}.", tool_key);
-    let mut end = lines.len();
-    for (i, line) in lines.iter().enumerate().skip(start + 1) {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && !trimmed.starts_with(&sub_prefix) {
-            end = i;
-            break;
-        }
-    }
-
-    let mut result: Vec<&str> = Vec::new();
-    result.extend_from_slice(&lines[..start]);
-    for line in new_section.lines() {
-        result.push(line);
-    }
-    result.extend_from_slice(&lines[end..]);
-
-    Some(result.join("\n"))
 }
 
 // ---------------------------------------------------------------------------
@@ -867,7 +818,6 @@ impl ToolApp {
         label: &str,
     ) {
         use super::log::LogLevel;
-        use chrono::Local;
 
         if is_dir {
             let source_dir = expand_tilde(&self.config.agm.source_dir);
@@ -925,12 +875,7 @@ impl ToolApp {
                 }
             }
         } else {
-            let timestamp = Local::now().format("%Y%m%d_%H%M%S");
-            let backup = {
-                let mut n = link_path.as_os_str().to_owned();
-                n.push(format!(".{}.bak", timestamp));
-                PathBuf::from(n)
-            };
+            let backup = linker::backup_path(link_path);
             match std::fs::rename(link_path, &backup) {
                 Ok(()) => {
                     self.log.push(
@@ -2788,77 +2733,6 @@ mod tests {
         assert!(
             matches!(rows[8], ToolRow::FileGroupHeader { ref group, .. } if *group == FileGroup::Mcp)
         );
-    }
-
-    const SAMPLE_CONFIG: &str = r#"[agm]
-prompt_source = "~/.local/share/agm/prompts/MASTER.md"
-skills_source = "~/.local/share/agm/skills"
-
-[tools.claude]
-name = "Claude Code"
-config_dir = "~/.claude"
-prompt_filename = "CLAUDE.md"
-skills_dir = "skills"
-
-[tools.codex]
-name = "Codex"
-config_dir = "~/.codex"
-prompt_filename = "AGENTS.md"
-skills_dir = "skills"
-
-[tools.copilot]
-name = "Copilot"
-config_dir = "~/.copilot"
-"#;
-
-    #[test]
-    fn test_extract_tool_section() {
-        let result = extract_tool_section(SAMPLE_CONFIG, "codex");
-        assert!(result.is_some());
-        let (section, start, end) = result.unwrap();
-        assert!(section[0].contains("[tools.codex]"));
-        assert!(start < end);
-    }
-
-    #[test]
-    fn test_extract_tool_section_first_tool() {
-        let result = extract_tool_section(SAMPLE_CONFIG, "claude");
-        assert!(result.is_some());
-        let (section, _, _) = result.unwrap();
-        assert!(section[0].contains("[tools.claude]"));
-        assert!(section.iter().any(|l| l.contains("Claude Code")));
-    }
-
-    #[test]
-    fn test_extract_tool_section_last_tool() {
-        let result = extract_tool_section(SAMPLE_CONFIG, "copilot");
-        assert!(result.is_some());
-        let (section, _, _) = result.unwrap();
-        assert!(section[0].contains("[tools.copilot]"));
-    }
-
-    #[test]
-    fn test_extract_tool_section_not_found() {
-        let result = extract_tool_section(SAMPLE_CONFIG, "nonexistent");
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_replace_tool_section() {
-        let new_section = "[tools.codex]\nname = \"OpenAI Codex\"\nconfig_dir = \"~/.codex\"\n";
-        let result = replace_tool_section(SAMPLE_CONFIG, "codex", new_section);
-        assert!(result.is_some());
-        let new_config = result.unwrap();
-        assert!(new_config.contains("OpenAI Codex"));
-        assert!(!new_config.contains("\"Codex\""));
-        assert!(new_config.contains("[tools.claude]"));
-        assert!(new_config.contains("[tools.copilot]"));
-    }
-
-    #[test]
-    fn test_replace_tool_section_not_found() {
-        let result = replace_tool_section(SAMPLE_CONFIG, "nonexistent", "whatever");
-        assert!(result.is_none());
     }
 
     /// Regression: PathEditor previously stored `value: String, cursor_pos: usize`

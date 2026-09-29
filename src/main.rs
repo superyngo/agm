@@ -215,10 +215,7 @@ fn prepare_link(
         if content.trim().is_empty() {
             fs::remove_file(link)?;
         } else {
-            let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-            let mut n = link.as_os_str().to_owned();
-            n.push(format!(".{}.bak", ts));
-            let backup = std::path::PathBuf::from(n);
+            let backup = linker::backup_path(link);
             fs::rename(link, &backup)?;
             println!(
                 "  {} Backed up prompt to {}",

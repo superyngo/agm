@@ -1207,19 +1207,19 @@ impl App {
         // Duplicate names across all sources in this category: only one of each
         // name can occupy the flat namespace, so the rest are skipped on install.
         let duplicate_named = match category {
-            Category::Skills => duplicate_name_count(
+            Category::Skills => skills::duplicate_name_count(
                 self.groups
                     .iter()
                     .flat_map(|g| &g.skills)
                     .map(|s| s.name.clone()),
             ),
-            Category::Agents => duplicate_name_count(
+            Category::Agents => skills::duplicate_name_count(
                 self.groups
                     .iter()
                     .flat_map(|g| &g.agents)
                     .map(|a| a.name.clone()),
             ),
-            Category::Commands => duplicate_name_count(
+            Category::Commands => skills::duplicate_name_count(
                 self.groups
                     .iter()
                     .flat_map(|g| &g.commands)
@@ -1619,9 +1619,10 @@ impl App {
 
         // Duplicate names within this source: only one of each name can be
         // linked into the flat namespace, so the rest are skipped on install.
-        let dup_skills = duplicate_name_count(group.skills.iter().map(|s| s.name.clone()));
-        let dup_agents = duplicate_name_count(group.agents.iter().map(|a| a.name.clone()));
-        let dup_commands = duplicate_name_count(group.commands.iter().map(|c| c.name.clone()));
+        let dup_skills = skills::duplicate_name_count(group.skills.iter().map(|s| s.name.clone()));
+        let dup_agents = skills::duplicate_name_count(group.agents.iter().map(|a| a.name.clone()));
+        let dup_commands =
+            skills::duplicate_name_count(group.commands.iter().map(|c| c.name.clone()));
         if dup_skills + dup_agents + dup_commands > 0 {
             lines.push(Line::default());
             lines.push(Line::from(Span::styled(
@@ -3090,16 +3091,6 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
 /// distinct). These are entries that can't all be linked, because skills/agents/
 /// commands share a single flat namespace keyed by name — only the first of each
 /// name wins; the rest are skipped as conflicts.
-fn duplicate_name_count<I: IntoIterator<Item = String>>(names: I) -> usize {
-    let mut seen = HashSet::new();
-    let mut dups = 0;
-    for n in names {
-        if !seen.insert(n) {
-            dups += 1;
-        }
-    }
-    dups
-}
 
 fn push_clone_progress(log: &mut super::log::LogBuffer, evt: &skills::CloneProgress) {
     use super::log::LogLevel;
@@ -3144,7 +3135,8 @@ fn push_clone_progress(log: &mut super::log::LogBuffer, evt: &skills::CloneProgr
 
 #[cfg(test)]
 mod tests {
-    use super::{duplicate_name_count, row_leaf_key, Category, ListRow};
+    use super::{row_leaf_key, Category, ListRow};
+    use crate::skills;
 
     #[test]
     fn row_leaf_key_maps_leaves_and_skips_headers() {
@@ -3188,13 +3180,13 @@ mod tests {
     fn duplicate_name_count_counts_repeats() {
         let names = ["a", "a", "a", "b", "c", "c"].map(String::from);
         // a repeats twice, c repeats once → 3 would be skipped.
-        assert_eq!(duplicate_name_count(names), 3);
+        assert_eq!(skills::duplicate_name_count(names), 3);
     }
 
     #[test]
     fn duplicate_name_count_zero_when_unique() {
         let names = ["a", "b", "c"].map(String::from);
-        assert_eq!(duplicate_name_count(names), 0);
+        assert_eq!(skills::duplicate_name_count(names), 0);
     }
 
     /// Regression: App.search_query was previously `String`, edited in

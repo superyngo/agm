@@ -57,6 +57,14 @@ fn check_dir_link(link_path: &Path, expected_target: &Path) -> LinkStatus {
     }
 }
 
+/// `<path>.<YYYYMMDD_HHMMSS>.bak`, appended to the full file name (keeps `.md` etc.).
+pub fn backup_path(path: &Path) -> PathBuf {
+    let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+    let mut n = path.as_os_str().to_owned();
+    n.push(format!(".{}.bak", ts));
+    PathBuf::from(n)
+}
+
 /// Give the tool real copies of what `source` provided (links followed), after its link
 /// was removed. Returns `false` when there is nothing to copy.
 pub fn detach_copy(source: &Path, link: &Path, is_dir: bool) -> anyhow::Result<bool> {

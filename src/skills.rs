@@ -169,6 +169,15 @@ fn scan_skills_recursive(
     }
 }
 
+/// Number of names that repeat an earlier name in `names` (extra copies of one item).
+pub fn duplicate_name_count<I: IntoIterator<Item = String>>(names: I) -> usize {
+    let mut seen = std::collections::HashSet::new();
+    names
+        .into_iter()
+        .filter(|n| !seen.insert(n.clone()))
+        .count()
+}
+
 /// Does the link at `link` point at `source`? Relative targets are resolved against the
 /// link's parent and both sides are canonicalised when possible.
 /// `is_dir` selects directory-link (symlink/junction) vs file-link detection.
