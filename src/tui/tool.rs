@@ -594,7 +594,10 @@ impl ToolApp {
                 match code {
                     KeyCode::Char('o') | KeyCode::Esc => self.popup = None,
                     _ => {
-                        popup.handle_key(code);
+                        // Like every other scrollable popup, ⏎/␣ close it.
+                        if popup.handle_key(code) == super::popup::PopupAction::Close {
+                            self.popup = None;
+                        }
                     }
                 }
             }

@@ -1756,8 +1756,13 @@ impl App {
                     self.log_popup = None;
                 }
                 _ => {
-                    if let Some(ref mut popup) = self.log_popup {
-                        let _ = popup.handle_key(code);
+                    let closed = self
+                        .log_popup
+                        .as_mut()
+                        .is_some_and(|p| p.handle_key(code) == super::popup::PopupAction::Close);
+                    if closed {
+                        self.show_log = false;
+                        self.log_popup = None;
                     }
                 }
             }

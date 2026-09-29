@@ -501,113 +501,113 @@ fn source_list(
     commands_dir: &std::path::Path,
     source_dir: &std::path::Path,
 ) -> anyhow::Result<()> {
-    let pruned = skills::prune_broken_skills(skills_dir)?;
-    if pruned > 0 {
-        println!(
-            "  {} Removed {} broken skill link(s)",
-            "warn".yellow(),
-            pruned
-        );
-    }
-    let pruned_agents = skills::prune_broken_agents(agents_dir)?;
-    if pruned_agents > 0 {
-        println!(
-            "  {} Removed {} broken agent link(s)",
-            "warn".yellow(),
-            pruned_agents
-        );
-    }
-    let pruned_commands = skills::prune_broken_commands(commands_dir)?;
-    if pruned_commands > 0 {
-        println!(
-            "  {} Removed {} broken command link(s)",
-            "warn".yellow(),
-            pruned_commands
-        );
+    for (what, dir, prune) in [
+        (
+            "skill",
+            skills_dir,
+            skills::prune_broken_skills as fn(&std::path::Path) -> anyhow::Result<usize>,
+        ),
+        ("agent", agents_dir, skills::prune_broken_agents),
+        ("command", commands_dir, skills::prune_broken_commands),
+    ] {
+        let pruned = prune(dir)?;
+        if pruned > 0 {
+            println!(
+                "  {} Removed {} broken {} link(s)",
+                "warn".yellow(),
+                pruned,
+                what
+            );
+        }
     }
     let groups = skills::scan_all_sources(source_dir, skills_dir, agents_dir, commands_dir);
     if groups.is_empty() {
         println!("No sources found. Use 'agm source add <url>' to add a source.");
-    } else {
-        println!();
-        let mut total_skills = 0;
-        let mut installed_skills = 0;
-        let mut total_agents = 0;
-        let mut installed_agents = 0;
-        for group in &groups {
-            let icon = match &group.kind {
-                skills::SourceKind::Repo { .. } => "📦",
-                skills::SourceKind::Local => "📁",
-                skills::SourceKind::Migrated { .. } => "📁",
-            };
-            let detail = match &group.kind {
-                skills::SourceKind::Repo { url } => url
-                    .as_deref()
-                    .map(|u| format!("repo: {}", u))
-                    .unwrap_or_else(|| "repo".into()),
-                skills::SourceKind::Local => "local".into(),
-                skills::SourceKind::Migrated { tool } => {
-                    format!("migrated from {}", tool)
-                }
-            };
-            println!("{} {} ({})", icon, group.name.bold(), detail);
-
-            if !group.skills.is_empty() {
-                println!("  {}", "Skills:".dimmed());
-                for skill in &group.skills {
-                    total_skills += 1;
-                    let (indicator, status_text) = match skill.install_status {
-                        skills::SkillInstallStatus::Installed => {
-                            installed_skills += 1;
-                            ("✓".green().to_string(), "installed".green().to_string())
-                        }
-                        skills::SkillInstallStatus::NotInstalled => (
-                            "✗".dimmed().to_string(),
-                            "not installed".dimmed().to_string(),
-                        ),
-                        skills::SkillInstallStatus::Conflict => {
-                            ("⚡".yellow().to_string(), "conflict".yellow().to_string())
-                        }
-                    };
-                    println!("   {} {:<24} {}", indicator, skill.name, status_text);
-                }
-            }
-
-            if !group.agents.is_empty() {
-                println!("  {}", "Agents:".dimmed());
-                for agent in &group.agents {
-                    total_agents += 1;
-                    let (indicator, status_text) = match agent.install_status {
-                        skills::SkillInstallStatus::Installed => {
-                            installed_agents += 1;
-                            ("✓".green().to_string(), "installed".green().to_string())
-                        }
-                        skills::SkillInstallStatus::NotInstalled => (
-                            "✗".dimmed().to_string(),
-                            "not installed".dimmed().to_string(),
-                        ),
-                        skills::SkillInstallStatus::Conflict => {
-                            ("⚡".yellow().to_string(), "conflict".yellow().to_string())
-                        }
-                    };
-                    println!("   {} {:<24} {}", indicator, agent.name, status_text);
-                }
-            }
-            println!();
-        }
-        println!(
-            "── {} ──",
-            format!(
-                "{} source(s), {} skill(s) ({} installed), {} agent(s) ({} installed)",
-                groups.len(),
-                total_skills,
-                installed_skills,
-                total_agents,
-                installed_agents,
-            )
-            .bold()
-        );
+        return Ok(());
     }
+    println!();
+    // (total, installed) per category: skills, agents, commands.
+    let mut totals = [(0usize, 0usize); 3];
+    for group in &groups {
+        let icon = match &group.kind {
+            skills::SourceKind::Repo { .. } => "📦",
+            skills::SourceKind::Local | skills::SourceKind::Migrated { .. } => "📁",
+        };
+        let detail = match &group.kind {
+            skills::SourceKind::Repo { url } => url
+                .as_deref()
+                .map(|u| format!("repo: {}", u))
+                .unwrap_or_else(|| "repo".into()),
+            skills::SourceKind::Local => "local".into(),
+            skills::SourceKind::Migrated { tool } => format!("migrated from {}", tool),
+        };
+        println!("{} {} ({})", icon, group.name.bold(), detail);
+
+        let sections: [(&str, Vec<(&str, skills::SkillInstallStatus)>); 3] = [
+            (
+                "Skills:",
+                group
+                    .skills
+                    .iter()
+                    .map(|i| (i.name.as_str(), i.install_status))
+                    .collect(),
+            ),
+            (
+                "Agents:",
+                group
+                    .agents
+                    .iter()
+                    .map(|i| (i.name.as_str(), i.install_status))
+                    .collect(),
+            ),
+            (
+                "Commands:",
+                group
+                    .commands
+                    .iter()
+                    .map(|i| (i.name.as_str(), i.install_status))
+                    .collect(),
+            ),
+        ];
+        for (idx, (heading, items)) in sections.iter().enumerate() {
+            if items.is_empty() {
+                continue;
+            }
+            println!("  {}", heading.dimmed());
+            for (name, status) in items {
+                totals[idx].0 += 1;
+                let (indicator, status_text) = match status {
+                    skills::SkillInstallStatus::Installed => {
+                        totals[idx].1 += 1;
+                        ("✓".green().to_string(), "installed".green().to_string())
+                    }
+                    skills::SkillInstallStatus::NotInstalled => (
+                        "✗".dimmed().to_string(),
+                        "not installed".dimmed().to_string(),
+                    ),
+                    skills::SkillInstallStatus::Conflict => {
+                        ("⚡".yellow().to_string(), "conflict".yellow().to_string())
+                    }
+                };
+                println!("   {} {:<24} {}", indicator, name, status_text);
+            }
+        }
+        println!();
+    }
+    println!(
+        "── {} ──",
+        format!(
+            "{} source(s), {} skill(s) ({} installed), {} agent(s) ({} installed), {} command(s) ({} installed)",
+            groups.len(),
+            totals[0].0,
+            totals[0].1,
+            totals[1].0,
+            totals[1].1,
+            totals[2].0,
+            totals[2].1,
+        )
+        .bold()
+    );
     Ok(())
 }
 

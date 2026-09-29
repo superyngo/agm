@@ -226,9 +226,7 @@ pub fn build_help_lines(surface: HelpSurface) -> Vec<Line<'static>> {
 
     lines.push(section("Quit"));
     lines.push(binding_row("q", "Quit"));
-    if surface == HelpSurface::Source {
-        lines.push(binding_row("Ctrl+C", "Quit"));
-    }
+    lines.push(binding_row("Ctrl+C", "Quit"));
 
     lines
 }
