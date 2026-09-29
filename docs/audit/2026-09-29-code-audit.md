@@ -1,5 +1,5 @@
 # Code Audit Report — agm v0.16.0 (+1 docs commit)
-Status: Mostly resolved — B13–B50 fixed except B40 (part), B43–B46 (structural remainder), see [BACKLOG](../plan/BACKLOG.md)
+Status: Mostly resolved — B13–B50 fixed except B43–B46 (structural remainder), see [BACKLOG](../plan/BACKLOG.md)
 Date: 2026-09-29 · Scope: `src/`, `tests/`, `Cargo.toml` · Focus: implementation quality, clarity,
 integrity, simplicity · Excludes BACKLOG B1–B12 (already tracked) except where a finding widens one.
 

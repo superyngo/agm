@@ -94,23 +94,31 @@ impl TextInput {
         }
     }
 
-    /// Render `prefix` + text-with-inline-cursor as a single `Line`.
+    /// Render `prefix` + text-with-inline-cursor as a single `Line` at most `width` cells wide.
     pub fn render_line<'a>(
         &'a self,
         prefix: &'a str,
         prefix_style: Style,
         text_style: Style,
+        width: u16,
     ) -> Line<'a> {
-        let chars: Vec<char> = self.buffer.chars().collect();
-        let before: String = chars[..self.cursor].iter().collect();
+        let all: Vec<char> = self.buffer.chars().collect();
+        // Scroll horizontally so the cursor cell always fits after the prefix.
+        let avail = (width as usize)
+            .saturating_sub(prefix.chars().count())
+            .max(2);
+        let start = (self.cursor + 1).saturating_sub(avail);
+        let chars: Vec<char> = all[start..all.len().min(start + avail)].to_vec();
+        let cursor = self.cursor - start;
+        let before: String = chars[..cursor].iter().collect();
         let cursor_char: String = chars
-            .get(self.cursor)
+            .get(cursor)
             .map(|c| c.to_string())
             .unwrap_or_else(|| " ".to_string());
-        let after_start = if chars.get(self.cursor).is_some() {
-            self.cursor + 1
+        let after_start = if chars.get(cursor).is_some() {
+            cursor + 1
         } else {
-            self.cursor
+            cursor
         };
         let after: String = chars[after_start..].iter().collect();
         Line::from(vec![
@@ -247,5 +255,16 @@ mod tests {
         i.handle_key(KeyCode::Char('日'), KeyModifiers::NONE);
         assert_eq!(i.text(), "日中");
         assert_eq!(i.cursor(), 1);
+    }
+
+    #[test]
+    fn render_line_scrolls_to_keep_cursor_visible() {
+        let i = TextInput::with_text("abcdefghijklmnopqrstuvwxyz");
+        let line = i.render_line("> ", Style::default(), Style::default(), 10);
+        let shown: String = line.spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(shown.chars().count() <= 10, "{shown:?}");
+        assert!(shown.starts_with("> "));
+        // cursor is at the end, so the tail of the text is what is visible
+        assert!(shown.contains('z') || shown.ends_with(' '));
     }
 }

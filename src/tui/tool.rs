@@ -2461,7 +2461,12 @@ fn render_path_editor(app: &ToolApp, frame: &mut Frame, area: Rect) {
         let inner = block.inner(popup_area);
         frame.render_widget(block, popup_area);
 
-        let line = input.render_line("", Style::default(), Style::default().fg(Color::White));
+        let line = input.render_line(
+            "",
+            Style::default(),
+            Style::default().fg(Color::White),
+            inner.width,
+        );
         frame.render_widget(Paragraph::new(line), inner);
     }
 }

@@ -242,12 +242,7 @@ fn prepare_link(
         println!("{}", m);
     }
     if added > 0 {
-        println!(
-            "  {} Migrated {} {} item(s)",
-            " ok ".green(),
-            added,
-            feature.key
-        );
+        println!("  {} Migrated {} {}", " ok ".green(), added, feature.key);
     }
     Ok(())
 }

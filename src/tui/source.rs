@@ -3092,7 +3092,7 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
         let text_style = Style::default().fg(Color::White);
         let line = app
             .add_input
-            .render_line("Add source: ", prefix_style, text_style);
+            .render_line("Add source: ", prefix_style, text_style, inner.width);
         frame.render_widget(Paragraph::new(line), inner);
     } else if app.input_mode == InputMode::Rename {
         let prefix_style = Style::default()
@@ -3101,7 +3101,7 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
         let text_style = Style::default().fg(Color::White);
         let line = app
             .rename_input
-            .render_line("Rename → ", prefix_style, text_style);
+            .render_line("Rename → ", prefix_style, text_style, inner.width);
         frame.render_widget(Paragraph::new(line), inner);
     } else if app.input_mode == InputMode::Search {
         let prompt = format!("/{}", app.search_query.text());
