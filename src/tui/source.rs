@@ -2512,6 +2512,145 @@ pub(crate) fn render(app: &mut App, frame: &mut Frame) {
     }
 }
 
+impl Category {
+    fn feature_key(self) -> &'static str {
+        match self {
+            Category::Skills => "skills",
+            Category::Agents => "agents",
+            Category::Commands => "commands",
+        }
+    }
+
+    fn heading(self) -> &'static str {
+        match self {
+            Category::Skills => "🔧 Skills",
+            Category::Agents => "🤖 Agents",
+            Category::Commands => "💬 Commands",
+        }
+    }
+}
+
+impl SourceGroup {
+    /// (installed, total) Items of one category in this source.
+    fn counts(&self, category: Category) -> (usize, usize) {
+        let statuses: Vec<SkillInstallStatus> = match category {
+            Category::Skills => self.skills.iter().map(|i| i.install_status).collect(),
+            Category::Agents => self.agents.iter().map(|i| i.install_status).collect(),
+            Category::Commands => self.commands.iter().map(|i| i.install_status).collect(),
+        };
+        let installed = statuses
+            .iter()
+            .filter(|s| **s == SkillInstallStatus::Installed)
+            .count();
+        (installed, statuses.len())
+    }
+
+    /// Name and install status of one Item.
+    fn leaf(&self, category: Category, idx: usize) -> (&str, SkillInstallStatus) {
+        match category {
+            Category::Skills => (&self.skills[idx].name, self.skills[idx].install_status),
+            Category::Agents => (&self.agents[idx].name, self.agents[idx].install_status),
+            Category::Commands => (&self.commands[idx].name, self.commands[idx].install_status),
+        }
+    }
+}
+
+/// One rendered list line for `row`.
+fn render_row_line(app: &App, row: &ListRow, is_cursor: bool) -> Line<'static> {
+    match row {
+        ListRow::CategoryHeader { category } => {
+            let category = *category;
+            let (installed, total) = app
+                .groups
+                .iter()
+                .map(|g| g.counts(category))
+                .fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
+            let label = format!("{} [{installed}/{total}]", category.heading());
+            let expanded = app.expanded_categories.contains(&category);
+            let disabled = app.config.agm.is_disabled(category.feature_key());
+            let arrow = if expanded { "▼" } else { "▶" };
+            let text = if disabled {
+                format!("{arrow} {label} (disabled)")
+            } else {
+                format!("{arrow} {label}")
+            };
+            let style = if is_cursor {
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::Blue)
+                    .add_modifier(Modifier::BOLD)
+            } else if disabled {
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            };
+            Line::from(Span::styled(text, style))
+        }
+        ListRow::SourceHeader {
+            category,
+            group_index,
+        } => {
+            let group = &app.groups[*group_index];
+            let (installed, total) = group.counts(*category);
+            let expanded = match category {
+                Category::Skills => app.expanded_skills_sources.contains(group_index),
+                Category::Agents => app.expanded_agents_sources.contains(group_index),
+                Category::Commands => app.expanded_commands_sources.contains(group_index),
+            };
+            let arrow = if expanded { "▼" } else { "▶" };
+            let text = format!(
+                "  {arrow} {} {} ({})  [{installed}/{total}]",
+                kind_icon(&group.kind),
+                group.name,
+                kind_label(&group.kind)
+            );
+            let style = if is_cursor {
+                Style::default()
+                    .fg(Color::White)
+                    .bg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
+            };
+            Line::from(Span::styled(text, style))
+        }
+        ListRow::SkillItem { .. } | ListRow::AgentItem { .. } | ListRow::CommandItem { .. } => {
+            let Some((category, gi, idx)) = row_leaf_key(row) else {
+                return Line::default();
+            };
+            let (name, status) = app.groups[gi].leaf(category, idx);
+            let disabled = app.config.agm.is_disabled(category.feature_key());
+            let indices = if app.filtered_rows.is_some() && !app.search_query.text().is_empty() {
+                app.matcher
+                    .fuzzy_indices(name, app.search_query.text())
+                    .map(|(_, idx)| idx)
+            } else {
+                None
+            };
+            let is_selected = app.is_effectively_selected(&(category, gi, idx));
+            let line = render_item_line(
+                name,
+                &status,
+                is_cursor,
+                is_selected,
+                ">",
+                indices.as_deref(),
+            );
+            if disabled && !is_cursor {
+                line.style(Style::default().fg(Color::DarkGray))
+            } else {
+                line
+            }
+        }
+    }
+}
+
 fn render_list(app: &App, frame: &mut Frame, area: Rect) {
     let block = Block::default()
         .title(Line::from(format!(" {} — Tool · [Source] ", env!("CARGO_PKG_NAME"))).left_aligned())
@@ -2543,232 +2682,7 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
         let is_cursor = vis_idx == app.cursor;
         let row = &app.rows[row_idx];
 
-        let line = match row {
-            ListRow::CategoryHeader { category } => {
-                let (label, expanded) = match category {
-                    Category::Skills => {
-                        let total: usize = app.groups.iter().map(|g| g.skills.len()).sum();
-                        let installed: usize = app
-                            .groups
-                            .iter()
-                            .flat_map(|g| &g.skills)
-                            .filter(|s| s.install_status == SkillInstallStatus::Installed)
-                            .count();
-                        (
-                            format!("🔧 Skills [{installed}/{total}]"),
-                            app.expanded_categories.contains(&Category::Skills),
-                        )
-                    }
-                    Category::Agents => {
-                        let total: usize = app.groups.iter().map(|g| g.agents.len()).sum();
-                        let installed: usize = app
-                            .groups
-                            .iter()
-                            .flat_map(|g| &g.agents)
-                            .filter(|a| a.install_status == SkillInstallStatus::Installed)
-                            .count();
-                        (
-                            format!("🤖 Agents [{installed}/{total}]"),
-                            app.expanded_categories.contains(&Category::Agents),
-                        )
-                    }
-                    Category::Commands => {
-                        let total: usize = app.groups.iter().map(|g| g.commands.len()).sum();
-                        let installed: usize = app
-                            .groups
-                            .iter()
-                            .flat_map(|g| &g.commands)
-                            .filter(|c| c.install_status == SkillInstallStatus::Installed)
-                            .count();
-                        (
-                            format!("💬 Commands [{installed}/{total}]"),
-                            app.expanded_categories.contains(&Category::Commands),
-                        )
-                    }
-                };
-                let disabled = match category {
-                    Category::Skills => app.config.agm.is_disabled("skills"),
-                    Category::Agents => app.config.agm.is_disabled("agents"),
-                    Category::Commands => app.config.agm.is_disabled("commands"),
-                };
-
-                let arrow = if expanded { "▼" } else { "▶" };
-                let text = if disabled {
-                    format!("{arrow} {label} (disabled)")
-                } else {
-                    format!("{arrow} {label}")
-                };
-
-                let style = if is_cursor {
-                    Style::default()
-                        .fg(Color::White)
-                        .bg(Color::Blue)
-                        .add_modifier(Modifier::BOLD)
-                } else if disabled {
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD)
-                };
-                Line::from(Span::styled(text, style))
-            }
-            ListRow::SourceHeader {
-                category,
-                group_index,
-            } => {
-                let group = &app.groups[*group_index];
-                let icon = kind_icon(&group.kind);
-                let label = kind_label(&group.kind);
-                let (item_count, expanded) = match category {
-                    Category::Skills => {
-                        let total = group.skills.len();
-                        let installed = group
-                            .skills
-                            .iter()
-                            .filter(|s| s.install_status == SkillInstallStatus::Installed)
-                            .count();
-                        (
-                            format!("{installed}/{total}"),
-                            app.expanded_skills_sources.contains(group_index),
-                        )
-                    }
-                    Category::Agents => {
-                        let total = group.agents.len();
-                        let installed = group
-                            .agents
-                            .iter()
-                            .filter(|a| a.install_status == SkillInstallStatus::Installed)
-                            .count();
-                        (
-                            format!("{installed}/{total}"),
-                            app.expanded_agents_sources.contains(group_index),
-                        )
-                    }
-                    Category::Commands => {
-                        let total = group.commands.len();
-                        let installed = group
-                            .commands
-                            .iter()
-                            .filter(|c| c.install_status == SkillInstallStatus::Installed)
-                            .count();
-                        (
-                            format!("{installed}/{total}"),
-                            app.expanded_commands_sources.contains(group_index),
-                        )
-                    }
-                };
-                let arrow = if expanded { "▼" } else { "▶" };
-                let text = format!("  {arrow} {icon} {} ({label})  [{item_count}]", group.name);
-
-                let style = if is_cursor {
-                    Style::default()
-                        .fg(Color::White)
-                        .bg(Color::DarkGray)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD)
-                };
-                Line::from(Span::styled(text, style))
-            }
-            ListRow::SkillItem {
-                group_index,
-                skill_index,
-            } => {
-                let skill = &app.groups[*group_index].skills[*skill_index];
-                let disabled = app.config.agm.is_disabled("skills");
-                let indices = if app.filtered_rows.is_some() && !app.search_query.text().is_empty()
-                {
-                    app.matcher
-                        .fuzzy_indices(&skill.name, app.search_query.text())
-                        .map(|(_, idx)| idx)
-                } else {
-                    None
-                };
-                let is_selected =
-                    app.is_effectively_selected(&(Category::Skills, *group_index, *skill_index));
-                let line = render_item_line(
-                    &skill.name,
-                    &skill.install_status,
-                    is_cursor,
-                    is_selected,
-                    ">",
-                    indices.as_deref(),
-                );
-                if disabled && !is_cursor {
-                    line.style(Style::default().fg(Color::DarkGray))
-                } else {
-                    line
-                }
-            }
-            ListRow::AgentItem {
-                group_index,
-                agent_index,
-            } => {
-                let agent = &app.groups[*group_index].agents[*agent_index];
-                let disabled = app.config.agm.is_disabled("agents");
-                let indices = if app.filtered_rows.is_some() && !app.search_query.text().is_empty()
-                {
-                    app.matcher
-                        .fuzzy_indices(&agent.name, app.search_query.text())
-                        .map(|(_, idx)| idx)
-                } else {
-                    None
-                };
-                let is_selected =
-                    app.is_effectively_selected(&(Category::Agents, *group_index, *agent_index));
-                let line = render_item_line(
-                    &agent.name,
-                    &agent.install_status,
-                    is_cursor,
-                    is_selected,
-                    ">",
-                    indices.as_deref(),
-                );
-                if disabled && !is_cursor {
-                    line.style(Style::default().fg(Color::DarkGray))
-                } else {
-                    line
-                }
-            }
-            ListRow::CommandItem {
-                group_index,
-                command_index,
-            } => {
-                let command = &app.groups[*group_index].commands[*command_index];
-                let disabled = app.config.agm.is_disabled("commands");
-                let indices = if app.filtered_rows.is_some() && !app.search_query.text().is_empty()
-                {
-                    app.matcher
-                        .fuzzy_indices(&command.name, app.search_query.text())
-                        .map(|(_, idx)| idx)
-                } else {
-                    None
-                };
-                let is_selected = app.is_effectively_selected(&(
-                    Category::Commands,
-                    *group_index,
-                    *command_index,
-                ));
-                let line = render_item_line(
-                    &command.name,
-                    &command.install_status,
-                    is_cursor,
-                    is_selected,
-                    ">",
-                    indices.as_deref(),
-                );
-                if disabled && !is_cursor {
-                    line.style(Style::default().fg(Color::DarkGray))
-                } else {
-                    line
-                }
-            }
-        };
+        let line = render_row_line(app, row, is_cursor);
         lines.push(line);
     }
 
