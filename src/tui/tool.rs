@@ -361,6 +361,114 @@ impl ToolApp {
     // Key handling
     // ------------------------------------------------------------------
 
+    fn expand_all(&mut self) {
+        self.expanded.insert("agm".to_string());
+        for key in self.config.tools.keys() {
+            self.expanded.insert(key.clone());
+            self.expanded.insert(format!("{}:status", key));
+            let tool = &self.config.tools[key];
+            if tool.settings.len() > 1 {
+                self.expanded.insert(format!("{}:settings", key));
+            }
+            if tool.auth.len() > 1 {
+                self.expanded.insert(format!("{}:auth", key));
+            }
+            if tool.mcp.len() > 1 {
+                self.expanded.insert(format!("{}:mcp", key));
+            }
+        }
+        self.rebuild_rows();
+    }
+
+    /// Space/Enter: show info or toggle a fold.
+    fn primary_action(&mut self) {
+        if let Some(row) = self.current_row().cloned() {
+            match &row {
+                ToolRow::AgmHeader => self.toggle_expanded("agm"),
+                ToolRow::ToolHeader { key, .. } => self.toggle_expanded(key),
+                ToolRow::StatusHeader { tool_key } => {
+                    let sk = format!("{}:status", tool_key);
+                    self.toggle_expanded(&sk);
+                }
+                ToolRow::AgmItem(ref cf) => {
+                    self.show_agm_info(cf);
+                }
+                ToolRow::LinkItem { tool_key, field } => {
+                    self.show_link_info(&tool_key.clone(), &field.clone());
+                }
+                ToolRow::FileGroupHeader { tool_key, group } => {
+                    let files = self.get_group_files(tool_key, group);
+                    if files.len() <= 1 {
+                        self.show_file_info(&tool_key.clone(), &group.clone(), 0);
+                    } else {
+                        let gk = format!("{}:{}", tool_key, group_key_suffix(group));
+                        self.toggle_expanded(&gk);
+                    }
+                }
+                ToolRow::FileItem {
+                    tool_key,
+                    group,
+                    index,
+                } => {
+                    self.show_file_info(&tool_key.clone(), &group.clone(), *index);
+                }
+            }
+        }
+    }
+
+    /// `i`: info popup for the row under the cursor.
+    fn info_action(&mut self) {
+        if let Some(row) = self.current_row().cloned() {
+            match &row {
+                ToolRow::AgmItem(ref cf) => {
+                    self.show_agm_info(cf);
+                }
+                ToolRow::LinkItem { tool_key, field } => {
+                    self.show_link_info(&tool_key.clone(), &field.clone());
+                }
+                ToolRow::FileGroupHeader { tool_key, group } => {
+                    self.show_file_info(&tool_key.clone(), &group.clone(), 0);
+                }
+                ToolRow::FileItem {
+                    tool_key,
+                    group,
+                    index,
+                } => {
+                    self.show_file_info(&tool_key.clone(), &group.clone(), *index);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// `l`: toggle a Feature or link for the row under the cursor.
+    fn link_action(&mut self) {
+        if let Some(row) = self.current_row().cloned() {
+            match &row {
+                ToolRow::AgmItem(
+                    ref cf @ (AgmField::Prompt
+                    | AgmField::Skills
+                    | AgmField::Agents
+                    | AgmField::Commands),
+                ) => {
+                    self.show_toggle_feature_confirm(cf);
+                }
+                ToolRow::StatusHeader { tool_key } => {
+                    self.toggle_all_links(&tool_key.clone());
+                }
+                ToolRow::LinkItem { tool_key, field } => {
+                    let feature = field.key();
+                    if self.config.agm.is_disabled(feature) {
+                        self.set_status(format!("{} is globally disabled", feature));
+                    } else {
+                        self.toggle_link(&tool_key.clone(), &field.clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     pub(crate) fn handle_key(
         &mut self,
         code: KeyCode,
@@ -407,113 +515,16 @@ impl ToolApp {
                 self.expanded.clear();
                 self.rebuild_rows();
             }
-            KeyCode::Char('9') => {
-                self.expanded.insert("agm".to_string());
-                for key in self.config.tools.keys() {
-                    self.expanded.insert(key.clone());
-                    self.expanded.insert(format!("{}:status", key));
-                    let tool = &self.config.tools[key];
-                    if tool.settings.len() > 1 {
-                        self.expanded.insert(format!("{}:settings", key));
-                    }
-                    if tool.auth.len() > 1 {
-                        self.expanded.insert(format!("{}:auth", key));
-                    }
-                    if tool.mcp.len() > 1 {
-                        self.expanded.insert(format!("{}:mcp", key));
-                    }
-                }
-                self.rebuild_rows();
-            }
+            KeyCode::Char('9') => self.expand_all(),
 
             // Primary action: space/enter — info or toggle fold
-            KeyCode::Char(' ') | KeyCode::Enter => {
-                if let Some(row) = self.current_row().cloned() {
-                    match &row {
-                        ToolRow::AgmHeader => self.toggle_expanded("agm"),
-                        ToolRow::ToolHeader { key, .. } => self.toggle_expanded(key),
-                        ToolRow::StatusHeader { tool_key } => {
-                            let sk = format!("{}:status", tool_key);
-                            self.toggle_expanded(&sk);
-                        }
-                        ToolRow::AgmItem(ref cf) => {
-                            self.show_agm_info(cf);
-                        }
-                        ToolRow::LinkItem { tool_key, field } => {
-                            self.show_link_info(&tool_key.clone(), &field.clone());
-                        }
-                        ToolRow::FileGroupHeader { tool_key, group } => {
-                            let files = self.get_group_files(tool_key, group);
-                            if files.len() <= 1 {
-                                self.show_file_info(&tool_key.clone(), &group.clone(), 0);
-                            } else {
-                                let gk = format!("{}:{}", tool_key, group_key_suffix(group));
-                                self.toggle_expanded(&gk);
-                            }
-                        }
-                        ToolRow::FileItem {
-                            tool_key,
-                            group,
-                            index,
-                        } => {
-                            self.show_file_info(&tool_key.clone(), &group.clone(), *index);
-                        }
-                    }
-                }
-            }
+            KeyCode::Char(' ') | KeyCode::Enter => self.primary_action(),
 
             // Info popup alias: i
-            KeyCode::Char('i') => {
-                if let Some(row) = self.current_row().cloned() {
-                    match &row {
-                        ToolRow::AgmItem(ref cf) => {
-                            self.show_agm_info(cf);
-                        }
-                        ToolRow::LinkItem { tool_key, field } => {
-                            self.show_link_info(&tool_key.clone(), &field.clone());
-                        }
-                        ToolRow::FileGroupHeader { tool_key, group } => {
-                            self.show_file_info(&tool_key.clone(), &group.clone(), 0);
-                        }
-                        ToolRow::FileItem {
-                            tool_key,
-                            group,
-                            index,
-                        } => {
-                            self.show_file_info(&tool_key.clone(), &group.clone(), *index);
-                        }
-                        _ => {}
-                    }
-                }
-            }
+            KeyCode::Char('i') => self.info_action(),
 
             // Link/toggle action: l
-            KeyCode::Char('l') => {
-                if let Some(row) = self.current_row().cloned() {
-                    match &row {
-                        ToolRow::AgmItem(
-                            ref cf @ (AgmField::Prompt
-                            | AgmField::Skills
-                            | AgmField::Agents
-                            | AgmField::Commands),
-                        ) => {
-                            self.show_toggle_feature_confirm(cf);
-                        }
-                        ToolRow::StatusHeader { tool_key } => {
-                            self.toggle_all_links(&tool_key.clone());
-                        }
-                        ToolRow::LinkItem { tool_key, field } => {
-                            let feature = field.key();
-                            if self.config.agm.is_disabled(feature) {
-                                self.set_status(format!("{} is globally disabled", feature));
-                            } else {
-                                self.toggle_link(&tool_key.clone(), &field.clone());
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
+            KeyCode::Char('l') => self.link_action(),
 
             // Edit — open editor or path editor
             KeyCode::Char('e') => {
