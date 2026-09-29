@@ -283,13 +283,11 @@ pub fn remove_link_quiet(
     } else if fs::read_link(link_path).is_ok() {
         platform::remove_link(link_path)?;
         Ok((true, format!("{} removed", label)))
+    } else if platform::plain_file_may_be_link() {
+        platform::remove_link(link_path)?;
+        Ok((true, format!("{} removed", label)))
     } else {
-        if platform::plain_file_may_be_link() {
-            platform::remove_link(link_path)?;
-            Ok((true, format!("{} removed", label)))
-        } else {
-            Ok((false, format!("{} is not a symlink, skipping", label)))
-        }
+        Ok((false, format!("{} is not a symlink, skipping", label)))
     }
 }
 

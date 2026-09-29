@@ -1922,7 +1922,6 @@ impl App {
                     }
                 }
             }
-            return;
         }
     }
 
@@ -2874,11 +2873,6 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
         }
     }
 }
-
-/// Count how many names are duplicates of an earlier name (i.e. total minus
-/// distinct). These are entries that can't all be linked, because skills/agents/
-/// commands share a single flat namespace keyed by name — only the first of each
-/// name wins; the rest are skipped as conflicts.
 
 fn push_clone_progress(log: &mut super::log::LogBuffer, evt: &skills::CloneProgress) {
     use super::log::LogLevel;
