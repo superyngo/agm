@@ -491,18 +491,18 @@ source_dir = "~/p/source"
             commands_dir: "".into(),
             mcp: vec![],
         };
-        // A drive-less path is absolute on Unix but joins to config_dir on Windows.
-        if crate::platform::links_can_dangle() {
-            assert_eq!(
-                tool.resolve_path("/etc/some.conf"),
-                PathBuf::from("/etc/some.conf")
-            );
-        } else {
-            assert_eq!(
-                tool.resolve_path("/etc/some.conf"),
-                dirs::home_dir().unwrap().join(".test-tool").join("etc/some.conf")
-            );
-        }
+        // A drive-less path is treated as absolute on both platforms, but on
+        // Windows it anchors to the current drive (e.g. `C:\etc\some.conf`).
+        let resolved = tool.resolve_path("/etc/some.conf");
+        assert!(resolved.is_absolute());
+        assert_eq!(
+            resolved
+                .components()
+                .skip_while(|c| !matches!(c, std::path::Component::Normal(_)))
+                .collect::<Vec<_>>(),
+            vec!["etc", "some.conf"]
+        );
+        assert!(!resolved.starts_with(tool.resolved_config_dir()));
     }
 
     #[test]
