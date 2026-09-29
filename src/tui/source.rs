@@ -1173,32 +1173,11 @@ impl App {
         }
 
         // Compute totals
-        let (total, installed): (usize, usize) = match category {
-            Category::Skills => (
-                self.groups.iter().map(|g| g.skills.len()).sum(),
-                self.groups
-                    .iter()
-                    .flat_map(|g| &g.skills)
-                    .filter(|s| s.install_status == SkillInstallStatus::Installed)
-                    .count(),
-            ),
-            Category::Agents => (
-                self.groups.iter().map(|g| g.agents.len()).sum(),
-                self.groups
-                    .iter()
-                    .flat_map(|g| &g.agents)
-                    .filter(|a| a.install_status == SkillInstallStatus::Installed)
-                    .count(),
-            ),
-            Category::Commands => (
-                self.groups.iter().map(|g| g.commands.len()).sum(),
-                self.groups
-                    .iter()
-                    .flat_map(|g| &g.commands)
-                    .filter(|c| c.install_status == SkillInstallStatus::Installed)
-                    .count(),
-            ),
-        };
+        let (installed, total) = self
+            .groups
+            .iter()
+            .map(|g| g.counts(category))
+            .fold((0, 0), |a, b| (a.0 + b.0, a.1 + b.1));
         lines.push(Line::from(vec![
             Span::styled("Installed: ", Style::default().fg(Color::Yellow)),
             Span::raw(format!("{installed} / {total}")),
@@ -1206,26 +1185,12 @@ impl App {
 
         // Duplicate names across all sources in this category: only one of each
         // name can occupy the flat namespace, so the rest are skipped on install.
-        let duplicate_named = match category {
-            Category::Skills => skills::duplicate_name_count(
-                self.groups
-                    .iter()
-                    .flat_map(|g| &g.skills)
-                    .map(|s| s.name.clone()),
-            ),
-            Category::Agents => skills::duplicate_name_count(
-                self.groups
-                    .iter()
-                    .flat_map(|g| &g.agents)
-                    .map(|a| a.name.clone()),
-            ),
-            Category::Commands => skills::duplicate_name_count(
-                self.groups
-                    .iter()
-                    .flat_map(|g| &g.commands)
-                    .map(|c| c.name.clone()),
-            ),
-        };
+        let duplicate_named = skills::duplicate_name_count(
+            self.groups
+                .iter()
+                .flat_map(|g| g.entries(category))
+                .map(|(name, _, _)| name.to_string()),
+        );
         if duplicate_named > 0 {
             lines.push(Line::from(vec![
                 Span::styled("Duplicate-named: ", Style::default().fg(Color::Yellow)),
@@ -1246,32 +1211,7 @@ impl App {
         )));
 
         for group in &self.groups {
-            let (item_total, item_installed) = match category {
-                Category::Skills => (
-                    group.skills.len(),
-                    group
-                        .skills
-                        .iter()
-                        .filter(|s| s.install_status == SkillInstallStatus::Installed)
-                        .count(),
-                ),
-                Category::Agents => (
-                    group.agents.len(),
-                    group
-                        .agents
-                        .iter()
-                        .filter(|a| a.install_status == SkillInstallStatus::Installed)
-                        .count(),
-                ),
-                Category::Commands => (
-                    group.commands.len(),
-                    group
-                        .commands
-                        .iter()
-                        .filter(|c| c.install_status == SkillInstallStatus::Installed)
-                        .count(),
-                ),
-            };
+            let (item_installed, item_total) = group.counts(category);
             if item_total == 0 {
                 continue;
             }
@@ -1314,59 +1254,14 @@ impl App {
         }
 
         // Total preload chars for this category (installed vs not-installed).
-        let (installed_chars, uninstalled_chars) = match category {
-            Category::Skills => {
-                let i: usize = self
-                    .groups
-                    .iter()
-                    .flat_map(|g| &g.skills)
-                    .filter(|s| s.install_status == SkillInstallStatus::Installed)
-                    .map(|s| s.preload_chars)
-                    .sum();
-                let u: usize = self
-                    .groups
-                    .iter()
-                    .flat_map(|g| &g.skills)
-                    .filter(|s| s.install_status != SkillInstallStatus::Installed)
-                    .map(|s| s.preload_chars)
-                    .sum();
-                (i, u)
+        let (mut installed_chars, mut uninstalled_chars) = (0usize, 0usize);
+        for (_, status, chars) in self.groups.iter().flat_map(|g| g.entries(category)) {
+            if status == SkillInstallStatus::Installed {
+                installed_chars += chars;
+            } else {
+                uninstalled_chars += chars;
             }
-            Category::Agents => {
-                let i: usize = self
-                    .groups
-                    .iter()
-                    .flat_map(|g| &g.agents)
-                    .filter(|a| a.install_status == SkillInstallStatus::Installed)
-                    .map(|a| a.preload_chars)
-                    .sum();
-                let u: usize = self
-                    .groups
-                    .iter()
-                    .flat_map(|g| &g.agents)
-                    .filter(|a| a.install_status != SkillInstallStatus::Installed)
-                    .map(|a| a.preload_chars)
-                    .sum();
-                (i, u)
-            }
-            Category::Commands => {
-                let i: usize = self
-                    .groups
-                    .iter()
-                    .flat_map(|g| &g.commands)
-                    .filter(|c| c.install_status == SkillInstallStatus::Installed)
-                    .map(|c| c.preload_chars)
-                    .sum();
-                let u: usize = self
-                    .groups
-                    .iter()
-                    .flat_map(|g| &g.commands)
-                    .filter(|c| c.install_status != SkillInstallStatus::Installed)
-                    .map(|c| c.preload_chars)
-                    .sum();
-                (i, u)
-            }
-        };
+        }
 
         lines.push(Line::default());
         lines.push(Line::from(Span::styled(
@@ -2531,6 +2426,27 @@ impl Category {
 }
 
 impl SourceGroup {
+    /// (name, install status, preload chars) of every Item of one category.
+    fn entries(&self, category: Category) -> Vec<(&str, SkillInstallStatus, usize)> {
+        match category {
+            Category::Skills => self
+                .skills
+                .iter()
+                .map(|i| (i.name.as_str(), i.install_status, i.preload_chars))
+                .collect(),
+            Category::Agents => self
+                .agents
+                .iter()
+                .map(|i| (i.name.as_str(), i.install_status, i.preload_chars))
+                .collect(),
+            Category::Commands => self
+                .commands
+                .iter()
+                .map(|i| (i.name.as_str(), i.install_status, i.preload_chars))
+                .collect(),
+        }
+    }
+
     /// (installed, total) Items of one category in this source.
     fn counts(&self, category: Category) -> (usize, usize) {
         let statuses: Vec<SkillInstallStatus> = match category {
