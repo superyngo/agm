@@ -57,6 +57,15 @@ enum ListRow {
     },
 }
 
+/// The single-line text prompt currently capturing keys, if any.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum InputMode {
+    None,
+    Search,
+    Add,
+    Rename,
+}
+
 #[derive(Clone)]
 enum ConfirmState {
     Normal {
@@ -87,7 +96,8 @@ pub(crate) struct App {
     cursor: usize,
     scroll_offset: usize,
     status_message: super::style::StatusLine,
-    search_mode: bool,
+    /// Which single-line text prompt is open (they are mutually exclusive).
+    input_mode: InputMode,
     search_query: super::text_input::TextInput,
     filtered_rows: Option<Vec<usize>>,
     should_quit: bool,
@@ -107,9 +117,7 @@ pub(crate) struct App {
     background_task: Option<super::background::BackgroundTask>,
     info_popup: Option<super::popup::ScrollablePopup>,
     help: Option<super::help::HelpPopup>,
-    add_mode: bool,
     add_input: super::text_input::TextInput,
-    rename_mode: bool,
     rename_input: super::text_input::TextInput,
     rename_target_group_index: Option<usize>,
     selected: HashSet<(Category, usize, usize)>,
@@ -134,7 +142,7 @@ impl App {
             cursor: 0,
             scroll_offset: 0,
             status_message: super::style::StatusLine::new(),
-            search_mode: false,
+            input_mode: InputMode::None,
             search_query: super::text_input::TextInput::new(),
             filtered_rows: None,
             should_quit: false,
@@ -154,9 +162,7 @@ impl App {
             background_task: None,
             info_popup: None,
             help: None,
-            add_mode: false,
             add_input: super::text_input::TextInput::new(),
-            rename_mode: false,
             rename_input: super::text_input::TextInput::new(),
             rename_target_group_index: None,
             selected: HashSet::new(),
@@ -212,9 +218,7 @@ impl App {
         self.help.is_some()
             || self.log_popup.is_some()
             || self.info_popup.is_some()
-            || self.search_mode
-            || self.add_mode
-            || self.rename_mode
+            || self.input_mode != InputMode::None
             || self.confirm_state.is_some()
     }
 
@@ -1871,13 +1875,13 @@ impl App {
     }
 
     fn do_add(&mut self) {
-        self.add_mode = true;
+        self.input_mode = InputMode::Add;
         self.add_input.clear();
         self.set_status("Add source: URL or local path (Enter to confirm, Esc to cancel)");
     }
 
     fn do_add_submit(&mut self) {
-        self.add_mode = false;
+        self.input_mode = InputMode::None;
         let source = self.add_input.text().trim().to_string();
         self.add_input.clear();
 
@@ -1925,7 +1929,7 @@ impl App {
             }
         };
         let current = self.groups[group_index].name.clone();
-        self.rename_mode = true;
+        self.input_mode = InputMode::Rename;
         self.rename_input = super::text_input::TextInput::with_text(current);
         self.rename_target_group_index = Some(group_index);
         self.set_status("Rename: edit name (Enter to confirm, Esc to cancel)");
@@ -1935,12 +1939,12 @@ impl App {
         let group_index = match self.rename_target_group_index.take() {
             Some(i) => i,
             None => {
-                self.rename_mode = false;
+                self.input_mode = InputMode::None;
                 return;
             }
         };
         let new_name = self.rename_input.text().trim().to_string();
-        self.rename_mode = false;
+        self.input_mode = InputMode::None;
         self.rename_input.clear();
 
         let old_name = self.groups[group_index].name.clone();
@@ -2087,10 +2091,10 @@ impl App {
         }
 
         // Rename mode — inline input box
-        if self.rename_mode {
+        if self.input_mode == InputMode::Rename {
             match code {
                 KeyCode::Esc => {
-                    self.rename_mode = false;
+                    self.input_mode = InputMode::None;
                     self.rename_input.clear();
                     self.rename_target_group_index = None;
                     self.set_status("Rename cancelled");
@@ -2104,10 +2108,10 @@ impl App {
         }
 
         // Add mode — inline input box
-        if self.add_mode {
+        if self.input_mode == InputMode::Add {
             match code {
                 KeyCode::Esc => {
-                    self.add_mode = false;
+                    self.input_mode = InputMode::None;
                     self.add_input.clear();
                     self.set_status("Add cancelled");
                 }
@@ -2122,16 +2126,16 @@ impl App {
         }
 
         // Search mode
-        if self.search_mode {
+        if self.input_mode == InputMode::Search {
             match code {
                 KeyCode::Esc => {
-                    self.search_mode = false;
+                    self.input_mode = InputMode::None;
                     self.search_query.clear();
                     self.filtered_rows = None;
                     self.cursor = 0;
                 }
                 KeyCode::Enter => {
-                    self.search_mode = false;
+                    self.input_mode = InputMode::None;
                     // Keep filter active
                 }
                 KeyCode::Up | KeyCode::Char('k') if modifiers.contains(KeyModifiers::CONTROL) => {
@@ -2290,7 +2294,7 @@ impl App {
                 self.set_status("Expanded all");
             }
             KeyCode::Char('/') => {
-                self.search_mode = true;
+                self.input_mode = InputMode::Search;
                 // Preserve existing search_query and filtered_rows
                 // so user can continue editing their previous search
                 self.expand_all();
@@ -3081,7 +3085,7 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         )));
         frame.render_widget(p, inner);
-    } else if app.add_mode {
+    } else if app.input_mode == InputMode::Add {
         let prefix_style = Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD);
@@ -3090,7 +3094,7 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             .add_input
             .render_line("Add source: ", prefix_style, text_style);
         frame.render_widget(Paragraph::new(line), inner);
-    } else if app.rename_mode {
+    } else if app.input_mode == InputMode::Rename {
         let prefix_style = Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD);
@@ -3099,7 +3103,7 @@ fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
             .rename_input
             .render_line("Rename → ", prefix_style, text_style);
         frame.render_widget(Paragraph::new(line), inner);
-    } else if app.search_mode {
+    } else if app.input_mode == InputMode::Search {
         let prompt = format!("/{}", app.search_query.text());
         let p = Paragraph::new(Line::from(Span::styled(
             prompt,
