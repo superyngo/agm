@@ -412,6 +412,9 @@ mod resolve_tests {
 
     #[test]
     fn relative_missing_target_is_broken_not_wrong() {
+        if !platform::links_can_dangle() {
+            return;
+        }
         let t = tempfile::tempdir().unwrap();
         let missing = t.path().join("store");
         let link = t.path().join("link");
@@ -427,6 +430,9 @@ mod branch_tests {
 
     #[test]
     fn broken_link_is_repaired_by_create() {
+        if !platform::links_can_dangle() {
+            return;
+        }
         let t = tempdir().unwrap();
         let gone = t.path().join("gone");
         let target = t.path().join("target");

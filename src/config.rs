@@ -491,10 +491,18 @@ source_dir = "~/p/source"
             commands_dir: "".into(),
             mcp: vec![],
         };
-        assert_eq!(
-            tool.resolve_path("/etc/some.conf"),
-            PathBuf::from("/etc/some.conf")
-        );
+        // A drive-less path is absolute on Unix but joins to config_dir on Windows.
+        if platform::links_can_dangle() {
+            assert_eq!(
+                tool.resolve_path("/etc/some.conf"),
+                PathBuf::from("/etc/some.conf")
+            );
+        } else {
+            assert_eq!(
+                tool.resolve_path("/etc/some.conf"),
+                dirs::home_dir().unwrap().join(".test-tool").join("etc/some.conf")
+            );
+        }
     }
 
     #[test]
