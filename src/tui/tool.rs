@@ -1156,14 +1156,7 @@ impl ToolApp {
                             }
                         }
                         LinkStatus::Blocked => {
-                            self.handle_blocked_link(
-                                key,
-                                &link_field,
-                                &link_path,
-                                &target,
-                                is_dir,
-                                feature,
-                            );
+                            self.handle_blocked_link(key, &link_path, &target, is_dir, feature);
                             success_count += 1;
                         }
                         LinkStatus::Wrong(_) => {
