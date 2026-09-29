@@ -27,7 +27,7 @@ the **Tool Manager** (`agm tool`) and the **Source Manager** (`agm source`) — 
 
 | Key | Action |
 |---|---|
-| `e` | On a central path row: open the inline path editor. On a tool row: open the tool's TOML section, prompt, or config file in the editor; offers to create the file if missing |
+| `e` | On a central path row: open the inline path editor for skills, agents, commands, or source; open prompt source file directly in the editor. On a tool row: open the tool's TOML section, prompt, or config file in the editor; offers to create the file if missing |
 | `l` | On a central row: confirm enabling/disabling that **Feature** for all installed tools. On the status header: link/unlink everything for that tool. On a single link row: toggle that link |
 
 ## Source Manager screen
@@ -38,7 +38,7 @@ the **Tool Manager** (`agm tool`) and the **Source Manager** (`agm source`) — 
 | `Shift+↑` / `Shift+↓` | Extend the range selection from the anchor |
 | `Ctrl+A` | Select every item in the current **Source** group |
 | `l` | With a selection: confirm bulk install/uninstall of the selected items. Without: toggle install of the item under the cursor, or bulk-toggle a whole **Source** header |
-| `e` | Open the source directory, skill directory, agent file, or command file in the editor |
+| `e` | On a skill row: open `SKILL.md` in the editor. On an agent or command row: open the file in the editor. (Source directory rows do nothing) |
 | `a` | Add a **Source** — inline prompt for a URL or local path |
 | `r` | Rename the **Source** under the cursor — inline prompt |
 | `d` / `Del` | Delete the **Source** under the cursor (confirmation required) |
@@ -55,7 +55,7 @@ All scrollable popups — info, log, Help / About — share:
 | `↑` / `k`, `↓` / `j` | Scroll one line |
 | `PgUp` / `PgDn` | Scroll one page |
 | `Home` / `End` | Scroll to top / bottom |
-| `Esc` / `⏎` / `␣` | Close |
+| `Esc` / `⏎` / `␣` | Close (note: Log popup currently ignores `⏎`/`␣` and only closes on `o`/`Esc`, tracked in [BACKLOG](../plan/BACKLOG.md) B5) |
 
 Popup-specific:
 
@@ -104,10 +104,9 @@ field — the enclosing mode decides what submit and cancel mean.
 2. Close the surface popup or dialog.
 3. Cancel the active edit / confirm mode.
 4. Clear the multi-selection (Source Manager).
-5. Clear the search query and filter (Source Manager).
-6. Clear the status message.
+5. Clear the search query and filter, and also clear the status message (Source Manager handles both in one press).
 
 ## Machine-checked claims
 
 None — this table is maintained by hand against `src/tui/`. The in-app Help panel (`?`) is
-generated from `src/tui/help.rs` and is the authority if the two ever disagree.
+generated from `src/tui/help.rs` and is the authority if the two ever disagree (note: help currently omits `Ctrl+C` for the Tool screen, tracked in [BACKLOG](../plan/BACKLOG.md) B6).

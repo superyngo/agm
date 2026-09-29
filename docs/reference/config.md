@@ -15,6 +15,14 @@ Malformed TOML surfaces the `toml` parse error. Saving writes
 `toml::to_string_pretty`, creating parent directories as needed — **comments and key order in a
 hand-edited file are not preserved** when AGM saves (the TUI saves on config edits).
 
+## Top-level schema
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `editor` | string | `""` | Command or path for editor resolution (falls back to `$EDITOR`, then platform default). |
+| `agm` | table | see below | Central store configuration (accepts legacy alias `[central]`). |
+| `tools` | table of tables | see below | Per-tool configurations keyed by **Tool key**. |
+
 ## `[agm]` — the Central store
 
 | Key | Type | Default | Meaning |
@@ -26,8 +34,8 @@ hand-edited file are not preserved** when AGM saves (the TUI saves on config edi
 | `source_dir` | string | `~/.local/share/agm/source` | Where **Source**s live. |
 | `disabled` | array of string | `[]` | Globally disabled **Feature**s, from `prompt`, `skills`, `agents`, `commands`. |
 
-The table accepts the legacy name `[central]` as a serde alias. `agents_source` and
-`commands_source` have serde defaults, so a config predating them still loads.
+The table accepts the legacy name `[central]` as a serde alias. `agents_source`,
+`commands_source`, and `disabled` have serde defaults, so a config predating them still loads.
 
 ## `[tools.<key>]`
 
@@ -55,10 +63,12 @@ change, no recompile — see [`../adr/0001-config-only-tool-registry.md`](../adr
   (`paths::expand_tilde`, handling `~`, `~/`, and `~\`). Paths are contracted back to `~/…` for
   display (`paths::contract_tilde`).
 - The four **Feature** fields are resolved as `config_dir.join(<value>)`.
-- `resolve_path` treats a value as absolute when it contains `/` or `\`, starts with `~`, or has
-  a drive letter; such values also get `$VAR` / `${VAR}` expansion, with unset variables left
-  verbatim. Otherwise the value is relative to `config_dir`. This is what allows an absolute
-  `auth` entry.
+- Runtime path resolution for tool file groups (`settings`, `auth`, `mcp`) is performed by
+  `ToolState::get_group_files` (in `src/tui/tool.rs`): if an entry starts with `~` or is absolute,
+  tilde is expanded; otherwise it is joined to `config_dir`. Absolute entries work for `settings`
+  and `mcp` too, not only `auth`.
+- Note: `ToolConfig::resolve_path` in `src/config.rs` provides `$VAR` expansion and treats `/` or
+  `\` as absolute, but is currently test-only dead code (tracked in [BACKLOG](../plan/BACKLOG.md) B7).
 - A **Feature** whose resolved link path canonicalizes to the **Config dir** itself is refused
   with a warning, so a stray `"."` or `""` can never make AGM link over a tool's whole config
   directory.
@@ -77,8 +87,6 @@ their **Feature** directory names.
 | `crush` | Crush | `~/.config/crush` | `AGENTS.md` | `crush.json` | `crush.json` | `crush.json` |
 | `opencode` | OpenCode | `~/.config/opencode` | `AGENTS.md` | `opencode.json` | `~/.local/share/opencode/auth.json` | `opencode.json` |
 | `pi` | Pi | `~/.pi/agent` | `AGENTS.md` | `settings.json` | `auth.json` | — |
-
-`editor` defaults to `""`, which means "fall back to `$EDITOR`, then the platform default".
 
 ## `agm init`
 

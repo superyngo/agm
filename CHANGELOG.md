@@ -5,7 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [Unreleased]
+
+### 2026-09-29
+
+- 2026-09-29: Docs: landed the [documentation audit](docs/audit/2026-09-29-documentation-audit.md) and [prompt audit](docs/audit/2026-09-29-prompt-audit.md). Corrected `docs/reference/` against the code: `cli.md`, `config.md`, `sources.md`, `architecture.md`, `linking.md`, `KEYMAP.md`, `tui.md`, `glossary.md` (new **Category** entry) and `releasing.md` (Windows targets). Also corrected `README.md` (the commands feature, editor resolution). Newly documented: shallow clone, duplicate-name reporting, greyed-out disabled features, and the bulk install/uninstall direction rule.
+- 2026-09-29: Docs: new living backlog [`docs/plan/BACKLOG.md`](docs/plan/BACKLOG.md) holding the code defects the audit found (B1–B12), including `agm tool link` deleting a non-empty `agents/` directory (B1).
+- 2026-09-29: Docs: moved agent conduct from `GEMINI.md` to `AGENTS.md`; `CLAUDE.md` and `GEMINI.md` now import it. Added a pointer to where `wens-dev-principles` lives.
+- 2026-09-29: Docs: spelled the changelog heading `## [Unreleased]`, put the v0.5.0/v0.4.0 sections in version order, and gave the v0.1.x headings the `v` prefix. Repaired dead spec paths in six frozen records.
 
 ## [v0.16.0] - 2026-09-03
 
@@ -246,28 +253,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed `files.rs` module and all file-linking logic
 - Removed per-source management from `agm source` (use TUI instead)
 
-## [v0.3.1] - 2026-03-18
-
-### Removed
-- Remove `agm list` command - functionality now covered by `agm status`
-- Remove `agm check` command - functionality now covered by `agm status`
-
-## [v0.3.0] - 2026-03-06
-
-### Added
-- Add `agm skills list` subcommand
-- Add interactive action picker for `agm skills` without argument (list/add/remove/update)
-
-### Changed
-- Promote `edit` subcommands to top-level commands (`prompt`, `config`, `auth`, `mcp`)
-- Add global `--config <path>` override option
-- Replace multi-file open-all with interactive `dialoguer` picker
-- `--config` now propagates to `init` command
-- `skills update` re-syncs central symlinks after git pull
-- `link`/`unlink` replace `--all` flag with positional `target` (all/central/tool)
-- Rename `agm` target to `central` in `prompt`/`config` commands
-- All commands with optional target now show interactive `dialoguer` picker instead of exiting
-
 ## [v0.5.0] - 2026-03-21
 
 ### Added
@@ -312,6 +297,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Code formatting improvements via cargo fmt
 - Improve link error message formatting
 
+## [v0.3.1] - 2026-03-18
+
+### Removed
+- Remove `agm list` command - functionality now covered by `agm status`
+- Remove `agm check` command - functionality now covered by `agm status`
+
+## [v0.3.0] - 2026-03-06
+
+### Added
+- Add `agm skills list` subcommand
+- Add interactive action picker for `agm skills` without argument (list/add/remove/update)
+
+### Changed
+- Promote `edit` subcommands to top-level commands (`prompt`, `config`, `auth`, `mcp`)
+- Add global `--config <path>` override option
+- Replace multi-file open-all with interactive `dialoguer` picker
+- `--config` now propagates to `init` command
+- `skills update` re-syncs central symlinks after git pull
+- `link`/`unlink` replace `--all` flag with positional `target` (all/central/tool)
+- Rename `agm` target to `central` in `prompt`/`config` commands
+- All commands with optional target now show interactive `dialoguer` picker instead of exiting
+
 ## [v0.2.1] - 2026-03-04
 
 ### Changed
@@ -334,7 +341,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fix opencode default auth path to `~/.local/share/opencode/auth.json`
 - Fix `agm link`: prompt with wrong symlink target now prompts user to re-link (same as skills behavior)
 
-## [0.1.1] - 2026-02-14
+## [v0.1.1] - 2026-02-14
 
 ### Added
 - Support for lowercase `-v` flag to display version information
@@ -363,7 +370,7 @@ Examples:
 - `agm edit prompt` → **unchanged** (opens MASTER.md)
 - `agm edit config` → **unchanged** (opens agm config.toml)
 
-## [0.1.0] - 2026-02-14
+## [v0.1.0] - 2026-02-14
 
 ### Added
 - Initial AGM (AI Agent Manager) v0.1.0 implementation

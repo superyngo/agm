@@ -9,7 +9,7 @@ Status: Shipped (2026-03-20)
 
 **Tech Stack:** Rust, `junction` crate (Windows junctions), `std::fs::hard_link` (cross-platform hardlinks), `std::os::windows::fs::MetadataExt` (file identity comparison)
 
-**Spec:** `docs/superpowers/specs/2026-03-20-windows-platform-support-design.md`
+**Spec:** `docs/spec/2026-03-20-windows-platform-support.md`
 
 ---
 

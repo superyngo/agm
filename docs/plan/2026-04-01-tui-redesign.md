@@ -1,7 +1,7 @@
 # Implementation Plan: TUI Redesign
 Status: Shipped (2026-04-01)
 
-Spec: `docs/superpowers/specs/tui-redesign.md`
+Spec: `docs/spec/2026-04-01-tui-redesign.md`
 
 ## Overview
 

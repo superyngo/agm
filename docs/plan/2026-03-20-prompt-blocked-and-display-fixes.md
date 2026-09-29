@@ -9,7 +9,7 @@ Status: Shipped (2026-03-20)
 
 **Tech Stack:** Rust, std::path, std::fs, colored crate
 
-**Spec:** `docs/superpowers/specs/2026-03-20-prompt-blocked-and-display-fixes-design.md`
+**Spec:** `docs/spec/2026-03-20-prompt-blocked-and-display-fixes.md`
 
 ---
 

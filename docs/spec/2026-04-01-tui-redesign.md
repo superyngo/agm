@@ -649,7 +649,7 @@ The existing `update_all` can be kept as-is (used by `agm source --update`) or r
 
 ## Visual Reference
 
-See mockups: `docs/superpowers/specs/tui-mockups.html` (or serve locally)
+See mockups: `docs/spec/2026-04-01-tui-redesign/tui-mockups.html` (or serve locally)
 
 Tabs:
 1. Source TUI — Log Overlay (normal + overlay states)

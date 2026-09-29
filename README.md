@@ -4,10 +4,10 @@ A Rust CLI tool for centralized management of AI coding agent CLI tools (Claude 
 
 ## Features
 
-- **Centralized Configuration**: Manage prompts, skills, agents, and configs for all AI CLI tools in one place
+- **Centralized Configuration**: Manage prompts, skills, agents, commands, and configs for all AI CLI tools in one place
 - **Symlink Management**: Automatically create and maintain links from each tool to central sources (symlinks on Unix, junctions + hardlinks on Windows)
-- **Skills & Agents Management**: Install skills (directory-based) and agents (single `.md` files) from local paths or git repos, with auto-update support
-- **Interactive TUI**: Browse, search, and toggle skills/agents with a ratatui-based terminal UI — Tool Manager and Source Manager live in one shell, switched with `Tab`
+- **Skills, Agents & Commands Management**: Install skills (directory-based), agents, and commands (single `.md` files) from local paths or git repos, with auto-update support
+- **Interactive TUI**: Browse, search, and toggle skills/agents/commands with a ratatui-based terminal UI — Tool Manager and Source Manager live in one shell, switched with `Tab`
 - **Registry-Driven**: Add new tools by editing TOML config—no code changes needed
 - **Status Monitoring**: Check link health and tool installation status at a glance
 
@@ -103,7 +103,7 @@ agm tool status
 agm tool link
 
 # Add a source from a git repo
-agm source add https://github.com/anthropics/claude-code-skills
+agm source add https://github.com/anthropics/claude-code-skills  # or user/repo shorthand, or local path
 
 # Open the unified shell (Tab switches between Tool Manager and Source Manager)
 agm
@@ -125,7 +125,7 @@ agm source update
 
 ### Config
 
-- `agm config` - Open the config file (`~/.config/agm/config.toml`) in `$EDITOR`, or the platform default if unset
+- `agm config` - Open the config file (`~/.config/agm/config.toml`) in `config.editor`, `$EDITOR`, or the platform default if unset
 
 ### Tool Management
 
@@ -135,9 +135,9 @@ agm source update
 - `agm tool unlink` - Remove all links
 
 The TUI provides:
-- View and toggle link status for each tool (prompt, skills, agents)
+- View and toggle link status for each tool (prompt, skills, agents, commands)
 - Edit prompt, settings, auth, and MCP files with `e` key
-- Edit central paths (skills, agents, source) inline
+- Edit central paths (skills, agents, commands, source) inline
 - File picker popup for multi-file fields
 - Log popup (`o` key) for operation history
 
@@ -164,7 +164,7 @@ Both screens share the same global keys:
 | `Esc` | Close popup / clear status (one layer) — does NOT quit |
 | `q` / `Ctrl+C` | Quit |
 
-In the **Source Manager**, additional keys: `s` toggle-select, `Shift+↑/↓` range-select, `Ctrl+A` select-all-in-source, `l` install/uninstall (batch when items are selected), `e` edit, `d` delete source, `a` add, `r` rename, `u` update, `F5` refresh, `/` fuzzy search. Selection is preserved across refresh/add/delete/rename.
+In the **Source Manager**, additional keys: `s` toggle-select, `Shift+↑/↓` range-select, `Ctrl+A` select-all-in-source, `l` install/uninstall (batch when items are selected), `e` edit (`SKILL.md` or agent/command file), `d` delete source, `a` add, `r` rename, `u` update, `F5` refresh, `/` fuzzy search. Selection is preserved across refresh/add/delete/rename.
 
 In the **Tool Manager**, additional keys: `e` edit file or path, `l` toggle link / feature.
 
@@ -172,18 +172,18 @@ In the **Tool Manager**, additional keys: `e` edit file or path, `l` toggle link
 
 | Variable | Effect |
 | --- | --- |
-| `NO_COLOR` | When set (to any value, including empty), both TUIs and the CLI strip ANSI color codes. Bold/italic modifiers are preserved so the focus cursor stays visible. |
-| `EDITOR` | Used by `agm config` and the TUIs' edit actions; falls back to the platform default. |
+| `NO_COLOR` | When set (to any value, including empty), TUI and CLI output strip ANSI color codes. Bold/italic modifiers are preserved so the focus cursor stays visible. |
+| `EDITOR` | Second choice in editor resolution (after `config.editor`); falls back to the platform default. |
 
 ### Source Management
 
-- `agm source` - Open interactive TUI to manage skills & agents. In the item list, press `s` to toggle-select an item, `Shift+↑/↓` to range-select, then `l` to install/uninstall all selected items at once; `Esc` clears the selection.
-- `agm source add <url>` - Add a source repo by URL
+- `agm source` - Open interactive TUI to manage skills, agents & commands. In the item list, press `s` to toggle-select an item, `Shift+↑/↓` to range-select, then `l` to install/uninstall all selected items at once; `Esc` clears the selection.
+- `agm source add <source>` - Add a source repo by URL, `user/repo` shorthand, or local path
 - `agm source update` - Update all source repos
 - `agm source list` - List all sources with skills & agents
 - `agm source del <name|url>` - Delete a source
 - `agm source rename <old> <new>` - Rename a source folder and relink installed items
-- `agm source add -n,--name <name> <url>` - Override the cloned/copied directory name
+- `agm source add -n,--name <name> <source>` - Override the cloned/copied directory name
 
 **Examples:**
 ```bash
@@ -211,6 +211,7 @@ Default central directories:
 - Prompts: `~/.local/share/agm/prompts/MASTER.md`
 - Skills: `~/.local/share/agm/skills/`
 - Agents: `~/.local/share/agm/agents/`
+- Commands: `~/.local/share/agm/commands/`
 - Source repos: `~/.local/share/agm/source/`
 
 See [`CONTEXT.md`](CONTEXT.md) for the documentation index, or

@@ -35,10 +35,15 @@ into each **Tool**'s **Config dir** under that tool's own `prompt_filename` (`CL
 _Avoid_: Master prompt, system prompt, memory file.
 
 **Feature**:
-One of the four linkable categories: `prompt`, `skills`, `agents`, `commands`
+One of the four linkable capabilities: `prompt`, `skills`, `agents`, `commands`
 (`AgmConfig::TOGGLEABLE_FEATURES`). A **Feature** can be globally disabled via `agm.disabled`,
 and is skipped per **Tool** when that tool's corresponding field is empty.
-_Avoid_: Category, kind, feature toggle (that is the *mechanism*, not the thing).
+_Avoid_: Kind, feature toggle (that is the *mechanism*, not the thing).
+
+**Category**:
+One of the three top-level headings in the **Source Manager** tree: Skills, Agents, Commands
+(represented by the `Category` enum in `src/tui/source.rs`).
+_Avoid_: Section, group, feature (a **Feature** is a linkable capability across tools; a **Category** is a UI grouping in the Source Manager).
 
 **Link**:
 The filesystem indirection AGM creates from a **Tool**'s **Config dir** to the **Central

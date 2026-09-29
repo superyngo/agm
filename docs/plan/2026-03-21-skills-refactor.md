@@ -9,7 +9,7 @@ Status: Shipped (2026-03-21)
 
 **Tech Stack:** Rust, ratatui 0.29+, crossterm 0.28+, dialoguer (existing), clap (existing)
 
-**Spec:** `docs/specs/skills-refactor.md`
+**Spec:** `docs/spec/2026-03-21-skills-refactor.md`
 
 **Baseline:** 50 tests passing. Run `cargo test` to verify.
 

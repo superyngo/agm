@@ -32,25 +32,27 @@ lifecycle, event loop, screen switching), `tool.rs` and `source.rs` (the two scr
 main.rs / tui/          command + interaction
   ↓
 skills.rs  status.rs    domain operations
-  ↓
-linker.rs               link decisions
-  ↓
+  │          ↓
+  │        linker.rs    link decisions (also called directly by main.rs and tui/)
+  ↓          ↓
 platform.rs             OS primitives
   ↑
 config.rs  paths.rs     configuration, used by every layer above
 ```
 
 Nothing below `linker.rs` prints; `skills.rs` and the `*_quiet` linker functions return messages
-so the TUIs can render them. `platform.rs` is the sole `#[cfg]` boundary — no other module
-branches on the operating system.
+so the TUI can render them. `platform.rs` is the sole `#[cfg]` boundary — no other module
+branches on the operating system. Both are invariants (ADR 0003, ADR 0005) with known violations
+tracked in [BACKLOG](../plan/BACKLOG.md) B11: the `#[cfg(windows)]` branches in
+`linker::remove_link`, `linker::remove_link_quiet`, and `paths::contract_tilde`, two
+`#[cfg(unix)]` tests in `skills.rs`, and the `eprintln!` in `Config::resolved_link_path`.
 
 ## Data flow — `agm tool link`
 
 1. `Config::load_from` reads the TOML.
 2. Filter `config.tools` to those where `ToolConfig::is_installed()` (the **Config dir** exists).
-3. Prune broken links in the **Central store**.
-4. Per **Tool**, per **Feature**: `resolved_link_path` → inspect what is already there → migrate,
-   back up, or delete as needed → `linker::create_link`.
+3. Prune broken links in the **Central store** (skills and agents only).
+4. Per **Tool**, for `skills`, `agents`, and `prompt` (commands is omitted, tracked in [BACKLOG](../plan/BACKLOG.md) B2): `resolved_link_path` → inspect what is already there → migrate, back up, or delete as needed → `linker::create_link`.
 
 See [cli.md](cli.md#agm-tool-link) for the full pre-handling table and
 [linking.md](linking.md) for the decision table.
@@ -85,6 +87,6 @@ cargo test <name>          # single test
 cargo test -- --nocapture  # show println! output
 ```
 
-Unit tests live in each module behind `#[cfg(test)]` and use `tempfile`; `tests/cli.rs` and
-`tests/source_ops.rs` are integration tests using `assert_cmd`. See
-[releasing.md](releasing.md) for the release process.
+Unit tests live in each module behind `#[cfg(test)]` and use `tempfile`; `tests/cli.rs` is an
+integration test using `assert_cmd`, while `tests/source_ops.rs` directly tests the `agm::skills`
+API without `assert_cmd`. See [releasing.md](releasing.md) for the release process.

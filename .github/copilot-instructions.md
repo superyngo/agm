@@ -28,6 +28,8 @@ cargo test -- --nocapture   # show println! output
 | Link statuses and decision tables | [`../docs/reference/linking.md`](../docs/reference/linking.md) |
 | Source/skill/agent/command behavior | [`../docs/reference/sources.md`](../docs/reference/sources.md) |
 | TUI structure and keys | [`../docs/reference/tui.md`](../docs/reference/tui.md), [`../docs/reference/KEYMAP.md`](../docs/reference/KEYMAP.md) |
+| Tagging and release workflow | [`../docs/reference/releasing.md`](../docs/reference/releasing.md) |
+| Open work | [`../docs/plan/BACKLOG.md`](../docs/plan/BACKLOG.md) |
 | Why the design is what it is | [`../docs/adr/README.md`](../docs/adr/README.md) |
 
 ## Conduct
@@ -38,5 +40,5 @@ cargo test -- --nocapture   # show println! output
   change.
 - New document → add its row to the folder's `README.md` in the same commit.
 - Keep platform `#[cfg]` inside `src/platform.rs`; keep printing out of anything reachable from
-  `src/tui/`.
+  `src/tui/` (known violations: BACKLOG B11 — do not add more).
 - Prefer the smallest change that solves the problem, and match the surrounding style.

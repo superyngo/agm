@@ -41,7 +41,7 @@ flags were removed and are asserted rejected by `tests/cli.rs::old_short_flags_r
 
 ## `agm tool link`
 
-Order of work in `link_all` (`src/main.rs:138`):
+Order of work in `main.rs` `link_all`:
 
 1. Prune broken **Skill** and **Agent** links from the **Central store**.
 2. Print the globally disabled **Feature** list, if any.
@@ -49,27 +49,26 @@ Order of work in `link_all` (`src/main.rs:138`):
    `prompt`.
 
 It runs non-interactively: every "Re-link? / Migrate? / Backup?" decision is auto-answered
-**yes** (`yes = true`, `src/main.rs:143`), so the interactive `prompt_yes_no` path is currently
+**yes** (`yes = true` in `link_all`), so the interactive `prompt_yes_no` path is currently
 unreachable from the CLI.
-
 Per-**Feature** pre-handling before the link is created:
 
 | Existing state at the link path | `skills` / `agents` | `prompt` |
 |---|---|---|
 | Correct link | left alone (`skip … already linked`) | left alone |
 | Link to a different target | old link removed, relinked | old link removed, relinked |
-| Real directory with content | `skills`: content **migrated** to `source/agm_tools/<tool key>/`; `agents`: directory **deleted** | n/a |
+| Real directory with content | `skills`: content **migrated** to `source/agm_tools/<tool key>/`; `agents`: directory **deleted** (tracked in [BACKLOG](../plan/BACKLOG.md) B1) | n/a |
 | Empty real directory | deleted, then linked | n/a |
 | Real file with content | n/a | renamed to `<name>.<YYYYMMDD_HHMMSS>.bak`, then linked |
 | Real file that is blank | n/a | deleted, then linked |
 
-**`commands` is not linked by `agm tool link`.** `link_all` handles `skills`, `agents`, and
-`prompt` only, while `unlink_all` removes all four. Linking a **Tool**'s `commands` directory is
-only reachable from the **Tool Manager**.
+**`commands` is not linked by `agm tool link`** (tracked in [BACKLOG](../plan/BACKLOG.md) B2).
+`link_all` handles `skills`, `agents`, and `prompt` only, while `unlink_all` removes all four.
+Linking a **Tool**'s `commands` directory is only reachable from the **Tool Manager**.
 
 A **Feature** is skipped when it is listed in `agm.disabled`, or when the **Tool**'s
 corresponding field is empty, or when the resolved link path would collide with the **Config
-dir** itself (a warning is printed and the field skipped, `src/config.rs:293`).
+dir** itself (a warning is printed and the field skipped, `Config::resolved_link_path`).
 
 ## `agm tool unlink`
 
@@ -87,7 +86,8 @@ real copies, not the pre-AGM content.
    `source/local/<name>`. `-n/--name` overrides the derived directory name and is validated by
    `validate_source_name` (rejects empty, `.`, `..`, and names containing `/` or `\`).
 3. Discovered **Skill**s are offered for install: one skill installs directly, several show a
-   multi-select, `--all` installs everything without prompting.
+   multi-select, `--all` installs everything without prompting. Any discovered **Agent**s in the
+   source are installed automatically without prompting.
 
 Git progress is streamed line by line through `CloneProgress::GitLine`; git output is piped, not
 inherited, so it never corrupts the display.
@@ -95,8 +95,9 @@ inherited, so it never corrupts the display.
 ## `agm source list`
 
 Prunes broken links first, then prints one block per **Source**: its kind (`Repo` with URL,
-`Local`, or `Migrated` from a tool), and each **Skill**/**Agent**/**Command** with its **Install
-status** and **Preload chars**.
+`Local`, or `Migrated` from a tool), and each **Skill** and **Agent** with its **Install
+status** (commands are omitted, tracked in [BACKLOG](../plan/BACKLOG.md) B3; preload chars are
+not displayed).
 
 ## `agm tool status`
 
@@ -124,7 +125,7 @@ Windows). A non-zero editor exit becomes the error `Editor exited with error`.
 | Variable | Effect |
 |---|---|
 | `EDITOR` | Second choice in editor resolution, after `config.editor`. |
-| `NO_COLOR` | When set to any value, including empty, color is stripped from both TUIs and CLI output; bold/italic are kept so the focus cursor stays visible. |
+| `NO_COLOR` | When set to any value, including empty, color is stripped from TUI and CLI output; bold/italic are kept so the focus cursor stays visible. |
 
 ## Machine-checked claims
 

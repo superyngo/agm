@@ -10,13 +10,13 @@ investigation — lives in [`../spec/`](../spec/README.md), [`../plan/`](../plan
 - **[config.md](config.md)** — `config.toml` schema, path semantics, pre-registered tools, `agm init`.
 - **[linking.md](linking.md)** — link kinds per platform, `LinkStatus`, create/remove decision tables.
 - **[sources.md](sources.md)** — source/skill/agent/command discovery, install, update, rename, migration.
-- **[tui.md](tui.md)** — the two managers, popups, selection model, background work, `NO_COLOR`.
-- **[KEYMAP.md](KEYMAP.md)** — every key binding across both TUIs and all popups.
+- **[tui.md](tui.md)** — unified shell, the Tool and Source screens, popups, selection model, background work, `NO_COLOR`.
+- **[KEYMAP.md](KEYMAP.md)** — every key binding across the unified shell, both screens, and all popups.
 - **[releasing.md](releasing.md)** — tagging and the release workflow.
 
 Machine-checked: the CLI surface claims in `cli.md` by `tests/cli.rs`; the source operations in
-`sources.md` by `tests/source_ops.rs`; the schema, path, and link claims in `config.md`,
-`linking.md`, and `architecture.md` by the `#[cfg(test)]` unit tests in the corresponding module.
+`sources.md` by `tests/source_ops.rs`; the schema, path, and link claims in `config.md` and
+`linking.md` by the `#[cfg(test)]` unit tests in the corresponding module (`src/config.rs`, `src/linker.rs`).
 `tui.md` and `KEYMAP.md` are **not** machine-checked — the in-app Help panel (`?`) is generated
 from the code and wins any disagreement.
 

@@ -83,10 +83,11 @@ agents) and `agm source list`/`update` (all three).
 
 - The repo name is the last URL segment with `.git` stripped. `-n/--name` overrides it and is
   validated by `validate_source_name` (rejects empty, `.`, `..`, and any `/` or `\`).
-- `clone_or_pull` pulls instead of cloning when the target directory already exists, reporting
-  `CloneAction::Clone` or `Pull`. Git stdout/stderr are **piped and forwarded as
-  `CloneProgress::GitLine` events**, never inherited, so a TUI's display is never corrupted —
-  pinned by `tests/source_ops.rs::clone_or_pull_routes_errors_through_callback_not_stdout`.
+- `clone_or_pull` clones with `--depth 1` (shallow clone). When the target directory already exists,
+  it pulls instead, reporting `CloneAction::Clone` or `Pull`. Git stdout/stderr are **piped and
+  forwarded as `CloneProgress::GitLine` events**, never inherited, so a TUI's display is never
+  corrupted — pinned by `tests/source_ops.rs::clone_or_pull_routes_errors_through_callback_not_stdout`
+  (currently `#[ignore]`, tracked in [BACKLOG](../plan/BACKLOG.md) B10).
 - `add_local_copy` **scans before copying** and errors if the directory contains no **Skill**;
   the original directory is left untouched.
 
@@ -95,8 +96,8 @@ agents) and `agm source list`/`update` (all three).
 `update_all_with_progress` deduplicates repos by git root, `git pull`s each, then re-syncs links:
 newly appeared **Item**s are installed unless blocklisted, and broken links are pruned. Progress
 arrives as `UpdateProgress::RepoStart` / `RepoComplete` / `AllDone { total, updated, new_skills,
-new_agents, new_commands }`. Non-git sources (`local`, `agm_tools`) are skipped for pull but
-still re-synced.
+new_agents, new_commands }`. Non-git sources (`local`, `agm_tools`) are skipped entirely
+(neither pulled nor re-synced).
 
 ## Delete and rename
 
@@ -116,9 +117,12 @@ URL comparison is normalized: trailing `/` and `.git` stripped, `git@host:user/r
 
 When `agm tool link` finds real content where a **Skill** link belongs, `migrate_tool_dir_quiet`
 moves it into `source/agm_tools/<tool key>/` and links the migrated skills into the **Central
-store**. Sibling functions do the same for `agents/` and `commands/`, skipping the tool's
-`prompt_filename` so a `CLAUDE.md` is never adopted as an **Agent**. All three return
-`(count, messages)` rather than printing.
+store**. However, for `agents/`, `agm tool link` currently deletes a real directory rather than
+migrating it (tracked in [BACKLOG](../plan/BACKLOG.md) B1), and `commands/` is not linked at all by
+the CLI (tracked in [BACKLOG](../plan/BACKLOG.md) B2). Sibling migration functions
+(`migrate_agents_dir_quiet` and `migrate_commands_dir_quiet`) exist but are only invoked from the
+**Tool Manager** (`handle_blocked_link`), skipping the tool's `prompt_filename` so a `CLAUDE.md` is
+never adopted as an **Agent**. All three return `(count, messages)` rather than printing.
 
 ## Preload chars
 
@@ -132,7 +136,7 @@ store**. Sibling functions do the same for `agents/` and `commands/`, skipping t
 `tests/source_ops.rs` pins: `resolve_by_directory_name`, `resolve_by_git_url`,
 `resolve_no_match_errors`, `resolve_multi_url_match_errors`, `validate_names`,
 `rename_relinks_installed_skill_only`, `rename_with_invalid_new_name_errors`,
-`rename_target_exists_errors`, `clone_or_pull_routes_errors_through_callback_not_stdout`,
+`rename_target_exists_errors`, `clone_or_pull_routes_errors_through_callback_not_stdout` (ignored test, tracked in [BACKLOG](../plan/BACKLOG.md) B10),
 `clone_progress_variants_constructible`, and the **Preload chars** rules
 (`preload_standard_keys`, `preload_quoted_values`, `preload_block_scalar`,
 `preload_no_frontmatter`, `preload_missing_key`, `preload_missing_file`, `file_char_count_basic`,

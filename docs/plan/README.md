@@ -6,6 +6,8 @@ by kebab title — `plan/2026-04-02-commands-support.md` ↔
 [`spec/2026-04-02-commands-support.md`](../spec/2026-04-02-commands-support.md). Current
 behavior lives in [`../reference/`](../reference/README.md).
 
+The living backlog is [BACKLOG.md](BACKLOG.md) — undated, never frozen while work is open.
+
 ## In progress
 
 _None._

@@ -26,10 +26,10 @@ expected target.
 
 | Variant | Condition | Rendered as (CLI) |
 |---|---|---|
-| `Linked` | Link exists, points at the expected target, and the target exists | `✓ linked` |
+| `Linked` | Link exists, points at the expected target, and the target exists | `✓ linked → <path>` |
 | `Wrong(actual)` | Link exists but points somewhere else | `✗ wrong → <actual>` |
-| `Blocked` | Path exists but is not a link of the expected kind | `✗ not linked` |
-| `Missing` | Nothing exists at the path (`symlink_metadata` fails) | `✗ missing` |
+| `Blocked` | Path exists but is not a link of the expected kind | `✗ not linked → <path>` |
+| `Missing` | Nothing exists at the path (`symlink_metadata` fails) | `✗ missing → <target>` |
 | `Broken` | Link exists and points at the expected target, but the target is gone | `✗ broken` |
 
 `Missing` is decided first, before the directory/file split. A relative link target is resolved
@@ -62,11 +62,12 @@ directory, deleting an empty one, backing up a non-empty **Prompt** — happens 
 ## Quiet variants
 
 `create_link_quiet` and `remove_link_quiet` implement the same decisions but return
-`(changed, message)` instead of printing, so the TUIs can render outcomes into the log popup
-instead of writing to a terminal they own. See [tui.md](tui.md).
+`(changed, message)` instead of printing, so the TUI can render outcomes into the log popup
+instead of writing to a terminal it owns. See [tui.md](tui.md).
 
 ## Machine-checked claims
 
-`src/linker.rs` unit tests cover every `LinkStatus` branch and the create/remove decision table
-against temp directories. `src/platform.rs` unit tests cover the link primitives for the current
-platform. Run with `cargo test`.
+`src/linker.rs` unit tests cover creating and checking links against temp directories; however,
+`Broken`, create-refusal (`Wrong`/`Blocked`), and remove-refusal branches are currently untested
+(tracked in [BACKLOG](../plan/BACKLOG.md) B8). `src/platform.rs` unit tests cover the link primitives
+for the current platform. Run with `cargo test`.

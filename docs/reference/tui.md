@@ -26,11 +26,13 @@ edits to disk), so a change made on the Tool tab is visible immediately after sw
 
 ## Common shape
 
-Both screens render: a title bar (`agm — <chip> ` left, `v<version>` right), a
-flat-rendered tree list, and a three-row footer whose top line is a context-sensitive key hint
-built from the row under the cursor and whose bottom line shows, in priority order, background
-task progress (`⟳ …`), a status message, a selection count, or nothing. Status messages expire
-after 3 seconds.
+Both screens render: a title bar (`agm — [Tool] · Source` / `agm — Tool · [Source]` left,
+`v<version>` right), a flat-rendered tree list, and a three-row bordered footer with one content
+line. That line shows the status message while one is set (it expires after 3 seconds), otherwise
+the context-sensitive key hints for the row under the cursor, then `Tab`. The Source Manager also
+builds a background-progress (`⟳ …`) and selection-count line, but it is only drawn when the footer
+has two content lines, which the fixed height never gives (tracked in
+[BACKLOG](../plan/BACKLOG.md) B12).
 
 ## Tool Manager screen (`agm tool`)
 
@@ -50,9 +52,10 @@ popup instead of the terminal.
 
 Rows: three category headers — Skills, Agents, Commands — each expanding into **Source** headers,
 each expanding into **Item** rows. Headers carry an `[installed/total]` count; source headers
-carry a kind icon and label (`Repo`, `Local`, `Migrated`). Item rows show a selection marker, the
-cursor caret, an **Install status** icon (`✓` installed, `○` not installed, `✗` conflict), the
-name padded to 30 columns, and the status word.
+carry a kind icon and label (`Repo`, `Local`, `Migrated`). Globally disabled **Feature**s are
+greyed out and actions on their items are guarded with a warning status message. Item rows show a
+selection marker, the cursor caret, an **Install status** icon (`✓` installed, `○` not installed,
+`✗` conflict), the name padded to 30 columns, and the status word.
 
 Fuzzy search (`/`) filters the list and highlights the matched characters in the name.
 
@@ -64,7 +67,12 @@ Two sets, per the two-set model:
 - **Preview** — the live `Shift+↑`/`Shift+↓` range from the anchor to the cursor.
 
 An action or a plain cursor move commits the preview range into the committed set. The effective
-selection is the union of both.
+selection is the union of both. Pressing `l` with an active selection applies a bulk direction
+rule: if any selected item is not installed, install all; otherwise uninstall all.
+
+Duplicate-named items across sources in a category or within a single source are counted and
+reported with a conflict warning in category info popups and bulk install confirmation dialogs
+(`duplicate_name_count`).
 
 Selection **survives refresh**: before rescanning, the committed set is snapshotted as
 `(category, source name, item name)` triples; index-based state is cleared; after the rescan the
@@ -87,9 +95,9 @@ every tick, appends to the log, updates footer progress, and calls `refresh()` o
 
 ## Log
 
-An in-memory ring buffer of the last 500 entries, each timestamped `%H:%M:%S` at one of four
-levels — info, success, warning, error. Opened with `o`, always scrolled to the newest entry. It
-is not persisted to disk.
+Each screen owns its own in-memory ring buffer (`LogBuffer`) of the last 500 entries, each
+timestamped `%H:%M:%S` at one of four levels — info, success, warning, error. Opened with `o`,
+always scrolled to the newest entry. It is not persisted to disk.
 
 ## Help / About
 
@@ -106,4 +114,5 @@ a monochrome terminal.
 
 ## Machine-checked claims
 
-None. The Shell has no automated coverage; behavior here was read from `src/tui/`.
+`shell.rs` has no automated integration harness, but `popup`, `help`, `style`, `text_input`,
+`background`, `tool`, and `source` modules have unit tests in `src/tui/`. Run with `cargo test`.

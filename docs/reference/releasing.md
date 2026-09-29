@@ -58,11 +58,16 @@ The release workflow builds for:
 - x86_64 (Intel)
 - aarch64 (Apple Silicon)
 
+### Windows
+- x86_64 MSVC (`x86_64-pc-windows-msvc`)
+- i686 MSVC (`i686-pc-windows-msvc`)
+
 ## Artifact Naming
 
 Release artifacts follow this pattern:
 - Linux: `agm-linux-{arch}[-musl].tar.gz`
 - macOS: `agm-macos-{arch}.tar.gz`
+- Windows: `agm-windows-{arch}.zip`
 - Checksums: `SHA256SUMS`
 
 ## Post-Release
