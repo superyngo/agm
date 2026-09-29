@@ -917,15 +917,26 @@ impl App {
                 return;
             }
         };
-        let vis = self.visible_rows();
         let mut count = 0usize;
-        for &ri in &vis {
-            if let Some(key) = self.rows.get(ri).and_then(row_leaf_key) {
-                if key.1 == gi {
-                    self.selected.insert(key);
-                    count += 1;
+        if self.filtered_rows.is_some() {
+            // A search filter is active: select only what is visible.
+            for ri in self.visible_rows() {
+                if let Some(key) = self.rows.get(ri).and_then(row_leaf_key) {
+                    if key.1 == gi {
+                        self.selected.insert(key);
+                        count += 1;
+                    }
                 }
             }
+        } else if let Some(group) = self.groups.get(gi) {
+            // No filter: use the group itself so a collapsed source still works.
+            let keys: Vec<_> = (0..group.skills.len())
+                .map(|i| (Category::Skills, gi, i))
+                .chain((0..group.agents.len()).map(|i| (Category::Agents, gi, i)))
+                .chain((0..group.commands.len()).map(|i| (Category::Commands, gi, i)))
+                .collect();
+            count = keys.len();
+            self.selected.extend(keys);
         }
         let name = self.groups.get(gi).map(|g| g.name.as_str()).unwrap_or("?");
         self.set_status(format!("Selected {count} item(s) in {name}"));
@@ -2580,7 +2591,7 @@ fn render_item_line(
                 },
             ));
         }
-        let pad_len = 30usize.saturating_sub(name.len());
+        let pad_len = 30usize.saturating_sub(name.chars().count());
         if pad_len > 0 {
             spans.push(Span::styled(" ".repeat(pad_len), name_style));
         }
@@ -2901,7 +2912,6 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("i"), hint_text(" info  ")]);
             spans.extend([hint_key("a"), hint_text(" add  ")]);
             spans.extend([hint_key("u"), hint_text(" update  ")]);
-            spans.extend([hint_key("r"), hint_text(" rename  ")]);
             spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
@@ -2912,6 +2922,7 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
                 hint_text(" quit"),
             ]);
         }
+
         Some(ListRow::SourceHeader { .. }) => {
             spans.extend([hint_key("␣/⏎"), hint_text(" toggle  ")]);
             spans.extend([hint_key("i"), hint_text(" info  ")]);
@@ -2936,8 +2947,6 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("⇧↑↓"), hint_text(" range  ")]);
             spans.extend([hint_key("^A"), hint_text(" sel repo  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
-            spans.extend([hint_key("d"), hint_text(" del  ")]);
-            spans.extend([hint_key("r"), hint_text(" rename  ")]);
             spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
@@ -2954,7 +2963,6 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("s"), hint_text(" select  ")]);
             spans.extend([hint_key("⇧↑↓"), hint_text(" range  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
-            spans.extend([hint_key("r"), hint_text(" rename  ")]);
             spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
@@ -2971,7 +2979,6 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
             spans.extend([hint_key("s"), hint_text(" select  ")]);
             spans.extend([hint_key("⇧↑↓"), hint_text(" range  ")]);
             spans.extend([hint_key("e"), hint_text(" edit  ")]);
-            spans.extend([hint_key("r"), hint_text(" rename  ")]);
             spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
@@ -2984,7 +2991,6 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
         }
         None => {
             spans.extend([hint_key("a"), hint_text(" add  ")]);
-            spans.extend([hint_key("r"), hint_text(" rename  ")]);
             spans.extend([hint_key("F5"), hint_text(" refresh  ")]);
             spans.extend([hint_key("/"), hint_text(" search  ")]);
             spans.extend([hint_key("o"), hint_text(" log  ")]);
@@ -2998,7 +3004,6 @@ fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
     }
     Line::from(spans)
 }
-
 fn render_footer(app: &App, frame: &mut Frame, area: Rect) {
     let block = Block::default()
         .borders(Borders::ALL)

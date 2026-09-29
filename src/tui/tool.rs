@@ -951,7 +951,11 @@ impl ToolApp {
             }
         } else {
             let timestamp = Local::now().format("%Y%m%d_%H%M%S");
-            let backup = link_path.with_extension(format!("{}.bak", timestamp));
+            let backup = {
+                let mut n = link_path.as_os_str().to_owned();
+                n.push(format!(".{}.bak", timestamp));
+                PathBuf::from(n)
+            };
             match std::fs::rename(link_path, &backup) {
                 Ok(()) => {
                     self.log.push(
@@ -974,11 +978,19 @@ impl ToolApp {
                         }
                         Ok((false, msg)) => self.set_status(msg),
                         Err(e) => {
-                            let _ = std::fs::rename(&backup, link_path);
-                            self.log.push(
-                                LogLevel::Error,
-                                format!("[{}] Link failed, restored backup: {}", tool_key, e),
-                            );
+                            let msg = match std::fs::rename(&backup, link_path) {
+                                Ok(()) => {
+                                    format!("[{}] Link failed, restored backup: {}", tool_key, e)
+                                }
+                                Err(re) => format!(
+                                    "[{}] Link failed ({}); backup NOT restored ({}), it is at {}",
+                                    tool_key,
+                                    e,
+                                    re,
+                                    contract_tilde(&backup)
+                                ),
+                            };
+                            self.log.push(LogLevel::Error, msg);
                             self.set_status(format!("✗ Link failed: {}", e));
                         }
                     }
