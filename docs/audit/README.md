@@ -6,7 +6,9 @@ Current behavior lives in [`../reference/`](../reference/README.md).
 
 ## In progress
 
-_None._
+| Date | Document | Status |
+|---|---|---|
+| 2026-09-29 | [2026-09-29-code-audit.md](2026-09-29-code-audit.md) — code audit: integrity, clarity, simplicity (38 findings) | Open — BACKLOG B13–B50 |
 
 ## Landed
 

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### 2026-09-29
 
+- 2026-09-29: Docs: landed the [code audit](docs/audit/2026-09-29-code-audit.md) (1 critical, 8 high, 12 medium, 9 low, 8 structural findings; three reproduced on the binary, including `agm tool link` migration deleting unrecognized tool content) and tracked every finding in [`docs/plan/BACKLOG.md`](docs/plan/BACKLOG.md) as B13–B50.
 - 2026-09-29: Docs: landed the [documentation audit](docs/audit/2026-09-29-documentation-audit.md) and [prompt audit](docs/audit/2026-09-29-prompt-audit.md). Corrected `docs/reference/` against the code: `cli.md`, `config.md`, `sources.md`, `architecture.md`, `linking.md`, `KEYMAP.md`, `tui.md`, `glossary.md` (new **Category** entry) and `releasing.md` (Windows targets). Also corrected `README.md` (the commands feature, editor resolution). Newly documented: shallow clone, duplicate-name reporting, greyed-out disabled features, and the bulk install/uninstall direction rule.
 - 2026-09-29: Docs: new living backlog [`docs/plan/BACKLOG.md`](docs/plan/BACKLOG.md) holding the code defects the audit found (B1–B12), including `agm tool link` deleting a non-empty `agents/` directory (B1).
 - 2026-09-29: Docs: moved agent conduct from `GEMINI.md` to `AGENTS.md`; `CLAUDE.md` and `GEMINI.md` now import it. Added a pointer to where `wens-dev-principles` lives.
