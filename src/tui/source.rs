@@ -1462,59 +1462,15 @@ impl App {
 
     fn build_agent_info_lines(&self, group_index: usize, agent_index: usize) -> Vec<Line<'static>> {
         let group = &self.groups[group_index];
-        let agent = &group.agents[agent_index];
-        let mut lines = Vec::new();
-
-        lines.push(Line::from(vec![
-            Span::styled("Name: ", Style::default().fg(Color::Yellow)),
-            Span::raw(agent.name.clone()),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("Source: ", Style::default().fg(Color::Yellow)),
-            Span::raw(group.name.clone()),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("Path: ", Style::default().fg(Color::Yellow)),
-            Span::raw(contract_tilde(&agent.source_path).to_string()),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("Status: ", Style::default().fg(Color::Yellow)),
-            Span::raw(format!("{:?}", agent.install_status)),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("Char count: ", Style::default().fg(Color::Yellow)),
-            Span::raw(agent.preload_chars.to_string()),
-        ]));
-        lines.push(Line::default());
-
-        // Agent .md content
-        if agent.source_path.exists() {
-            lines.push(Line::from(Span::styled(
-                format!(
-                    "─── {} ───",
-                    agent
-                        .source_path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("agent.md")
-                ),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )));
-            match std::fs::read_to_string(&agent.source_path) {
-                Ok(content) => {
-                    for line in content.lines().take(5000) {
-                        lines.push(Line::from(line.to_string()));
-                    }
-                }
-                Err(e) => {
-                    lines.push(Line::from(format!("(error reading agent file: {})", e)));
-                }
-            }
-        }
-
-        lines
+        let a = &group.agents[agent_index];
+        file_item_info_lines(
+            "agent",
+            &group.name,
+            &a.name,
+            &a.source_path,
+            a.install_status,
+            a.preload_chars,
+        )
     }
 
     fn build_command_info_lines(
@@ -1523,58 +1479,15 @@ impl App {
         command_index: usize,
     ) -> Vec<Line<'static>> {
         let group = &self.groups[group_index];
-        let command = &group.commands[command_index];
-        let mut lines = Vec::new();
-
-        lines.push(Line::from(vec![
-            Span::styled("Name: ", Style::default().fg(Color::Yellow)),
-            Span::raw(command.name.clone()),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("Source: ", Style::default().fg(Color::Yellow)),
-            Span::raw(group.name.clone()),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("Path: ", Style::default().fg(Color::Yellow)),
-            Span::raw(contract_tilde(&command.source_path).to_string()),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("Status: ", Style::default().fg(Color::Yellow)),
-            Span::raw(format!("{:?}", command.install_status)),
-        ]));
-        lines.push(Line::from(vec![
-            Span::styled("Char count: ", Style::default().fg(Color::Yellow)),
-            Span::raw(command.preload_chars.to_string()),
-        ]));
-        lines.push(Line::default());
-
-        if command.source_path.exists() {
-            lines.push(Line::from(Span::styled(
-                format!(
-                    "─── {} ───",
-                    command
-                        .source_path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("command.md")
-                ),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )));
-            match std::fs::read_to_string(&command.source_path) {
-                Ok(content) => {
-                    for line in content.lines().take(5000) {
-                        lines.push(Line::from(line.to_string()));
-                    }
-                }
-                Err(e) => {
-                    lines.push(Line::from(format!("(error reading command file: {})", e)));
-                }
-            }
-        }
-
-        lines
+        let c = &group.commands[command_index];
+        file_item_info_lines(
+            "command",
+            &group.name,
+            &c.name,
+            &c.source_path,
+            c.install_status,
+            c.preload_chars,
+        )
     }
 
     fn build_source_info_lines(&self, group_index: usize) -> Vec<Line<'static>> {
@@ -2269,6 +2182,52 @@ impl App {
 // Row building
 // ---------------------------------------------------------------------------
 
+/// Info-popup body for a single-file (`.md`) Item: header fields then the file content.
+fn file_item_info_lines(
+    kind: &str,
+    source: &str,
+    name: &str,
+    path: &std::path::Path,
+    status: SkillInstallStatus,
+    chars: usize,
+) -> Vec<Line<'static>> {
+    let key = |k: &str| Span::styled(k.to_string(), Style::default().fg(Color::Yellow));
+    let mut lines = vec![
+        Line::from(vec![key("Name: "), Span::raw(name.to_string())]),
+        Line::from(vec![key("Source: "), Span::raw(source.to_string())]),
+        Line::from(vec![
+            key("Path: "),
+            Span::raw(contract_tilde(path).to_string()),
+        ]),
+        Line::from(vec![key("Status: "), Span::raw(format!("{:?}", status))]),
+        Line::from(vec![key("Char count: "), Span::raw(chars.to_string())]),
+        Line::default(),
+    ];
+    if path.exists() {
+        let file = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(String::from)
+            .unwrap_or_else(|| format!("{kind}.md"));
+        lines.push(Line::from(Span::styled(
+            format!("─── {file} ───"),
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )));
+        match std::fs::read_to_string(path) {
+            Ok(content) => lines.extend(
+                content
+                    .lines()
+                    .take(5000)
+                    .map(|l| Line::from(l.to_string())),
+            ),
+            Err(e) => lines.push(Line::from(format!("(error reading {kind} file: {e})"))),
+        }
+    }
+    lines
+}
+
 fn build_rows(
     groups: &[SourceGroup],
     expanded_categories: &HashSet<Category>,
@@ -2277,88 +2236,50 @@ fn build_rows(
     expanded_commands_sources: &HashSet<usize>,
 ) -> Vec<ListRow> {
     let mut rows = Vec::new();
-
-    // Skills section
-    let has_skills = groups.iter().any(|g| !g.skills.is_empty());
-    if has_skills {
-        rows.push(ListRow::CategoryHeader {
-            category: Category::Skills,
-        });
-        if expanded_categories.contains(&Category::Skills) {
-            for (gi, group) in groups.iter().enumerate() {
-                if group.skills.is_empty() {
-                    continue;
-                }
-                rows.push(ListRow::SourceHeader {
-                    category: Category::Skills,
-                    group_index: gi,
-                });
-                if expanded_skills_sources.contains(&gi) {
-                    for si in 0..group.skills.len() {
-                        rows.push(ListRow::SkillItem {
-                            group_index: gi,
-                            skill_index: si,
-                        });
-                    }
-                }
+    for (category, expanded_sources) in [
+        (Category::Skills, expanded_skills_sources),
+        (Category::Agents, expanded_agents_sources),
+        (Category::Commands, expanded_commands_sources),
+    ] {
+        let len_of = |g: &SourceGroup| match category {
+            Category::Skills => g.skills.len(),
+            Category::Agents => g.agents.len(),
+            Category::Commands => g.commands.len(),
+        };
+        if groups.iter().all(|g| len_of(g) == 0) {
+            continue;
+        }
+        rows.push(ListRow::CategoryHeader { category });
+        if !expanded_categories.contains(&category) {
+            continue;
+        }
+        for (gi, group) in groups.iter().enumerate() {
+            let len = len_of(group);
+            if len == 0 {
+                continue;
+            }
+            rows.push(ListRow::SourceHeader {
+                category,
+                group_index: gi,
+            });
+            if expanded_sources.contains(&gi) {
+                rows.extend((0..len).map(|i| match category {
+                    Category::Skills => ListRow::SkillItem {
+                        group_index: gi,
+                        skill_index: i,
+                    },
+                    Category::Agents => ListRow::AgentItem {
+                        group_index: gi,
+                        agent_index: i,
+                    },
+                    Category::Commands => ListRow::CommandItem {
+                        group_index: gi,
+                        command_index: i,
+                    },
+                }));
             }
         }
     }
-
-    // Agents section
-    let has_agents = groups.iter().any(|g| !g.agents.is_empty());
-    if has_agents {
-        rows.push(ListRow::CategoryHeader {
-            category: Category::Agents,
-        });
-        if expanded_categories.contains(&Category::Agents) {
-            for (gi, group) in groups.iter().enumerate() {
-                if group.agents.is_empty() {
-                    continue;
-                }
-                rows.push(ListRow::SourceHeader {
-                    category: Category::Agents,
-                    group_index: gi,
-                });
-                if expanded_agents_sources.contains(&gi) {
-                    for ai in 0..group.agents.len() {
-                        rows.push(ListRow::AgentItem {
-                            group_index: gi,
-                            agent_index: ai,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
-    // Commands section
-    let has_commands = groups.iter().any(|g| !g.commands.is_empty());
-    if has_commands {
-        rows.push(ListRow::CategoryHeader {
-            category: Category::Commands,
-        });
-        if expanded_categories.contains(&Category::Commands) {
-            for (gi, group) in groups.iter().enumerate() {
-                if group.commands.is_empty() {
-                    continue;
-                }
-                rows.push(ListRow::SourceHeader {
-                    category: Category::Commands,
-                    group_index: gi,
-                });
-                if expanded_commands_sources.contains(&gi) {
-                    for ci in 0..group.commands.len() {
-                        rows.push(ListRow::CommandItem {
-                            group_index: gi,
-                            command_index: ci,
-                        });
-                    }
-                }
-            }
-        }
-    }
-
     rows
 }
 
