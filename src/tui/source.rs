@@ -501,17 +501,8 @@ impl App {
         self.cursor = new as usize;
     }
 
-    fn page_size(&self, area_height: u16) -> usize {
-        (area_height.saturating_sub(5)) as usize
-    }
-
     pub(crate) fn ensure_visible(&mut self, area_height: u16) {
-        let page = self.page_size(area_height).max(1);
-        if self.cursor < self.scroll_offset {
-            self.scroll_offset = self.cursor;
-        } else if self.cursor >= self.scroll_offset + page {
-            self.scroll_offset = self.cursor - page + 1;
-        }
+        super::style::ensure_visible(self.cursor, &mut self.scroll_offset, area_height);
     }
 
     fn apply_search_filter(&mut self) {
@@ -2176,11 +2167,11 @@ impl App {
             KeyCode::Down | KeyCode::Char('j') => self.move_cursor(1),
             KeyCode::Char('s') => self.toggle_select(),
             KeyCode::PageUp => {
-                let page = self.page_size(area_height) as isize;
+                let page = super::style::page_size(area_height) as isize;
                 self.move_cursor(-page);
             }
             KeyCode::PageDown => {
-                let page = self.page_size(area_height) as isize;
+                let page = super::style::page_size(area_height) as isize;
                 self.move_cursor(page);
             }
             KeyCode::Home => {
@@ -2896,13 +2887,7 @@ fn render_list(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(paragraph, inner);
 }
 
-fn hint_key(k: &str) -> Span<'static> {
-    super::style::hint_key(k)
-}
-
-fn hint_text(t: &str) -> Span<'static> {
-    super::style::hint_text(t)
-}
+use super::style::{hint_key, hint_text};
 
 fn build_source_hints(row: Option<&ListRow>) -> Line<'static> {
     let mut spans = Vec::new();

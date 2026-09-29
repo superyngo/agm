@@ -28,7 +28,7 @@ pub fn run(config_path_override: Option<PathBuf>) -> anyhow::Result<()> {
     }
 
     // Load config to get agm paths
-    let config = Config::load_from(config_path_override.clone())?;
+    let config = Config::load_from(config_path_override)?;
 
     // Create agm directories
     let dirs_to_create = [
@@ -65,7 +65,6 @@ pub fn run(config_path_override: Option<PathBuf>) -> anyhow::Result<()> {
 
     // Detect installed tools
     println!("\n{}", "Detected tools:".bold());
-    let config = Config::load_from(config_path_override)?;
     for (key, tool) in &config.tools {
         let status = if tool.is_installed() {
             "installed".green()
@@ -75,6 +74,6 @@ pub fn run(config_path_override: Option<PathBuf>) -> anyhow::Result<()> {
         println!("  {} ({}) — {}", key, tool.name, status);
     }
 
-    println!("\n{}", "Run `agm link` to create links.".dimmed());
+    println!("\n{}", "Run `agm tool link` to create links.".dimmed());
     Ok(())
 }

@@ -352,17 +352,8 @@ impl ToolApp {
         self.cursor = new as usize;
     }
 
-    fn page_size(&self, area_height: u16) -> usize {
-        (area_height.saturating_sub(5)) as usize
-    }
-
     pub(crate) fn ensure_visible(&mut self, area_height: u16) {
-        let page = self.page_size(area_height).max(1);
-        if self.cursor < self.scroll_offset {
-            self.scroll_offset = self.cursor;
-        } else if self.cursor >= self.scroll_offset + page {
-            self.scroll_offset = self.cursor - page + 1;
-        }
+        super::style::ensure_visible(self.cursor, &mut self.scroll_offset, area_height);
     }
 
     fn toggle_expanded(&mut self, key: &str) {
@@ -409,11 +400,11 @@ impl ToolApp {
             KeyCode::Up | KeyCode::Char('k') => self.move_cursor(-1),
             KeyCode::Down | KeyCode::Char('j') => self.move_cursor(1),
             KeyCode::PageUp => {
-                let page = self.page_size(area_height) as isize;
+                let page = super::style::page_size(area_height) as isize;
                 self.move_cursor(-page);
             }
             KeyCode::PageDown => {
-                let page = self.page_size(area_height) as isize;
+                let page = super::style::page_size(area_height) as isize;
                 self.move_cursor(page);
             }
             KeyCode::Home => self.move_cursor(-(self.rows.len() as isize)),
@@ -1964,13 +1955,7 @@ fn compute_tool_status(config: &Config, tool_key: &str) -> (u8, &'static str, Co
     }
 }
 
-fn hint_key(k: &str) -> Span<'static> {
-    super::style::hint_key(k)
-}
-
-fn hint_text(t: &str) -> Span<'static> {
-    super::style::hint_text(t)
-}
+use super::style::{hint_key, hint_text};
 
 fn build_tool_hints(row: Option<&ToolRow>, config: &Config) -> Line<'static> {
     let mut spans = Vec::new();
