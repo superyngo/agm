@@ -566,10 +566,8 @@ impl ToolApp {
             // line) but does not exit, matching the Source Manager's Esc
             // semantics (principle 14: Esc = cancel/back, not quit).
             KeyCode::Char('q') => self.should_quit = true,
-            KeyCode::Esc => {
-                if self.status_message.is_set() {
-                    self.status_message.clear();
-                }
+            KeyCode::Esc if self.status_message.is_set() => {
+                self.status_message.clear();
             }
 
             _ => {}

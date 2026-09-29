@@ -499,6 +499,7 @@ source_dir = "~/p/source"
             resolved
                 .components()
                 .skip_while(|c| !matches!(c, std::path::Component::Normal(_)))
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
                 .collect::<Vec<_>>(),
             vec!["etc", "some.conf"]
         );
