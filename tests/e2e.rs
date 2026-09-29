@@ -69,10 +69,13 @@ fn link_keeps_unrecognised_files_and_conflicting_copy() {
     ] {
         assert!(find_content(h, c), "content {c:?} was lost");
     }
-    assert!(fs::symlink_metadata(&skills)
-        .unwrap()
-        .file_type()
-        .is_symlink());
+    // On Windows without developer mode, agm falls back to a real copy.
+    if cfg!(unix) {
+        assert!(fs::symlink_metadata(&skills)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
 }
 
 #[test]
@@ -118,8 +121,11 @@ fn link_links_commands_and_continues_past_a_failing_tool() {
     agm(h).args(["tool", "link"]).assert().success();
     assert!(find_content(h, "cmd-body"), "command file was lost");
     let link = h.join(".claude/commands");
-    assert!(fs::symlink_metadata(&link)
-        .unwrap()
-        .file_type()
-        .is_symlink());
+    // On Windows without developer mode, agm falls back to a real copy.
+    if cfg!(unix) {
+        assert!(fs::symlink_metadata(&link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
 }
