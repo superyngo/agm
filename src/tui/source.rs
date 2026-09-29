@@ -656,143 +656,102 @@ impl App {
     }
 
     fn toggle_skill(&mut self, group_index: usize, skill_index: usize) {
-        let skill = &self.groups[group_index].skills[skill_index];
-        let name = skill.name.clone();
-        let source_path = skill.source_path.clone();
-        match skill.install_status {
-            SkillInstallStatus::Installed => {
-                match skills::uninstall_skill(&name, &self.skills_dir) {
-                    Ok(()) => {
-                        self.groups[group_index].skills[skill_index].install_status =
-                            SkillInstallStatus::NotInstalled;
-                        self.log
-                            .push(super::log::LogLevel::Success, format!("Uninstalled {name}"));
-                        self.set_status(format!("Uninstalled {name}"));
-                    }
-                    Err(e) => {
-                        self.log
-                            .push(super::log::LogLevel::Error, format!("Uninstall error: {e}"));
-                        self.set_status(format!("Error: {e}"));
-                    }
-                }
-            }
-            SkillInstallStatus::NotInstalled => {
-                match skills::install_skill(&name, &source_path, &self.skills_dir) {
-                    Ok(()) => {
-                        self.groups[group_index].skills[skill_index].install_status =
-                            SkillInstallStatus::Installed;
-                        self.log
-                            .push(super::log::LogLevel::Success, format!("Installed {name}"));
-                        self.set_status(format!("Installed {name}"));
-                    }
-                    Err(e) => {
-                        self.log
-                            .push(super::log::LogLevel::Error, format!("Install error: {e}"));
-                        self.set_status(format!("Error: {e}"));
-                    }
-                }
-            }
-            SkillInstallStatus::Conflict => {
-                self.log.push(
-                    super::log::LogLevel::Warning,
-                    format!("Conflict: {name} installed from another source"),
-                );
-                self.set_status(format!("Conflict: {name} installed from another source"));
-            }
-        }
+        self.toggle_leaf(Category::Skills, group_index, skill_index);
     }
 
     fn toggle_agent(&mut self, group_index: usize, agent_index: usize) {
-        let agent = &self.groups[group_index].agents[agent_index];
-        let name = agent.name.clone();
-        let source_path = agent.source_path.clone();
-        match agent.install_status {
-            SkillInstallStatus::Installed => {
-                match skills::uninstall_agent(&name, &self.agents_dir) {
-                    Ok(()) => {
-                        self.groups[group_index].agents[agent_index].install_status =
-                            SkillInstallStatus::NotInstalled;
-                        self.log
-                            .push(super::log::LogLevel::Success, format!("Uninstalled {name}"));
-                        self.set_status(format!("Uninstalled agent {name}"));
-                    }
-                    Err(e) => {
-                        self.log
-                            .push(super::log::LogLevel::Error, format!("Uninstall error: {e}"));
-                        self.set_status(format!("Error: {e}"));
-                    }
-                }
-            }
-            SkillInstallStatus::NotInstalled => {
-                match skills::install_agent(&name, &source_path, &self.agents_dir) {
-                    Ok(()) => {
-                        self.groups[group_index].agents[agent_index].install_status =
-                            SkillInstallStatus::Installed;
-                        self.log
-                            .push(super::log::LogLevel::Success, format!("Installed {name}"));
-                        self.set_status(format!("Installed agent {name}"));
-                    }
-                    Err(e) => {
-                        self.log
-                            .push(super::log::LogLevel::Error, format!("Install error: {e}"));
-                        self.set_status(format!("Error: {e}"));
-                    }
-                }
-            }
-            SkillInstallStatus::Conflict => {
-                self.log.push(
-                    super::log::LogLevel::Warning,
-                    format!("Conflict: agent {name} from another source"),
-                );
-                self.set_status(format!("Conflict: agent {name} from another source"));
-            }
-        }
+        self.toggle_leaf(Category::Agents, group_index, agent_index);
     }
 
     fn toggle_command(&mut self, group_index: usize, command_index: usize) {
-        let command = &self.groups[group_index].commands[command_index];
-        let name = command.name.clone();
-        let source_path = command.source_path.clone();
-        match command.install_status {
+        self.toggle_leaf(Category::Commands, group_index, command_index);
+    }
+
+    /// Install or uninstall one Item, whatever its category, and log/report the result.
+    fn toggle_leaf(&mut self, category: Category, gi: usize, idx: usize) {
+        use super::log::LogLevel;
+        let group = &self.groups[gi];
+        let (name, source_path, status) = match category {
+            Category::Skills => {
+                let i = &group.skills[idx];
+                (i.name.clone(), i.source_path.clone(), i.install_status)
+            }
+            Category::Agents => {
+                let i = &group.agents[idx];
+                (i.name.clone(), i.source_path.clone(), i.install_status)
+            }
+            Category::Commands => {
+                let i = &group.commands[idx];
+                (i.name.clone(), i.source_path.clone(), i.install_status)
+            }
+        };
+        // "" for skills keeps the historical wording of their status messages.
+        let label = match category {
+            Category::Skills => "",
+            Category::Agents => "agent ",
+            Category::Commands => "command ",
+        };
+        let new_status = match status {
             SkillInstallStatus::Installed => {
-                match skills::uninstall_command(&name, &self.commands_dir) {
+                let result = match category {
+                    Category::Skills => skills::uninstall_skill(&name, &self.skills_dir),
+                    Category::Agents => skills::uninstall_agent(&name, &self.agents_dir),
+                    Category::Commands => skills::uninstall_command(&name, &self.commands_dir),
+                };
+                match result {
                     Ok(()) => {
-                        self.groups[group_index].commands[command_index].install_status =
-                            SkillInstallStatus::NotInstalled;
                         self.log
-                            .push(super::log::LogLevel::Success, format!("Uninstalled {name}"));
-                        self.set_status(format!("Uninstalled command {name}"));
+                            .push(LogLevel::Success, format!("Uninstalled {name}"));
+                        self.set_status(format!("Uninstalled {label}{name}"));
+                        SkillInstallStatus::NotInstalled
                     }
                     Err(e) => {
                         self.log
-                            .push(super::log::LogLevel::Error, format!("Uninstall error: {e}"));
+                            .push(LogLevel::Error, format!("Uninstall error: {e}"));
                         self.set_status(format!("Error: {e}"));
+                        return;
                     }
                 }
             }
             SkillInstallStatus::NotInstalled => {
-                match skills::install_command(&name, &source_path, &self.commands_dir) {
+                let result = match category {
+                    Category::Skills => {
+                        skills::install_skill(&name, &source_path, &self.skills_dir)
+                    }
+                    Category::Agents => {
+                        skills::install_agent(&name, &source_path, &self.agents_dir)
+                    }
+                    Category::Commands => {
+                        skills::install_command(&name, &source_path, &self.commands_dir)
+                    }
+                };
+                match result {
                     Ok(()) => {
-                        self.groups[group_index].commands[command_index].install_status =
-                            SkillInstallStatus::Installed;
                         self.log
-                            .push(super::log::LogLevel::Success, format!("Installed {name}"));
-                        self.set_status(format!("Installed command {name}"));
+                            .push(LogLevel::Success, format!("Installed {name}"));
+                        self.set_status(format!("Installed {label}{name}"));
+                        SkillInstallStatus::Installed
                     }
                     Err(e) => {
                         self.log
-                            .push(super::log::LogLevel::Error, format!("Install error: {e}"));
+                            .push(LogLevel::Error, format!("Install error: {e}"));
                         self.set_status(format!("Error: {e}"));
+                        return;
                     }
                 }
             }
             SkillInstallStatus::Conflict => {
-                self.log.push(
-                    super::log::LogLevel::Warning,
-                    format!("Conflict: command {name} from another source"),
-                );
-                self.set_status(format!("Conflict: command {name} from another source"));
+                let msg = format!("Conflict: {label}{name} installed from another source");
+                self.log.push(LogLevel::Warning, msg.clone());
+                self.set_status(msg);
+                return;
             }
+        };
+        let group = &mut self.groups[gi];
+        match category {
+            Category::Skills => group.skills[idx].install_status = new_status,
+            Category::Agents => group.agents[idx].install_status = new_status,
+            Category::Commands => group.commands[idx].install_status = new_status,
         }
     }
 
@@ -1040,67 +999,39 @@ impl App {
         } else {
             SkillInstallStatus::NotInstalled
         };
-        match category {
-            Category::Skills => {
-                let len = self.groups[group_index].skills.len();
-                for si in 0..len {
-                    let status = self.groups[group_index].skills[si].install_status;
-                    // Already-known conflicts (a different skill owns the name)
-                    // can't be installed; nothing to do when uninstalling either.
-                    if status == SkillInstallStatus::Conflict {
-                        conflicts += 1;
-                        continue;
-                    }
-                    if status == target {
-                        continue;
-                    }
-                    self.toggle_skill(group_index, si);
-                    // A failed install (duplicate name within this source) leaves
-                    // the status unchanged; only count entries that actually moved.
-                    if self.groups[group_index].skills[si].install_status == target {
-                        count += 1;
-                    } else if install {
-                        conflicts += 1;
-                    }
-                }
+        let statuses: Vec<SkillInstallStatus> = {
+            let g = &self.groups[group_index];
+            match category {
+                Category::Skills => g.skills.iter().map(|i| i.install_status).collect(),
+                Category::Agents => g.agents.iter().map(|i| i.install_status).collect(),
+                Category::Commands => g.commands.iter().map(|i| i.install_status).collect(),
             }
-            Category::Agents => {
-                let len = self.groups[group_index].agents.len();
-                for ai in 0..len {
-                    let status = self.groups[group_index].agents[ai].install_status;
-                    if status == SkillInstallStatus::Conflict {
-                        conflicts += 1;
-                        continue;
-                    }
-                    if status == target {
-                        continue;
-                    }
-                    self.toggle_agent(group_index, ai);
-                    if self.groups[group_index].agents[ai].install_status == target {
-                        count += 1;
-                    } else if install {
-                        conflicts += 1;
-                    }
-                }
+        };
+        let status_of = |app: &Self, i: usize| {
+            let g = &app.groups[group_index];
+            match category {
+                Category::Skills => g.skills[i].install_status,
+                Category::Agents => g.agents[i].install_status,
+                Category::Commands => g.commands[i].install_status,
             }
-            Category::Commands => {
-                let len = self.groups[group_index].commands.len();
-                for ci in 0..len {
-                    let status = self.groups[group_index].commands[ci].install_status;
-                    if status == SkillInstallStatus::Conflict {
-                        conflicts += 1;
-                        continue;
-                    }
-                    if status == target {
-                        continue;
-                    }
-                    self.toggle_command(group_index, ci);
-                    if self.groups[group_index].commands[ci].install_status == target {
-                        count += 1;
-                    } else if install {
-                        conflicts += 1;
-                    }
-                }
+        };
+        for (i, status) in statuses.into_iter().enumerate() {
+            // Already-known conflicts (a different item owns the name) can't be
+            // installed; nothing to do when uninstalling either.
+            if status == SkillInstallStatus::Conflict {
+                conflicts += 1;
+                continue;
+            }
+            if status == target {
+                continue;
+            }
+            self.toggle_leaf(category, group_index, i);
+            // A failed install (duplicate name within this source) leaves the
+            // status unchanged; only count entries that actually moved.
+            if status_of(self, i) == target {
+                count += 1;
+            } else if install {
+                conflicts += 1;
             }
         }
         // Re-derive statuses from disk once, rather than trusting the in-memory edits.
