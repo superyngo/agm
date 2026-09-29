@@ -3,7 +3,6 @@ use agm::{config, editor, init, linker, paths, platform, skills, status, tui};
 use clap::{CommandFactory, Parser, Subcommand};
 use colored::Colorize;
 use std::fs;
-use std::io::{self, Write};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -124,54 +123,215 @@ fn print_clone_progress(evt: &skills::CloneProgress) {
     }
 }
 
-fn prompt_yes_no(prompt: &str) -> bool {
-    print!("{} [y/N]: ", prompt);
-    io::stdout().flush().unwrap();
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input).unwrap();
-    let input = input.trim().to_lowercase();
-
-    input == "y" || input == "yes"
+/// A linkable part of a tool's config: the prompt file or a directory of items.
+struct Feature {
+    key: &'static str,
+    is_dir: bool,
 }
 
-fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> anyhow::Result<()> {
+const FEATURES: [Feature; 4] = [
+    Feature {
+        key: "prompt",
+        is_dir: false,
+    },
+    Feature {
+        key: "skills",
+        is_dir: true,
+    },
+    Feature {
+        key: "agents",
+        is_dir: true,
+    },
+    Feature {
+        key: "commands",
+        is_dir: true,
+    },
+];
+
+fn feature_source(config: &config::Config, feature: &Feature) -> std::path::PathBuf {
+    let raw = match feature.key {
+        "prompt" => &config.agm.prompt_source,
+        "skills" => &config.agm.skills_source,
+        "agents" => &config.agm.agents_source,
+        _ => &config.agm.commands_source,
+    };
+    paths::expand_tilde(raw)
+}
+
+/// Resolve where an existing link points, relative links resolved against its parent.
+fn resolved_link_target(link: &std::path::Path) -> Option<std::path::PathBuf> {
+    let target = fs::read_link(link).ok()?;
+    let resolved = link.parent().map(|p| p.join(&target)).unwrap_or(target);
+    Some(resolved.canonicalize().unwrap_or(resolved))
+}
+
+/// Clear whatever is at `link` so a fresh link can be created, without destroying content:
+/// foreign links are replaced, real directories are migrated into the store (leftovers
+/// are kept as `.bak`), real prompt files are backed up.
+fn prepare_link(
+    config: &config::Config,
+    key: &str,
+    tool: &config::ToolConfig,
+    feature: &Feature,
+    link: &std::path::Path,
+    source: &std::path::Path,
+) -> anyhow::Result<()> {
+    use anyhow::Context;
+
+    let is_link = platform::is_dir_link(link) || fs::read_link(link).is_ok();
+    if is_link {
+        let expected = source
+            .canonicalize()
+            .unwrap_or_else(|_| source.to_path_buf());
+        match resolved_link_target(link) {
+            Some(actual) if actual == expected => {}
+            other => {
+                if feature.is_dir {
+                    platform::remove_link(link)
+                } else {
+                    fs::remove_file(link).map_err(Into::into)
+                }
+                .with_context(|| format!("removing old {} link {}", feature.key, link.display()))?;
+                println!(
+                    "  {} Removed old {} link{}",
+                    " ok ".green(),
+                    feature.key,
+                    other
+                        .map(|t| format!(" (pointed to {})", paths::contract_tilde(&t)))
+                        .unwrap_or_default()
+                );
+            }
+        }
+        return Ok(());
+    }
+    if link.symlink_metadata().is_err() {
+        return Ok(());
+    }
+
+    if !feature.is_dir {
+        if platform::same_file(link, source).unwrap_or(false) {
+            return Ok(());
+        }
+        let content = fs::read_to_string(link).unwrap_or_default();
+        if content.trim().is_empty() {
+            fs::remove_file(link)?;
+        } else {
+            let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+            let mut n = link.as_os_str().to_owned();
+            n.push(format!(".{}.bak", ts));
+            let backup = std::path::PathBuf::from(n);
+            fs::rename(link, &backup)?;
+            println!(
+                "  {} Backed up prompt to {}",
+                " ok ".green(),
+                paths::contract_tilde(&backup)
+            );
+        }
+        return Ok(());
+    }
+
+    let source_dir = paths::expand_tilde(&config.agm.source_dir);
+    let store = source_dir.join("agm_tools").join(key);
+    let (added, msgs) = match feature.key {
+        "skills" => skills::migrate_tool_dir_quiet(link, &store, source, key)?,
+        "agents" => skills::migrate_agents_dir_quiet(
+            link,
+            &store.join("agents"),
+            source,
+            key,
+            &tool.prompt_filename,
+        )?,
+        _ => skills::migrate_commands_dir_quiet(
+            link,
+            &store.join("commands"),
+            source,
+            key,
+            &tool.prompt_filename,
+        )?,
+    };
+    for m in &msgs {
+        println!("{}", m);
+    }
+    if added > 0 {
+        println!(
+            "  {} Migrated {} {} item(s)",
+            " ok ".green(),
+            added,
+            feature.key
+        );
+    }
+    Ok(())
+}
+
+fn link_tool(config: &config::Config, key: &str, tool: &config::ToolConfig) -> anyhow::Result<()> {
+    for feature in &FEATURES {
+        if config.agm.is_disabled(feature.key) {
+            continue;
+        }
+        let Some(link) = tool.resolved_link_path(feature.key) else {
+            continue;
+        };
+        let source = feature_source(config, feature);
+        prepare_link(config, key, tool, feature, &link, &source)?;
+        linker::create_link(&link, &source, feature.key, feature.is_dir)?;
+    }
+    Ok(())
+}
+
+/// Run `f` for every installed tool, keep going after a failure, and fail at the end
+/// with a summary so one broken tool never leaves the others untouched.
+fn for_each_installed_tool(
+    config: &config::Config,
+    heading: &str,
+    f: impl Fn(&str, &config::ToolConfig) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let mut failures = Vec::new();
+    for (key, tool) in config.tools.iter().filter(|(_, tc)| tc.is_installed()) {
+        println!("\n{}{} ({}):", heading, key, tool.name);
+        if let Err(e) = f(key, tool) {
+            println!("  {} {:#}", "fail".red(), e);
+            failures.push(format!("{}: {:#}", key, e));
+        }
+    }
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "{} tool(s) failed:\n  {}",
+            failures.len(),
+            failures.join("\n  ")
+        )
+    }
+}
+
+fn link_all(config: &config::Config) -> anyhow::Result<()> {
     let agm_skills = paths::expand_tilde(&config.agm.skills_source);
     let agm_agents = paths::expand_tilde(&config.agm.agents_source);
-    let agm_prompt = paths::expand_tilde(&config.agm.prompt_source);
-    let source_dir = paths::expand_tilde(&config.agm.source_dir);
-    let yes = true; // Non-interactive mode
+    let agm_commands = paths::expand_tilde(&config.agm.commands_source);
 
-    // Collect which tools to link (all installed tools)
-    let tools_to_link: Vec<(&String, &config::ToolConfig)> = config
-        .tools
-        .iter()
-        .filter(|(_, tc)| tc.is_installed())
-        .collect();
-
-    // Prune broken skill/agent links from agm store
-    if agm_skills.is_dir() {
-        let pruned = skills::prune_broken_skills(&agm_skills)?;
-        if pruned > 0 {
-            println!(
-                "{} Removed {} broken skill link(s)",
-                "warn".yellow(),
-                pruned
-            );
-        }
-    }
-    if agm_agents.is_dir() {
-        let pruned = skills::prune_broken_agents(&agm_agents)?;
-        if pruned > 0 {
-            println!(
-                "{} Removed {} broken agent link(s)",
-                "warn".yellow(),
-                pruned
-            );
+    // Prune broken links from the agm stores
+    for (what, dir, prune) in [
+        (
+            "skill",
+            &agm_skills,
+            skills::prune_broken_skills as fn(&std::path::Path) -> anyhow::Result<usize>,
+        ),
+        ("agent", &agm_agents, skills::prune_broken_agents),
+        ("command", &agm_commands, skills::prune_broken_commands),
+    ] {
+        if dir.is_dir() {
+            let pruned = prune(dir)?;
+            if pruned > 0 {
+                println!(
+                    "{} Removed {} broken {} link(s)",
+                    "warn".yellow(),
+                    pruned,
+                    what
+                );
+            }
         }
     }
 
-    // Link tools
     if !config.agm.disabled.is_empty() {
         println!(
             "\n{} Disabled features: {}",
@@ -179,252 +339,32 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
             config.agm.disabled.join(", ")
         );
     }
-    for (key, tool) in tools_to_link {
-        println!("\n{} ({}):", key, tool.name);
+    for_each_installed_tool(config, "", |key, tool| link_tool(config, key, tool))
+}
 
-        // Link skills directory
-        if let Some(skills_link) = tool.resolved_link_path("skills") {
-            if !config.agm.is_disabled("skills") {
-                if platform::is_dir_link(&skills_link) {
-                    let actual_target = fs::read_link(&skills_link)?;
-                    let expected_target = agm_skills
-                        .canonicalize()
-                        .unwrap_or_else(|_| agm_skills.clone());
-                    let resolved_actual = skills_link
-                        .parent()
-                        .map(|p: &std::path::Path| p.join(&actual_target))
-                        .unwrap_or_else(|| actual_target.clone());
-                    let resolved_actual = resolved_actual.canonicalize().unwrap_or(resolved_actual);
-
-                    if resolved_actual != expected_target {
-                        if yes
-                            || prompt_yes_no(&format!(
-                                "Skills already linked to {}. Re-link to AGM?",
-                                paths::contract_tilde(&resolved_actual)
-                            ))
-                        {
-                            platform::remove_link(&skills_link)?;
-                            println!("  {} Removed old link", " ok ".green());
-                        } else {
-                            println!("  {} Skipping skills link", "skip".yellow());
-                            continue;
-                        }
-                    }
-                } else if skills_link.is_dir() {
-                    let skills_content = skills::scan_skills(&skills_link);
-                    if !skills_content.is_empty() {
-                        if yes
-                            || prompt_yes_no(&format!(
-                                "Found {} existing skill(s) in {}. Migrate to AGM and create link?",
-                                skills_content.len(),
-                                paths::contract_tilde(&skills_link)
-                            ))
-                        {
-                            let tool_skills_target = source_dir.join("agm_tools").join(key);
-                            let (added, msgs) = skills::migrate_tool_dir_quiet(
-                                &skills_link,
-                                &tool_skills_target,
-                                &agm_skills,
-                                key,
-                            )?;
-                            for m in &msgs {
-                                println!("{}", m);
-                            }
-                            if added > 0 {
-                                println!("  {} Migrated {} skill(s)", " ok ".green(), added);
-                            }
-                        } else {
-                            println!("  {} Skipping skills migration", "skip".yellow());
-                            continue;
-                        }
-                    } else {
-                        let mut msgs = Vec::new();
-                        skills::finish_migration_dir(&skills_link, &mut msgs)?;
-                        for m in &msgs {
-                            println!("{}", m);
-                        }
-                    }
-                }
-
-                linker::create_link(&skills_link, &agm_skills, "skills", true)?;
-            }
+fn unlink_tool(config: &config::Config, tool: &config::ToolConfig) -> anyhow::Result<()> {
+    for feature in &FEATURES {
+        if config.agm.is_disabled(feature.key) {
+            continue;
         }
-
-        // Link agents directory
-        if let Some(agents_link) = tool.resolved_link_path("agents") {
-            if !config.agm.is_disabled("agents") {
-                if platform::is_dir_link(&agents_link) {
-                    let actual_target = fs::read_link(&agents_link)?;
-                    let expected_target = agm_agents
-                        .canonicalize()
-                        .unwrap_or_else(|_| agm_agents.clone());
-                    let resolved_actual = agents_link
-                        .parent()
-                        .map(|p: &std::path::Path| p.join(&actual_target))
-                        .unwrap_or_else(|| actual_target.clone());
-                    let resolved_actual = resolved_actual.canonicalize().unwrap_or(resolved_actual);
-
-                    if resolved_actual != expected_target {
-                        if yes
-                            || prompt_yes_no(&format!(
-                                "Agents already linked to {}. Re-link to AGM?",
-                                paths::contract_tilde(&resolved_actual)
-                            ))
-                        {
-                            platform::remove_link(&agents_link)?;
-                            println!("  {} Removed old agents link", " ok ".green());
-                        } else {
-                            println!("  {} Skipping agents link", "skip".yellow());
-                            continue;
-                        }
-                    }
-                } else if agents_link.is_dir() {
-                    let target = source_dir.join("agm_tools").join(key).join("agents");
-                    let (added, msgs) = skills::migrate_agents_dir_quiet(
-                        &agents_link,
-                        &target,
-                        &agm_agents,
-                        key,
-                        &tool.prompt_filename,
-                    )?;
-                    for m in &msgs {
-                        println!("{}", m);
-                    }
-                    if added > 0 {
-                        println!("  {} Migrated {} agent(s)", " ok ".green(), added);
-                    }
-                }
-
-                linker::create_link(&agents_link, &agm_agents, "agents", true)?;
+        let Some(link) = tool.resolved_link_path(feature.key) else {
+            continue;
+        };
+        let source = feature_source(config, feature);
+        if linker::remove_link(&link, feature.key, feature.is_dir)? && source.exists() {
+            if feature.is_dir {
+                skills::copy_dir_resolved(&source, &link)?;
+            } else {
+                fs::copy(&source, &link)?;
             }
-        }
-
-        // Link prompt file
-        if let Some(prompt_link) = tool.resolved_link_path("prompt") {
-            if !config.agm.is_disabled("prompt") {
-                let already_linked = prompt_link.exists()
-                    && agm_prompt.exists()
-                    && platform::same_file(&prompt_link, &agm_prompt).unwrap_or(false);
-
-                if !already_linked && prompt_link.exists() {
-                    if fs::read_link(&prompt_link).is_ok() {
-                        let actual_target = fs::read_link(&prompt_link)?;
-                        let resolved_actual = prompt_link
-                            .parent()
-                            .map(|p: &std::path::Path| p.join(&actual_target))
-                            .unwrap_or_else(|| actual_target.clone());
-                        let resolved_actual =
-                            resolved_actual.canonicalize().unwrap_or(resolved_actual);
-
-                        if yes
-                            || prompt_yes_no(&format!(
-                                "Prompt already linked to {}. Re-link to AGM?",
-                                paths::contract_tilde(&resolved_actual)
-                            ))
-                        {
-                            fs::remove_file(&prompt_link)?;
-                            println!("  {} Removed old link", " ok ".green());
-                        } else {
-                            println!("  {} Skipping prompt link", "skip".yellow());
-                            continue;
-                        }
-                    } else {
-                        let content = fs::read_to_string(&prompt_link)?;
-                        if !content.trim().is_empty() {
-                            if yes
-                                || prompt_yes_no(&format!(
-                                    "Existing prompt file found at {}. Backup and create link?",
-                                    paths::contract_tilde(&prompt_link)
-                                ))
-                            {
-                                let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-                                let backup_path = {
-                                    let mut n = prompt_link.as_os_str().to_owned();
-                                    n.push(format!(".{}.bak", timestamp));
-                                    std::path::PathBuf::from(n)
-                                };
-                                fs::rename(&prompt_link, &backup_path)?;
-                                println!(
-                                    "  {} Backed up prompt to {}",
-                                    " ok ".green(),
-                                    paths::contract_tilde(&backup_path)
-                                );
-                            } else {
-                                println!("  {} Skipping prompt link", "skip".yellow());
-                                continue;
-                            }
-                        } else {
-                            fs::remove_file(&prompt_link)?;
-                        }
-                    }
-                }
-
-                linker::create_link(&prompt_link, &agm_prompt, "prompt", false)?;
-            }
+            println!("  {} {} copied back", " ok ".green(), feature.key);
         }
     }
-
     Ok(())
 }
 
 fn unlink_all(config: &config::Config) -> anyhow::Result<()> {
-    let agm_skills = paths::expand_tilde(&config.agm.skills_source);
-    let agm_agents = paths::expand_tilde(&config.agm.agents_source);
-    let agm_commands = paths::expand_tilde(&config.agm.commands_source);
-    let agm_prompt = paths::expand_tilde(&config.agm.prompt_source);
-
-    // Collect which tools to unlink (all installed tools)
-    let tools_to_unlink: Vec<(&String, &config::ToolConfig)> = config
-        .tools
-        .iter()
-        .filter(|(_, tc)| tc.is_installed())
-        .collect();
-
-    for (key, tool_config) in tools_to_unlink {
-        println!("Unlinking {} ({}):", key, tool_config.name);
-
-        if let Some(skills_link) = tool_config.resolved_link_path("skills") {
-            if !config.agm.is_disabled("skills")
-                && linker::remove_link(&skills_link, "skills", true)?
-                && agm_skills.is_dir()
-            {
-                skills::copy_dir_resolved(&agm_skills, &skills_link)?;
-                println!("  {} skills copied back", " ok ".green());
-            }
-        }
-
-        if let Some(agents_link) = tool_config.resolved_link_path("agents") {
-            if !config.agm.is_disabled("agents")
-                && linker::remove_link(&agents_link, "agents", true)?
-                && agm_agents.is_dir()
-            {
-                skills::copy_dir_resolved(&agm_agents, &agents_link)?;
-                println!("  {} agents copied back", " ok ".green());
-            }
-        }
-
-        if let Some(commands_link) = tool_config.resolved_link_path("commands") {
-            if !config.agm.is_disabled("commands")
-                && linker::remove_link(&commands_link, "commands", true)?
-                && agm_commands.is_dir()
-            {
-                skills::copy_dir_resolved(&agm_commands, &commands_link)?;
-                println!("  {} commands copied back", " ok ".green());
-            }
-        }
-
-        if let Some(prompt_link) = tool_config.resolved_link_path("prompt") {
-            if !config.agm.is_disabled("prompt")
-                && linker::remove_link(&prompt_link, "prompt", false)?
-                && agm_prompt.exists()
-            {
-                fs::copy(&agm_prompt, &prompt_link)?;
-                println!("  {} prompt copied back", " ok ".green());
-            }
-        }
-    }
-
-    Ok(())
+    for_each_installed_tool(config, "Unlinking ", |_, tool| unlink_tool(config, tool))
 }
 
 fn source_add(
@@ -750,7 +690,7 @@ fn main() -> anyhow::Result<()> {
             None => tui::shell::run(cli.config.clone(), tui::shell::Tab::Tool),
             Some(ToolAction::Link) => {
                 let config = config::Config::load_from(cli.config.clone())?;
-                link_all(&config, cli.config.as_deref())
+                link_all(&config)
             }
             Some(ToolAction::Unlink) => {
                 let config = config::Config::load_from(cli.config.clone())?;

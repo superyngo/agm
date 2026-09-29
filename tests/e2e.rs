@@ -109,3 +109,17 @@ fn link_migrates_existing_agents_instead_of_deleting() {
     agm(h).args(["tool", "link"]).assert().success();
     assert!(find_content(h, "agent-body"), "agent file was lost");
 }
+
+#[test]
+fn link_links_commands_and_continues_past_a_failing_tool() {
+    let home = setup();
+    let h = home.path();
+    write(&h.join(".claude/commands/deploy.md"), "cmd-body");
+    agm(h).args(["tool", "link"]).assert().success();
+    assert!(find_content(h, "cmd-body"), "command file was lost");
+    let link = h.join(".claude/commands");
+    assert!(fs::symlink_metadata(&link)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+}

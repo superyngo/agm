@@ -801,7 +801,20 @@ impl App {
         }
     }
 
+    /// True (with a status message) while a background git task is running, so
+    /// operations that rescan or restructure sources can't race with it.
+    fn busy(&mut self) -> bool {
+        if self.background_task.as_ref().is_some_and(|t| t.is_running) {
+            self.set_status("Busy: wait for the running update/add to finish");
+            return true;
+        }
+        false
+    }
+
     fn start_delete(&mut self) {
+        if self.busy() {
+            return;
+        }
         let row = match self.current_row() {
             Some(r) => r.clone(),
             None => return,
@@ -919,6 +932,9 @@ impl App {
     }
 
     fn start_bulk_selection(&mut self) {
+        if self.busy() {
+            return;
+        }
         // Direction mirrors source-level bulk toggle: if anything selected is not
         // installed, install all; otherwise uninstall all.
         self.commit_shift_range();
@@ -982,6 +998,9 @@ impl App {
     }
 
     fn start_bulk_toggle(&mut self, group_index: usize, category: Category) {
+        if self.busy() {
+            return;
+        }
         let group = &self.groups[group_index];
         let all_installed = match category {
             Category::Skills => group
@@ -1078,6 +1097,8 @@ impl App {
                 }
             }
         }
+        // Re-derive statuses from disk once, rather than trusting the in-memory edits.
+        self.refresh();
         let action = if install { "Installed" } else { "Uninstalled" };
         let kind = match category {
             Category::Skills => "skill(s)",
@@ -1884,6 +1905,9 @@ impl App {
     }
 
     fn start_rename(&mut self) {
+        if self.busy() {
+            return;
+        }
         let row = match self.current_row() {
             Some(r) => r.clone(),
             None => {
@@ -2241,6 +2265,7 @@ impl App {
                     _ => {}
                 }
             }
+            KeyCode::F(5) if self.busy() => {}
             KeyCode::F(5) => {
                 self.refresh();
                 self.log.push(super::log::LogLevel::Info, "Refreshed");
