@@ -215,7 +215,7 @@ fn scan_skills_recursive(
 /// Errors if a skill with the same name from a different source already exists.
 pub fn install_skill(name: &str, source_path: &Path, skills_dir: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(skills_dir)?;
-    blocklist_remove(skills_dir, name);
+    blocklist_remove(skills_dir, name)?;
     let link_path = skills_dir.join(name);
 
     if link_path.exists() || link_path.symlink_metadata().is_ok() {
@@ -244,6 +244,13 @@ pub fn install_skill(name: &str, source_path: &Path, skills_dir: &Path) -> anyho
 /// No-op if the skill is not installed. Source directory is NOT deleted.
 /// Records the name in the uninstalled blocklist so updates don't re-install it.
 pub fn uninstall_skill(name: &str, skills_dir: &Path) -> anyhow::Result<()> {
+    unlink_skill(name, skills_dir)?;
+    blocklist_add(skills_dir, name)
+}
+
+/// Remove a skill's symlink without recording user intent (no blocklist entry).
+/// Used by mechanical operations such as deleting or renaming a source.
+pub fn unlink_skill(name: &str, skills_dir: &Path) -> anyhow::Result<()> {
     let link_path = skills_dir.join(name);
     if link_path.symlink_metadata().is_err() {
         return Ok(());
@@ -251,7 +258,6 @@ pub fn uninstall_skill(name: &str, skills_dir: &Path) -> anyhow::Result<()> {
     if platform::is_dir_link(&link_path) {
         platform::remove_link(&link_path)?;
     }
-    blocklist_add(skills_dir, name);
     Ok(())
 }
 
@@ -273,6 +279,7 @@ pub fn install_agent(name: &str, source_path: &Path, agents_dir: &Path) -> anyho
 
     platform::link_file(source_path, &link_path)
         .with_context(|| format!("Failed to install agent: {}", name))?;
+    blocklist_remove(agents_dir, &blocklist_key(BlockKind::Agent, name))?;
     Ok(())
 }
 
@@ -294,11 +301,18 @@ pub fn install_command(name: &str, source_path: &Path, commands_dir: &Path) -> a
 
     platform::link_file(source_path, &link_path)
         .with_context(|| format!("Failed to install command: {}", name))?;
+    blocklist_remove(commands_dir, &blocklist_key(BlockKind::Command, name))?;
     Ok(())
 }
 
 /// Uninstall a single agent by removing its symlink from the agm agents directory.
 pub fn uninstall_agent(name: &str, agents_dir: &Path) -> anyhow::Result<()> {
+    unlink_agent(name, agents_dir)?;
+    blocklist_add(agents_dir, &blocklist_key(BlockKind::Agent, name))
+}
+
+/// Remove a agent's symlink without recording user intent (no blocklist entry).
+pub fn unlink_agent(name: &str, agents_dir: &Path) -> anyhow::Result<()> {
     let link_name = format!("{}.md", name);
     let link_path = agents_dir.join(&link_name);
     if link_path.symlink_metadata().is_err() {
@@ -310,6 +324,12 @@ pub fn uninstall_agent(name: &str, agents_dir: &Path) -> anyhow::Result<()> {
 
 /// Uninstall a single command by removing its symlink from the agm commands directory.
 pub fn uninstall_command(name: &str, commands_dir: &Path) -> anyhow::Result<()> {
+    unlink_command(name, commands_dir)?;
+    blocklist_add(commands_dir, &blocklist_key(BlockKind::Command, name))
+}
+
+/// Remove a command's symlink without recording user intent (no blocklist entry).
+pub fn unlink_command(name: &str, commands_dir: &Path) -> anyhow::Result<()> {
     let link_name = format!("{}.md", name);
     let link_path = commands_dir.join(&link_name);
     if link_path.symlink_metadata().is_err() {
@@ -403,29 +423,50 @@ pub fn blocklist_read(skills_dir: &Path) -> std::collections::HashSet<String> {
     }
 }
 
-/// Add a skill name to the blocklist.
-fn blocklist_add(skills_dir: &Path, name: &str) {
-    let mut set = blocklist_read(skills_dir);
-    if set.insert(name.to_string()) {
-        let mut sorted: Vec<_> = set.into_iter().collect();
-        sorted.sort();
-        let _ = fs::write(blocklist_path(skills_dir), sorted.join("\n") + "\n");
+/// Kind of item a blocklist entry refers to. Skills keep bare names (file format
+/// unchanged); agents and commands are prefixed so they never shadow each other.
+#[derive(Clone, Copy)]
+enum BlockKind {
+    Agent,
+    Command,
+}
+
+fn blocklist_key(kind: BlockKind, name: &str) -> String {
+    match kind {
+        BlockKind::Agent => format!("agent:{}", name),
+        BlockKind::Command => format!("command:{}", name),
     }
 }
 
-/// Remove a skill name from the blocklist (called on explicit install).
-fn blocklist_remove(skills_dir: &Path, name: &str) {
-    let mut set = blocklist_read(skills_dir);
-    if set.remove(name) {
-        let mut sorted: Vec<_> = set.into_iter().collect();
-        sorted.sort();
-        let content = if sorted.is_empty() {
-            String::new()
-        } else {
-            sorted.join("\n") + "\n"
-        };
-        let _ = fs::write(blocklist_path(skills_dir), content);
+fn blocklist_write(dir: &Path, set: std::collections::HashSet<String>) -> anyhow::Result<()> {
+    let mut sorted: Vec<_> = set.into_iter().collect();
+    sorted.sort();
+    let content = if sorted.is_empty() {
+        String::new()
+    } else {
+        sorted.join("\n") + "\n"
+    };
+    let path = blocklist_path(dir);
+    fs::write(&path, content)
+        .with_context(|| format!("Failed to write blocklist {}", path.display()))
+}
+
+/// Add an entry to the blocklist stored next to `dir`.
+fn blocklist_add(dir: &Path, key: &str) -> anyhow::Result<()> {
+    let mut set = blocklist_read(dir);
+    if set.insert(key.to_string()) {
+        blocklist_write(dir, set)?;
     }
+    Ok(())
+}
+
+/// Remove an entry from the blocklist (called on explicit install).
+fn blocklist_remove(dir: &Path, key: &str) -> anyhow::Result<()> {
+    let mut set = blocklist_read(dir);
+    if set.remove(key) {
+        blocklist_write(dir, set)?;
+    }
+    Ok(())
 }
 
 /// Check the install status of an agent by examining the agm agents directory.
@@ -638,13 +679,15 @@ pub fn update_all_with_progress<F>(
     let _ = prune_broken_commands(commands_dir);
 
     // Re-sync new skills/agents/commands, skipping explicitly uninstalled ones
-    let uninstalled = blocklist_read(skills_dir);
+    let uninstalled_skills = blocklist_read(skills_dir);
+    let uninstalled_agents = blocklist_read(agents_dir);
+    let uninstalled_commands = blocklist_read(commands_dir);
     for git_root in &git_roots {
         let new_skills = scan_skills(git_root);
         for (name, skill_path) in new_skills {
             let link_path = skills_dir.join(&name);
             if link_path.symlink_metadata().is_err()
-                && !uninstalled.contains(&name)
+                && !uninstalled_skills.contains(&name)
                 && install_skill(&name, &skill_path, skills_dir).is_ok()
             {
                 new_skills_total += 1;
@@ -656,7 +699,7 @@ pub fn update_all_with_progress<F>(
             let link_name = format!("{}.md", name);
             let link_path = agents_dir.join(&link_name);
             if link_path.symlink_metadata().is_err()
-                && !uninstalled.contains(&name)
+                && !uninstalled_agents.contains(&blocklist_key(BlockKind::Agent, &name))
                 && install_agent(&name, &agent_path, agents_dir).is_ok()
             {
                 new_agents_total += 1;
@@ -668,7 +711,7 @@ pub fn update_all_with_progress<F>(
             let link_name = format!("{}.md", name);
             let link_path = commands_dir.join(&link_name);
             if link_path.symlink_metadata().is_err()
-                && !uninstalled.contains(&name)
+                && !uninstalled_commands.contains(&blocklist_key(BlockKind::Command, &name))
                 && install_command(&name, &cmd_path, commands_dir).is_ok()
             {
                 new_commands_total += 1;
@@ -1119,21 +1162,21 @@ pub fn delete_source(
     // Remove all agm symlinks for this source's skills
     for skill in &group.skills {
         if skill.install_status == SkillInstallStatus::Installed {
-            uninstall_skill(&skill.name, skills_dir)?;
+            unlink_skill(&skill.name, skills_dir)?;
         }
     }
 
     // Remove all agm symlinks for this source's agents
     for agent in &group.agents {
         if agent.install_status == SkillInstallStatus::Installed {
-            uninstall_agent(&agent.name, agents_dir)?;
+            unlink_agent(&agent.name, agents_dir)?;
         }
     }
 
     // Remove all agm symlinks for this source's commands
     for command in &group.commands {
         if command.install_status == SkillInstallStatus::Installed {
-            uninstall_command(&command.name, commands_dir)?;
+            unlink_command(&command.name, commands_dir)?;
         }
     }
 
@@ -1189,9 +1232,8 @@ pub fn finish_migration_dir(dir: &Path, msgs: &mut Vec<String>) -> anyhow::Resul
             break;
         }
     }
-    fs::rename(dir, &backup).with_context(|| {
-        format!("Failed to back up leftover files in {}", dir.display())
-    })?;
+    fs::rename(dir, &backup)
+        .with_context(|| format!("Failed to back up leftover files in {}", dir.display()))?;
     msgs.push(format!(
         "  kept unrecognised files from {} in {}",
         contract_tilde(dir),
@@ -1620,7 +1662,6 @@ pub struct RenameReport {
     pub skills_relinked: usize,
     pub agents_relinked: usize,
     pub commands_relinked: usize,
-    pub rollback_failures: Vec<String>,
     pub relink_failures: Vec<String>,
 }
 
@@ -1636,6 +1677,13 @@ pub fn rename_source(
     validate_source_name(new)?;
 
     let group = resolve_source_target(old, source_dir, skills_dir, agents_dir, commands_dir)?;
+
+    if matches!(group.kind, SourceKind::Migrated { .. }) {
+        anyhow::bail!(
+            "Migrated sources cannot be renamed (they belong to tool '{}')",
+            group.name
+        );
+    }
 
     // Determine old/new paths, including the local/ prefix if applicable.
     let (old_path, new_path) = match &group.kind {
@@ -1660,83 +1708,59 @@ pub fn rename_source(
         action: CloneAction::Pull,
     });
 
-    // Snapshot installed items.
-    let installed_skills: Vec<String> = group
-        .skills
-        .iter()
-        .filter(|s| s.install_status == SkillInstallStatus::Installed)
-        .map(|s| s.name.clone())
-        .collect();
-    let installed_agents: Vec<String> = group
-        .agents
-        .iter()
-        .filter(|a| a.install_status == SkillInstallStatus::Installed)
-        .map(|a| a.name.clone())
-        .collect();
-    let installed_commands: Vec<String> = group
-        .commands
-        .iter()
-        .filter(|c| c.install_status == SkillInstallStatus::Installed)
-        .map(|c| c.name.clone())
-        .collect();
+    // Snapshot installed items by name.
+    let installed = |it: &[(String, SkillInstallStatus)]| -> Vec<String> {
+        it.iter()
+            .filter(|(_, st)| *st == SkillInstallStatus::Installed)
+            .map(|(n, _)| n.clone())
+            .collect()
+    };
+    let installed_skills = installed(
+        &group
+            .skills
+            .iter()
+            .map(|s| (s.name.clone(), s.install_status))
+            .collect::<Vec<_>>(),
+    );
+    let installed_agents = installed(
+        &group
+            .agents
+            .iter()
+            .map(|a| (a.name.clone(), a.install_status))
+            .collect::<Vec<_>>(),
+    );
+    let installed_commands = installed(
+        &group
+            .commands
+            .iter()
+            .map(|c| (c.name.clone(), c.install_status))
+            .collect::<Vec<_>>(),
+    );
 
-    // Uninstall from agm store.
-    for n in &installed_skills {
-        let _ = uninstall_skill(n, skills_dir);
-    }
-    for n in &installed_agents {
-        let _ = uninstall_agent(n, agents_dir);
-    }
-    for n in &installed_commands {
-        let _ = uninstall_command(n, commands_dir);
-    }
-
-    // uninstall_skill adds to the blocklist as a side-effect; clear it so
-    // that an interrupt between here and re-install can't leave skills
-    // silently blocklisted. install_skill on the rebuild will be a no-op
-    // w.r.t. the blocklist since the names are no longer present.
-    for n in &installed_skills {
-        blocklist_remove(skills_dir, n);
-    }
-
-    // fs::rename
+    // Rename the directory first: if it fails, nothing else has been touched.
     if let Err(e) = fs::rename(&old_path, &new_path) {
-        // Best-effort rollback: re-install against old path.
-        let mut report = RenameReport::default();
-        for n in &installed_skills {
-            let p = old_path.join("skills").join(n);
-            if install_skill(n, &p, skills_dir).is_err() {
-                report.rollback_failures.push(format!("skill {}", n));
-            }
-        }
-        for n in &installed_agents {
-            let p = old_path.join("agents").join(format!("{}.md", n));
-            if install_agent(n, &p, agents_dir).is_err() {
-                report.rollback_failures.push(format!("agent {}", n));
-            }
-        }
-        for n in &installed_commands {
-            let p = old_path.join("commands").join(format!("{}.md", n));
-            if install_command(n, &p, commands_dir).is_err() {
-                report.rollback_failures.push(format!("command {}", n));
-            }
-        }
         on_progress(CloneProgress::Done {
             name: group.name.clone(),
             success: false,
             message: format!("rename failed: {}", e),
         });
-        anyhow::bail!(
-            "fs::rename failed: {}. Rollback failures: {:?}",
-            e,
-            report.rollback_failures
-        );
+        anyhow::bail!("rename failed: {}", e);
     }
 
-    // Re-scan and re-install.
+    // The old links now dangle: remove them (without blocklisting), then re-link
+    // from a fresh scan of the renamed directory.
+    for n in &installed_skills {
+        unlink_skill(n, skills_dir)?;
+    }
+    for n in &installed_agents {
+        unlink_agent(n, agents_dir)?;
+    }
+    for n in &installed_commands {
+        unlink_command(n, commands_dir)?;
+    }
+
     let mut report = RenameReport::default();
-    let new_skills = scan_skills(&new_path);
-    for (n, sp) in &new_skills {
+    for (n, sp) in &scan_skills(&new_path) {
         if installed_skills.contains(n) {
             match install_skill(n, sp, skills_dir) {
                 Ok(()) => report.skills_relinked += 1,
@@ -1744,8 +1768,7 @@ pub fn rename_source(
             }
         }
     }
-    let new_agents = scan_agents(&new_path);
-    for (n, sp) in &new_agents {
+    for (n, sp) in &scan_agents(&new_path) {
         if installed_agents.contains(n) {
             match install_agent(n, sp, agents_dir) {
                 Ok(()) => report.agents_relinked += 1,
@@ -1753,8 +1776,7 @@ pub fn rename_source(
             }
         }
     }
-    let new_cmds = scan_commands(&new_path);
-    for (n, sp) in &new_cmds {
+    for (n, sp) in &scan_commands(&new_path) {
         if installed_commands.contains(n) {
             match install_command(n, sp, commands_dir) {
                 Ok(()) => report.commands_relinked += 1,
@@ -2838,5 +2860,42 @@ mod tests {
         // agm should have symlinks
         assert!(agm.join("build.md").symlink_metadata().is_ok());
         assert!(agm.join("test.md").symlink_metadata().is_ok());
+    }
+}
+
+#[cfg(test)]
+mod blocklist_rename_tests {
+    use super::*;
+
+    #[test]
+    fn uninstalled_agent_and_command_are_blocklisted_per_kind() {
+        let t = tempfile::tempdir().unwrap();
+        let agents = t.path().join("agents");
+        let cmds = t.path().join("commands");
+        let src = t.path().join("x.md");
+        fs::write(&src, "x").unwrap();
+        install_agent("x", &src, &agents).unwrap();
+        install_command("x", &src, &cmds).unwrap();
+        uninstall_agent("x", &agents).unwrap();
+        let set = blocklist_read(&agents);
+        assert!(set.contains("agent:x"));
+        assert!(!set.contains("command:x"));
+        assert!(!set.contains("x"));
+        // Explicit reinstall clears the entry.
+        install_agent("x", &src, &agents).unwrap();
+        assert!(!blocklist_read(&agents).contains("agent:x"));
+    }
+
+    #[test]
+    fn unlink_skill_does_not_blocklist() {
+        let t = tempfile::tempdir().unwrap();
+        let skills = t.path().join("skills");
+        let src = t.path().join("s");
+        fs::create_dir_all(&src).unwrap();
+        fs::write(src.join("SKILL.md"), "s").unwrap();
+        install_skill("s", &src, &skills).unwrap();
+        unlink_skill("s", &skills).unwrap();
+        assert!(blocklist_read(&skills).is_empty());
+        assert!(skills.join("s").symlink_metadata().is_err());
     }
 }

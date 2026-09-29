@@ -61,10 +61,18 @@ fn link_keeps_unrecognised_files_and_conflicting_copy() {
 
     agm(h).args(["tool", "link"]).assert().success();
 
-    for c in ["important-notes", "readme-body", "tool-edited-dup", "real-skill"] {
+    for c in [
+        "important-notes",
+        "readme-body",
+        "tool-edited-dup",
+        "real-skill",
+    ] {
         assert!(find_content(h, c), "content {c:?} was lost");
     }
-    assert!(fs::symlink_metadata(&skills).unwrap().file_type().is_symlink());
+    assert!(fs::symlink_metadata(&skills)
+        .unwrap()
+        .file_type()
+        .is_symlink());
 }
 
 #[test]
@@ -78,7 +86,10 @@ fn unlink_leaves_real_copies_not_links_into_store() {
     let skill = h.join(".claude/skills/real");
     let meta = fs::symlink_metadata(&skill).unwrap();
     assert!(!meta.file_type().is_symlink(), "skill is still a symlink");
-    assert_eq!(fs::read_to_string(skill.join("SKILL.md")).unwrap(), "real-skill");
+    assert_eq!(
+        fs::read_to_string(skill.join("SKILL.md")).unwrap(),
+        "real-skill"
+    );
 }
 
 #[test]
