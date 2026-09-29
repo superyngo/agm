@@ -1825,12 +1825,32 @@ impl App {
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
         area_height: u16,
     ) {
+        if self.handle_overlay_key(code, terminal) {
+            return;
+        }
+        if let Some(state) = self.confirm_state.clone() {
+            self.handle_confirm_key(state, code);
+            return;
+        }
+        if self.input_mode != InputMode::None {
+            self.handle_input_key(code, modifiers);
+            return;
+        }
+        self.handle_normal_key(code, modifiers, terminal, area_height);
+    }
+
+    /// Help, log and info popups intercept every key while visible. Returns true if handled.
+    fn handle_overlay_key(
+        &mut self,
+        code: KeyCode,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    ) -> bool {
         // Help/About popup intercepts all keys when visible.
         if let Some(ref mut help) = self.help {
             if help.handle_key(code) == super::popup::PopupAction::Close {
                 self.help = None;
             }
-            return;
+            return true;
         }
 
         // Log popup intercepts all keys when visible
@@ -1846,7 +1866,7 @@ impl App {
                     }
                 }
             }
-            return;
+            return true;
         }
 
         // Info popup intercepts all keys when visible
@@ -1865,76 +1885,77 @@ impl App {
                     }
                 }
             }
-            return;
+            return true;
         }
+        false
+    }
 
-        // Confirmation mode
-        if let Some(state) = self.confirm_state.clone() {
-            match state {
-                ConfirmState::Normal { group_index } => match code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') => self.execute_delete(group_index),
-                    _ => {
+    fn handle_confirm_key(&mut self, state: ConfirmState, code: KeyCode) {
+        match state {
+            ConfirmState::Normal { group_index } => match code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => self.execute_delete(group_index),
+                _ => {
+                    self.confirm_state = None;
+                    self.set_status("Delete cancelled");
+                }
+            },
+            ConfirmState::Migrated {
+                group_index,
+                mut typed,
+            } => match code {
+                KeyCode::Char(c) => {
+                    typed.push(c);
+                    if typed == "delete" {
+                        self.execute_delete(group_index);
+                    } else if !"delete".starts_with(&typed) {
                         self.confirm_state = None;
                         self.set_status("Delete cancelled");
-                    }
-                },
-                ConfirmState::Migrated {
-                    group_index,
-                    mut typed,
-                } => match code {
-                    KeyCode::Char(c) => {
-                        typed.push(c);
-                        if typed == "delete" {
-                            self.execute_delete(group_index);
-                        } else if !"delete".starts_with(&typed) {
-                            self.confirm_state = None;
-                            self.set_status("Delete cancelled");
-                        } else {
-                            self.confirm_state =
-                                Some(ConfirmState::Migrated { group_index, typed });
-                        }
-                    }
-                    KeyCode::Backspace => {
-                        typed.pop();
+                    } else {
                         self.confirm_state = Some(ConfirmState::Migrated { group_index, typed });
                     }
-                    KeyCode::Esc => {
-                        self.confirm_state = None;
-                        self.set_status("Delete cancelled");
-                    }
-                    _ => {
-                        self.confirm_state = None;
-                        self.set_status("Delete cancelled");
-                    }
-                },
-                ConfirmState::BulkToggle {
-                    group_index,
-                    category,
-                    install,
-                } => match code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') => {
-                        self.execute_bulk_toggle(group_index, category, install);
-                        self.confirm_state = None;
-                    }
-                    _ => {
-                        self.confirm_state = None;
-                        self.set_status("Cancelled");
-                    }
-                },
-                ConfirmState::BulkSelection { install } => match code {
-                    KeyCode::Char('y') | KeyCode::Char('Y') => {
-                        self.execute_bulk_selection(install);
-                        self.confirm_state = None;
-                    }
-                    _ => {
-                        self.confirm_state = None;
-                        self.set_status("Cancelled");
-                    }
-                },
-            }
-            return;
+                }
+                KeyCode::Backspace => {
+                    typed.pop();
+                    self.confirm_state = Some(ConfirmState::Migrated { group_index, typed });
+                }
+                KeyCode::Esc => {
+                    self.confirm_state = None;
+                    self.set_status("Delete cancelled");
+                }
+                _ => {
+                    self.confirm_state = None;
+                    self.set_status("Delete cancelled");
+                }
+            },
+            ConfirmState::BulkToggle {
+                group_index,
+                category,
+                install,
+            } => match code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    self.execute_bulk_toggle(group_index, category, install);
+                    self.confirm_state = None;
+                }
+                _ => {
+                    self.confirm_state = None;
+                    self.set_status("Cancelled");
+                }
+            },
+            ConfirmState::BulkSelection { install } => match code {
+                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    self.execute_bulk_selection(install);
+                    self.confirm_state = None;
+                }
+                _ => {
+                    self.confirm_state = None;
+                    self.set_status("Cancelled");
+                }
+            },
         }
+    }
 
+    /// Keys for the open single-line prompt (rename, add or search).
+    fn handle_input_key(&mut self, code: KeyCode, modifiers: KeyModifiers) {
         // Rename mode — inline input box
         if self.input_mode == InputMode::Rename {
             match code {
@@ -2003,7 +2024,68 @@ impl App {
             }
             return;
         }
+    }
 
+    /// `l`: install/uninstall the item under the cursor, or bulk-toggle a source header.
+    fn install_toggle_at_cursor(&mut self) {
+        let row = self.current_row().cloned();
+        match row {
+            Some(ListRow::SkillItem {
+                group_index,
+                skill_index,
+            }) => {
+                if self.config.agm.is_disabled("skills") {
+                    self.set_status("Skills feature is disabled");
+                } else {
+                    self.toggle_skill(group_index, skill_index);
+                }
+            }
+            Some(ListRow::AgentItem {
+                group_index,
+                agent_index,
+            }) => {
+                if self.config.agm.is_disabled("agents") {
+                    self.set_status("Agents feature is disabled");
+                } else {
+                    self.toggle_agent(group_index, agent_index);
+                }
+            }
+            Some(ListRow::CommandItem {
+                group_index,
+                command_index,
+            }) => {
+                if self.config.agm.is_disabled("commands") {
+                    self.set_status("Commands feature is disabled");
+                } else {
+                    self.toggle_command(group_index, command_index);
+                }
+            }
+            Some(ListRow::SourceHeader {
+                group_index,
+                category,
+            }) => {
+                let feature = match category {
+                    Category::Skills => "skills",
+                    Category::Agents => "agents",
+                    Category::Commands => "commands",
+                };
+                if self.config.agm.is_disabled(feature) {
+                    self.set_status(format!("{} feature is disabled", feature));
+                } else {
+                    self.start_bulk_toggle(group_index, category);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_normal_key(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+        area_height: u16,
+    ) {
         // Normal mode
         match code {
             KeyCode::Char('q') => self.should_quit = true,
@@ -2065,57 +2147,7 @@ impl App {
             KeyCode::Char('l') if self.has_effective_selection() => {
                 self.start_bulk_selection();
             }
-            KeyCode::Char('l') => {
-                let row = self.current_row().cloned();
-                match row {
-                    Some(ListRow::SkillItem {
-                        group_index,
-                        skill_index,
-                    }) => {
-                        if self.config.agm.is_disabled("skills") {
-                            self.set_status("Skills feature is disabled");
-                        } else {
-                            self.toggle_skill(group_index, skill_index);
-                        }
-                    }
-                    Some(ListRow::AgentItem {
-                        group_index,
-                        agent_index,
-                    }) => {
-                        if self.config.agm.is_disabled("agents") {
-                            self.set_status("Agents feature is disabled");
-                        } else {
-                            self.toggle_agent(group_index, agent_index);
-                        }
-                    }
-                    Some(ListRow::CommandItem {
-                        group_index,
-                        command_index,
-                    }) => {
-                        if self.config.agm.is_disabled("commands") {
-                            self.set_status("Commands feature is disabled");
-                        } else {
-                            self.toggle_command(group_index, command_index);
-                        }
-                    }
-                    Some(ListRow::SourceHeader {
-                        group_index,
-                        category,
-                    }) => {
-                        let feature = match category {
-                            Category::Skills => "skills",
-                            Category::Agents => "agents",
-                            Category::Commands => "commands",
-                        };
-                        if self.config.agm.is_disabled(feature) {
-                            self.set_status(format!("{} feature is disabled", feature));
-                        } else {
-                            self.start_bulk_toggle(group_index, category);
-                        }
-                    }
-                    _ => {}
-                }
-            }
+            KeyCode::Char('l') => self.install_toggle_at_cursor(),
             KeyCode::F(5) if self.busy() => {}
             KeyCode::F(5) => {
                 self.refresh();
