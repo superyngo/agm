@@ -54,7 +54,19 @@ impl BackgroundTask {
     /// Non-blocking drain of all pending events. Returns collected events.
     pub fn poll(&mut self) -> Vec<TaskEvent> {
         let mut events = Vec::new();
-        while let Ok(event) = self.receiver.try_recv() {
+        loop {
+            let event = match self.receiver.try_recv() {
+                Ok(e) => e,
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    if self.is_running {
+                        // Worker exited without a terminal event (e.g. panicked).
+                        self.is_running = false;
+                        self.progress = None;
+                    }
+                    break;
+                }
+            };
             match &event {
                 TaskEvent::UpdateAllDone { .. } => self.is_running = false,
                 TaskEvent::UpdateRepoStart { name } => {

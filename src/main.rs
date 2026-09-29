@@ -338,8 +338,11 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
                                 ))
                             {
                                 let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-                                let backup_path =
-                                    prompt_link.with_extension(format!("{}.bak", timestamp));
+                                let backup_path = {
+                                    let mut n = prompt_link.as_os_str().to_owned();
+                                    n.push(format!(".{}.bak", timestamp));
+                                    std::path::PathBuf::from(n)
+                                };
                                 fs::rename(&prompt_link, &backup_path)?;
                                 println!(
                                     "  {} Backed up prompt to {}",
@@ -753,7 +756,7 @@ fn main() -> anyhow::Result<()> {
                 let config = config::Config::load_from(cli.config.clone())?;
                 unlink_all(&config)
             }
-            Some(ToolAction::Status) => status::status(),
+            Some(ToolAction::Status) => status::status(cli.config.clone()),
         },
         Commands::Source { action } => {
             let config = config::Config::load_from(cli.config.clone())?;

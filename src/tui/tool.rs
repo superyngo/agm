@@ -1811,7 +1811,7 @@ impl ToolApp {
     // ------------------------------------------------------------------
 
     fn open_in_editor(
-        &self,
+        &mut self,
         terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>,
         paths: &[PathBuf],
     ) {
@@ -1819,7 +1819,13 @@ impl ToolApp {
         let _ = stdout().execute(LeaveAlternateScreen);
         let ed = editor::get_editor(&self.config);
         let refs: Vec<&std::path::Path> = paths.iter().map(|p| p.as_path()).collect();
-        let _ = editor::open_files(&ed, &refs);
+        if let Err(e) = editor::open_files(&ed, &refs) {
+            self.log.push(
+                super::log::LogLevel::Error,
+                format!("Editor '{}' failed: {}", ed, e),
+            );
+            self.set_status(format!("✗ Editor failed: {}", e));
+        }
         let _ = stdout().execute(EnterAlternateScreen);
         let _ = enable_raw_mode();
         let _ = terminal.clear();
@@ -1853,7 +1859,8 @@ impl ToolApp {
                 };
                 let section_text = section_lines.join("\n") + "\n";
 
-                let tmp_path = std::env::temp_dir().join(format!("agm-{}.toml", key));
+                let tmp_path =
+                    std::env::temp_dir().join(format!("agm-{}-{}.toml", key, std::process::id()));
                 if let Err(e) = std::fs::write(&tmp_path, &section_text) {
                     self.set_status(format!("✗ Failed to write temp file: {}", e));
                     return;
@@ -1901,7 +1908,22 @@ impl ToolApp {
                         }
                     };
 
-                if let Err(e) = std::fs::write(&config_path, &new_config_text) {
+                // Validate the whole result against the schema, not just TOML syntax.
+                if let Err(e) = toml::from_str::<Config>(&new_config_text) {
+                    self.log.push(
+                        LogLevel::Error,
+                        format!("[{}] Invalid config, changes discarded: {}", key, e),
+                    );
+                    self.set_status("✗ Invalid config, changes discarded");
+                    return;
+                }
+
+                // Atomic write: temp file in the same directory, then rename.
+                let staged = config_path.with_extension("toml.agm-tmp");
+                if let Err(e) = std::fs::write(&staged, &new_config_text)
+                    .and_then(|_| std::fs::rename(&staged, &config_path))
+                {
+                    let _ = std::fs::remove_file(&staged);
                     self.set_status(format!("✗ Failed to write config: {}", e));
                     return;
                 }

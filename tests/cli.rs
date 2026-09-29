@@ -1,4 +1,5 @@
 // tests/cli.rs
+#![allow(deprecated)] // assert_cmd::Command::cargo_bin: replacement needs a newer assert_cmd
 use assert_cmd::Command;
 
 #[test]

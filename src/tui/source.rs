@@ -1103,7 +1103,13 @@ impl App {
         let _ = stdout().execute(LeaveAlternateScreen);
 
         let ed = editor::get_editor(&self.config);
-        let _ = editor::open_files(&ed, &[file_path.as_path()]);
+        if let Err(e) = editor::open_files(&ed, &[file_path.as_path()]) {
+            self.log.push(
+                super::log::LogLevel::Error,
+                format!("Editor '{}' failed: {}", ed, e),
+            );
+            self.set_status(format!("Editor failed: {}", e));
+        }
 
         let _ = stdout().execute(EnterAlternateScreen);
         let _ = enable_raw_mode();
@@ -1774,6 +1780,7 @@ impl App {
         self.expanded_categories.clear();
         self.expanded_skills_sources.clear();
         self.expanded_agents_sources.clear();
+        self.expanded_commands_sources.clear();
         self.rebuild_rows();
         self.clamp_cursor();
     }

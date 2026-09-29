@@ -470,7 +470,9 @@ fn check_command_install_status(
 }
 
 pub fn is_url(source: &str) -> bool {
-    source.starts_with("http://") || source.starts_with("https://") || source.starts_with("git@")
+    ["http://", "https://", "ssh://", "git://", "git@"]
+        .iter()
+        .any(|p| source.starts_with(p))
 }
 
 /// Normalise a source argument into a canonical git URL.
@@ -507,7 +509,8 @@ pub fn normalize_git_source(source: &str) -> String {
 /// Derive repo name from URL
 pub fn repo_name_from_url(url: &str) -> String {
     // e.g. "https://github.com/user/my-skills.git" → "my-skills"
-    url.rsplit('/')
+    url.trim_end_matches('/')
+        .rsplit(['/', ':'])
         .next()
         .unwrap_or("repo")
         .trim_end_matches(".git")
@@ -518,11 +521,15 @@ pub fn repo_name_from_url(url: &str) -> String {
 fn normalize_git_url(url: &str) -> String {
     let s = url.trim().trim_end_matches('/').trim_end_matches(".git");
     // Convert git@host:user/repo to host/user/repo for comparison
-    if let Some(rest) = s.strip_prefix("git@") {
-        rest.replacen(':', "/", 1).to_lowercase()
+    let rest = if let Some(rest) = s.strip_prefix("git@") {
+        rest.replacen(':', "/", 1)
+    } else if let Some(rest) = s.split_once("://").map(|(_, r)| r) {
+        // Drop scheme and any user@ so https/ssh forms of one repo compare equal.
+        rest.split_once('@').map_or(rest, |(_, h)| h).to_string()
     } else {
-        s.to_lowercase()
-    }
+        s.to_string()
+    };
+    rest.to_lowercase()
 }
 
 /// Git pull all skill source repos (deduplicating by git root), then re-sync symlinks
@@ -585,6 +592,8 @@ pub fn update_all_with_progress<F>(
 
         let result = std::process::Command::new("git")
             .args(["pull"])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .stdin(std::process::Stdio::null())
             .current_dir(git_root)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -913,6 +922,7 @@ pub fn add_local_copy(
             .unwrap_or("unnamed")
             .to_string(),
     };
+    validate_source_name(&name)?;
 
     let dest = source_dir.join("local").join(&name);
     if dest.exists() {
@@ -961,7 +971,12 @@ pub fn clone_or_pull(
             validate_source_name(n)?;
             n.to_string()
         }
-        None => repo_name_from_url(url),
+        None => {
+            let n = repo_name_from_url(url);
+            validate_source_name(&n)
+                .with_context(|| format!("cannot derive a source name from '{}'", url))?;
+            n
+        }
     };
     let repo_path = source_dir.join(&name);
 
@@ -1019,7 +1034,10 @@ pub fn clone_or_pull(
             ]);
         }
     }
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
     let mut child = cmd.spawn().context("failed to spawn git")?;
     let stdout = child.stdout.take().unwrap();
@@ -1410,6 +1428,359 @@ pub fn copy_dir_all(src: &Path, dst: &Path) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Count unicode chars in the value of a top-level YAML key inside the slice of
+/// frontmatter lines (lines between the two `---` markers, excluding markers).
+fn extract_key_value_chars(lines: &[&str], key: &str) -> usize {
+    let prefix = format!("{}:", key);
+    for (i, line) in lines.iter().enumerate() {
+        if !line.starts_with(&prefix) {
+            continue;
+        }
+        let rest = &line[prefix.len()..];
+        let rest_trim = rest.trim();
+        if rest_trim == "|" || rest_trim == ">" {
+            // Block scalar — collect subsequent indented lines
+            let mut acc = String::new();
+            for cont in &lines[i + 1..] {
+                if cont.trim().is_empty() {
+                    if !acc.is_empty() {
+                        acc.push('\n');
+                    }
+                    continue;
+                }
+                let leading = cont.len() - cont.trim_start().len();
+                if leading == 0 {
+                    break;
+                }
+                if !acc.is_empty() {
+                    acc.push('\n');
+                }
+                acc.push_str(cont.trim_start());
+            }
+            return acc.chars().count();
+        }
+        // Inline scalar, possibly quoted
+        let mut v = rest_trim.to_string();
+        if (v.starts_with('"') && v.ends_with('"') && v.len() >= 2)
+            || (v.starts_with('\'') && v.ends_with('\'') && v.len() >= 2)
+        {
+            v = v[1..v.len() - 1].to_string();
+        }
+        return v.chars().count();
+    }
+    0
+}
+
+/// Compute the preload-char count for a skill: sum of `name` + `description`
+/// values in the SKILL.md YAML frontmatter. Returns 0 on any failure.
+pub fn skill_preload_chars(skill_path: &Path) -> usize {
+    let md = skill_path.join("SKILL.md");
+    let content = match fs::read_to_string(&md) {
+        Ok(c) => c,
+        Err(_) => return 0,
+    };
+    let mut iter = content.lines();
+    let first = match iter.next() {
+        Some(l) => l,
+        None => return 0,
+    };
+    if first.trim() != "---" {
+        return 0;
+    }
+    let mut fm_lines: Vec<&str> = Vec::new();
+    let mut terminated = false;
+    for line in iter.take(200) {
+        let t = line.trim();
+        if t == "---" || t == "..." {
+            terminated = true;
+            break;
+        }
+        fm_lines.push(line);
+    }
+    if !terminated {
+        return 0;
+    }
+    extract_key_value_chars(&fm_lines, "name") + extract_key_value_chars(&fm_lines, "description")
+}
+
+/// Count unicode chars in the whole file. Returns 0 on read error.
+pub fn file_char_count(path: &Path) -> usize {
+    fs::read_to_string(path)
+        .map(|s| s.chars().count())
+        .unwrap_or(0)
+}
+
+/// Resolve a `<target>` string to exactly one `SourceGroup`.
+/// Match priority: (1) exact directory name match; (2) normalized git URL match
+/// against repo origins (local sources skipped in step 2).
+pub fn resolve_source_target(
+    target: &str,
+    source_dir: &Path,
+    skills_dir: &Path,
+    agents_dir: &Path,
+    commands_dir: &Path,
+) -> anyhow::Result<SourceGroup> {
+    let groups = scan_all_sources(source_dir, skills_dir, agents_dir, commands_dir);
+    if groups.is_empty() {
+        anyhow::bail!("No sources found under {}", contract_tilde(source_dir));
+    }
+
+    // Step 1: exact directory-name match.
+    let by_name: Vec<&SourceGroup> = groups.iter().filter(|g| g.name == target).collect();
+    if by_name.len() == 1 {
+        return Ok(by_name[0].clone());
+    }
+    if by_name.len() > 1 {
+        let names: Vec<&str> = by_name.iter().map(|g| g.name.as_str()).collect();
+        anyhow::bail!(
+            "Ambiguous target '{}'; matches: {}",
+            target,
+            names.join(", ")
+        );
+    }
+
+    // Step 2: URL match (Repo only).
+    let target_canonical = normalize_git_source(target);
+    let target_norm = normalize_git_url(&target_canonical);
+    let by_url: Vec<&SourceGroup> = groups
+        .iter()
+        .filter(|g| match &g.kind {
+            SourceKind::Repo { url: Some(u) } => normalize_git_url(u) == target_norm,
+            _ => false,
+        })
+        .collect();
+    if by_url.len() == 1 {
+        return Ok(by_url[0].clone());
+    }
+    if by_url.len() > 1 {
+        let names: Vec<&str> = by_url.iter().map(|g| g.name.as_str()).collect();
+        anyhow::bail!(
+            "Multiple repos match URL '{}'; disambiguate by name: {}",
+            target,
+            names.join(", ")
+        );
+    }
+
+    let available: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
+    anyhow::bail!(
+        "No source matches '{}'. Available: {}",
+        target,
+        available.join(", ")
+    );
+}
+
+/// Validate a user-supplied source directory name.
+pub fn validate_source_name(name: &str) -> anyhow::Result<()> {
+    if name.is_empty() {
+        anyhow::bail!("source name must not be empty");
+    }
+    if name == "." || name == ".." {
+        anyhow::bail!("source name must not be '.' or '..'");
+    }
+    if name.contains('/') || name.contains('\\') {
+        anyhow::bail!("source name must not contain '/' or '\\\\'");
+    }
+    Ok(())
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct RenameReport {
+    pub skills_relinked: usize,
+    pub agents_relinked: usize,
+    pub commands_relinked: usize,
+    pub rollback_failures: Vec<String>,
+    pub relink_failures: Vec<String>,
+}
+
+pub fn rename_source(
+    old: &str,
+    new: &str,
+    source_dir: &Path,
+    skills_dir: &Path,
+    agents_dir: &Path,
+    commands_dir: &Path,
+    mut on_progress: impl FnMut(CloneProgress),
+) -> anyhow::Result<RenameReport> {
+    validate_source_name(new)?;
+
+    let group = resolve_source_target(old, source_dir, skills_dir, agents_dir, commands_dir)?;
+
+    // Determine old/new paths, including the local/ prefix if applicable.
+    let (old_path, new_path) = match &group.kind {
+        SourceKind::Local => (
+            source_dir.join("local").join(&group.name),
+            source_dir.join("local").join(new),
+        ),
+        _ => (source_dir.join(&group.name), source_dir.join(new)),
+    };
+
+    if new_path.exists() {
+        anyhow::bail!(
+            "Target '{}' already exists at {}",
+            new,
+            contract_tilde(&new_path)
+        );
+    }
+
+    on_progress(CloneProgress::Start {
+        name: group.name.clone(),
+        url: format!("→ {}", new),
+        action: CloneAction::Pull,
+    });
+
+    // Snapshot installed items.
+    let installed_skills: Vec<String> = group
+        .skills
+        .iter()
+        .filter(|s| s.install_status == SkillInstallStatus::Installed)
+        .map(|s| s.name.clone())
+        .collect();
+    let installed_agents: Vec<String> = group
+        .agents
+        .iter()
+        .filter(|a| a.install_status == SkillInstallStatus::Installed)
+        .map(|a| a.name.clone())
+        .collect();
+    let installed_commands: Vec<String> = group
+        .commands
+        .iter()
+        .filter(|c| c.install_status == SkillInstallStatus::Installed)
+        .map(|c| c.name.clone())
+        .collect();
+
+    // Uninstall from agm store.
+    for n in &installed_skills {
+        let _ = uninstall_skill(n, skills_dir);
+    }
+    for n in &installed_agents {
+        let _ = uninstall_agent(n, agents_dir);
+    }
+    for n in &installed_commands {
+        let _ = uninstall_command(n, commands_dir);
+    }
+
+    // uninstall_skill adds to the blocklist as a side-effect; clear it so
+    // that an interrupt between here and re-install can't leave skills
+    // silently blocklisted. install_skill on the rebuild will be a no-op
+    // w.r.t. the blocklist since the names are no longer present.
+    for n in &installed_skills {
+        blocklist_remove(skills_dir, n);
+    }
+
+    // fs::rename
+    if let Err(e) = fs::rename(&old_path, &new_path) {
+        // Best-effort rollback: re-install against old path.
+        let mut report = RenameReport::default();
+        for n in &installed_skills {
+            let p = old_path.join("skills").join(n);
+            if install_skill(n, &p, skills_dir).is_err() {
+                report.rollback_failures.push(format!("skill {}", n));
+            }
+        }
+        for n in &installed_agents {
+            let p = old_path.join("agents").join(format!("{}.md", n));
+            if install_agent(n, &p, agents_dir).is_err() {
+                report.rollback_failures.push(format!("agent {}", n));
+            }
+        }
+        for n in &installed_commands {
+            let p = old_path.join("commands").join(format!("{}.md", n));
+            if install_command(n, &p, commands_dir).is_err() {
+                report.rollback_failures.push(format!("command {}", n));
+            }
+        }
+        on_progress(CloneProgress::Done {
+            name: group.name.clone(),
+            success: false,
+            message: format!("rename failed: {}", e),
+        });
+        anyhow::bail!(
+            "fs::rename failed: {}. Rollback failures: {:?}",
+            e,
+            report.rollback_failures
+        );
+    }
+
+    // Re-scan and re-install.
+    let mut report = RenameReport::default();
+    let new_skills = scan_skills(&new_path);
+    for (n, sp) in &new_skills {
+        if installed_skills.contains(n) {
+            match install_skill(n, sp, skills_dir) {
+                Ok(()) => report.skills_relinked += 1,
+                Err(_) => report.relink_failures.push(format!("skill {}", n)),
+            }
+        }
+    }
+    let new_agents = scan_agents(&new_path);
+    for (n, sp) in &new_agents {
+        if installed_agents.contains(n) {
+            match install_agent(n, sp, agents_dir) {
+                Ok(()) => report.agents_relinked += 1,
+                Err(_) => report.relink_failures.push(format!("agent {}", n)),
+            }
+        }
+    }
+    let new_cmds = scan_commands(&new_path);
+    for (n, sp) in &new_cmds {
+        if installed_commands.contains(n) {
+            match install_command(n, sp, commands_dir) {
+                Ok(()) => report.commands_relinked += 1,
+                Err(_) => report.relink_failures.push(format!("command {}", n)),
+            }
+        }
+    }
+
+    let mut done_msg = format!(
+        "Renamed {} → {}; relinked {} skill(s), {} agent(s), {} command(s)",
+        group.name, new, report.skills_relinked, report.agents_relinked, report.commands_relinked
+    );
+    if !report.relink_failures.is_empty() {
+        done_msg.push_str(&format!(
+            "; relink failures: {}",
+            report.relink_failures.join(", ")
+        ));
+    }
+    on_progress(CloneProgress::Done {
+        name: new.to_string(),
+        success: true,
+        message: done_msg,
+    });
+
+    Ok(report)
+}
+
+#[cfg(test)]
+mod audit_fix_tests {
+    use super::*;
+
+    #[test]
+    fn repo_name_handles_trailing_slash_and_ssh() {
+        assert_eq!(repo_name_from_url("https://github.com/u/repo/"), "repo");
+        assert_eq!(repo_name_from_url("git@github.com:u/repo.git"), "repo");
+        assert_eq!(repo_name_from_url("https://host/"), "host");
+    }
+
+    #[test]
+    fn is_url_accepts_more_schemes() {
+        assert!(is_url("ssh://git@host/u/r"));
+        assert!(is_url("git://host/u/r"));
+        assert!(!is_url("./local"));
+    }
+
+    #[test]
+    fn https_and_ssh_forms_compare_equal() {
+        assert_eq!(
+            normalize_git_url("https://github.com/U/Repo.git"),
+            normalize_git_url("git@github.com:u/repo")
+        );
+        assert_eq!(
+            normalize_git_url("ssh://git@github.com/u/repo"),
+            normalize_git_url("https://github.com/u/repo/")
+        );
+    }
 }
 
 #[cfg(test)]
@@ -2438,326 +2809,4 @@ mod tests {
         assert!(agm.join("build.md").symlink_metadata().is_ok());
         assert!(agm.join("test.md").symlink_metadata().is_ok());
     }
-}
-
-/// Count unicode chars in the value of a top-level YAML key inside the slice of
-/// frontmatter lines (lines between the two `---` markers, excluding markers).
-fn extract_key_value_chars(lines: &[&str], key: &str) -> usize {
-    let prefix = format!("{}:", key);
-    for (i, line) in lines.iter().enumerate() {
-        if !line.starts_with(&prefix) {
-            continue;
-        }
-        let rest = &line[prefix.len()..];
-        let rest_trim = rest.trim();
-        if rest_trim == "|" || rest_trim == ">" {
-            // Block scalar — collect subsequent indented lines
-            let mut acc = String::new();
-            for cont in &lines[i + 1..] {
-                if cont.trim().is_empty() {
-                    if !acc.is_empty() {
-                        acc.push('\n');
-                    }
-                    continue;
-                }
-                let leading = cont.len() - cont.trim_start().len();
-                if leading == 0 {
-                    break;
-                }
-                if !acc.is_empty() {
-                    acc.push('\n');
-                }
-                acc.push_str(cont.trim_start());
-            }
-            return acc.chars().count();
-        }
-        // Inline scalar, possibly quoted
-        let mut v = rest_trim.to_string();
-        if (v.starts_with('"') && v.ends_with('"') && v.len() >= 2)
-            || (v.starts_with('\'') && v.ends_with('\'') && v.len() >= 2)
-        {
-            v = v[1..v.len() - 1].to_string();
-        }
-        return v.chars().count();
-    }
-    0
-}
-
-/// Compute the preload-char count for a skill: sum of `name` + `description`
-/// values in the SKILL.md YAML frontmatter. Returns 0 on any failure.
-pub fn skill_preload_chars(skill_path: &Path) -> usize {
-    let md = skill_path.join("SKILL.md");
-    let content = match fs::read_to_string(&md) {
-        Ok(c) => c,
-        Err(_) => return 0,
-    };
-    let mut iter = content.lines();
-    let first = match iter.next() {
-        Some(l) => l,
-        None => return 0,
-    };
-    if first.trim() != "---" {
-        return 0;
-    }
-    let mut fm_lines: Vec<&str> = Vec::new();
-    let mut terminated = false;
-    for line in iter.take(200) {
-        let t = line.trim();
-        if t == "---" || t == "..." {
-            terminated = true;
-            break;
-        }
-        fm_lines.push(line);
-    }
-    if !terminated {
-        return 0;
-    }
-    extract_key_value_chars(&fm_lines, "name") + extract_key_value_chars(&fm_lines, "description")
-}
-
-/// Count unicode chars in the whole file. Returns 0 on read error.
-pub fn file_char_count(path: &Path) -> usize {
-    fs::read_to_string(path)
-        .map(|s| s.chars().count())
-        .unwrap_or(0)
-}
-
-/// Resolve a `<target>` string to exactly one `SourceGroup`.
-/// Match priority: (1) exact directory name match; (2) normalized git URL match
-/// against repo origins (local sources skipped in step 2).
-pub fn resolve_source_target(
-    target: &str,
-    source_dir: &Path,
-    skills_dir: &Path,
-    agents_dir: &Path,
-    commands_dir: &Path,
-) -> anyhow::Result<SourceGroup> {
-    let groups = scan_all_sources(source_dir, skills_dir, agents_dir, commands_dir);
-    if groups.is_empty() {
-        anyhow::bail!("No sources found under {}", contract_tilde(source_dir));
-    }
-
-    // Step 1: exact directory-name match.
-    let by_name: Vec<&SourceGroup> = groups.iter().filter(|g| g.name == target).collect();
-    if by_name.len() == 1 {
-        return Ok(by_name[0].clone());
-    }
-    if by_name.len() > 1 {
-        let names: Vec<&str> = by_name.iter().map(|g| g.name.as_str()).collect();
-        anyhow::bail!(
-            "Ambiguous target '{}'; matches: {}",
-            target,
-            names.join(", ")
-        );
-    }
-
-    // Step 2: URL match (Repo only).
-    let target_canonical = normalize_git_source(target);
-    let target_norm = normalize_git_url(&target_canonical);
-    let by_url: Vec<&SourceGroup> = groups
-        .iter()
-        .filter(|g| match &g.kind {
-            SourceKind::Repo { url: Some(u) } => normalize_git_url(u) == target_norm,
-            _ => false,
-        })
-        .collect();
-    if by_url.len() == 1 {
-        return Ok(by_url[0].clone());
-    }
-    if by_url.len() > 1 {
-        let names: Vec<&str> = by_url.iter().map(|g| g.name.as_str()).collect();
-        anyhow::bail!(
-            "Multiple repos match URL '{}'; disambiguate by name: {}",
-            target,
-            names.join(", ")
-        );
-    }
-
-    let available: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
-    anyhow::bail!(
-        "No source matches '{}'. Available: {}",
-        target,
-        available.join(", ")
-    );
-}
-
-/// Validate a user-supplied source directory name.
-pub fn validate_source_name(name: &str) -> anyhow::Result<()> {
-    if name.is_empty() {
-        anyhow::bail!("source name must not be empty");
-    }
-    if name == "." || name == ".." {
-        anyhow::bail!("source name must not be '.' or '..'");
-    }
-    if name.contains('/') || name.contains('\\') {
-        anyhow::bail!("source name must not contain '/' or '\\\\'");
-    }
-    Ok(())
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct RenameReport {
-    pub skills_relinked: usize,
-    pub agents_relinked: usize,
-    pub commands_relinked: usize,
-    pub rollback_failures: Vec<String>,
-    pub relink_failures: Vec<String>,
-}
-
-pub fn rename_source(
-    old: &str,
-    new: &str,
-    source_dir: &Path,
-    skills_dir: &Path,
-    agents_dir: &Path,
-    commands_dir: &Path,
-    mut on_progress: impl FnMut(CloneProgress),
-) -> anyhow::Result<RenameReport> {
-    validate_source_name(new)?;
-
-    let group = resolve_source_target(old, source_dir, skills_dir, agents_dir, commands_dir)?;
-
-    // Determine old/new paths, including the local/ prefix if applicable.
-    let (old_path, new_path) = match &group.kind {
-        SourceKind::Local => (
-            source_dir.join("local").join(&group.name),
-            source_dir.join("local").join(new),
-        ),
-        _ => (source_dir.join(&group.name), source_dir.join(new)),
-    };
-
-    if new_path.exists() {
-        anyhow::bail!(
-            "Target '{}' already exists at {}",
-            new,
-            contract_tilde(&new_path)
-        );
-    }
-
-    on_progress(CloneProgress::Start {
-        name: group.name.clone(),
-        url: format!("→ {}", new),
-        action: CloneAction::Pull,
-    });
-
-    // Snapshot installed items.
-    let installed_skills: Vec<String> = group
-        .skills
-        .iter()
-        .filter(|s| s.install_status == SkillInstallStatus::Installed)
-        .map(|s| s.name.clone())
-        .collect();
-    let installed_agents: Vec<String> = group
-        .agents
-        .iter()
-        .filter(|a| a.install_status == SkillInstallStatus::Installed)
-        .map(|a| a.name.clone())
-        .collect();
-    let installed_commands: Vec<String> = group
-        .commands
-        .iter()
-        .filter(|c| c.install_status == SkillInstallStatus::Installed)
-        .map(|c| c.name.clone())
-        .collect();
-
-    // Uninstall from agm store.
-    for n in &installed_skills {
-        let _ = uninstall_skill(n, skills_dir);
-    }
-    for n in &installed_agents {
-        let _ = uninstall_agent(n, agents_dir);
-    }
-    for n in &installed_commands {
-        let _ = uninstall_command(n, commands_dir);
-    }
-
-    // uninstall_skill adds to the blocklist as a side-effect; clear it so
-    // that an interrupt between here and re-install can't leave skills
-    // silently blocklisted. install_skill on the rebuild will be a no-op
-    // w.r.t. the blocklist since the names are no longer present.
-    for n in &installed_skills {
-        blocklist_remove(skills_dir, n);
-    }
-
-    // fs::rename
-    if let Err(e) = fs::rename(&old_path, &new_path) {
-        // Best-effort rollback: re-install against old path.
-        let mut report = RenameReport::default();
-        for n in &installed_skills {
-            let p = old_path.join("skills").join(n);
-            if install_skill(n, &p, skills_dir).is_err() {
-                report.rollback_failures.push(format!("skill {}", n));
-            }
-        }
-        for n in &installed_agents {
-            let p = old_path.join("agents").join(format!("{}.md", n));
-            if install_agent(n, &p, agents_dir).is_err() {
-                report.rollback_failures.push(format!("agent {}", n));
-            }
-        }
-        for n in &installed_commands {
-            let p = old_path.join("commands").join(format!("{}.md", n));
-            if install_command(n, &p, commands_dir).is_err() {
-                report.rollback_failures.push(format!("command {}", n));
-            }
-        }
-        on_progress(CloneProgress::Done {
-            name: group.name.clone(),
-            success: false,
-            message: format!("rename failed: {}", e),
-        });
-        anyhow::bail!(
-            "fs::rename failed: {}. Rollback failures: {:?}",
-            e,
-            report.rollback_failures
-        );
-    }
-
-    // Re-scan and re-install.
-    let mut report = RenameReport::default();
-    let new_skills = scan_skills(&new_path);
-    for (n, sp) in &new_skills {
-        if installed_skills.contains(n) {
-            match install_skill(n, sp, skills_dir) {
-                Ok(()) => report.skills_relinked += 1,
-                Err(_) => report.relink_failures.push(format!("skill {}", n)),
-            }
-        }
-    }
-    let new_agents = scan_agents(&new_path);
-    for (n, sp) in &new_agents {
-        if installed_agents.contains(n) {
-            match install_agent(n, sp, agents_dir) {
-                Ok(()) => report.agents_relinked += 1,
-                Err(_) => report.relink_failures.push(format!("agent {}", n)),
-            }
-        }
-    }
-    let new_cmds = scan_commands(&new_path);
-    for (n, sp) in &new_cmds {
-        if installed_commands.contains(n) {
-            match install_command(n, sp, commands_dir) {
-                Ok(()) => report.commands_relinked += 1,
-                Err(_) => report.relink_failures.push(format!("command {}", n)),
-            }
-        }
-    }
-
-    let mut done_msg = format!(
-        "Renamed {} → {}; relinked {} skill(s), {} agent(s), {} command(s)",
-        group.name, new, report.skills_relinked, report.agents_relinked, report.commands_relinked
-    );
-    if !report.relink_failures.is_empty() {
-        done_msg.push_str(&format!(
-            "; relink failures: {}",
-            report.relink_failures.join(", ")
-        ));
-    }
-    on_progress(CloneProgress::Done {
-        name: new.to_string(),
-        success: true,
-        message: done_msg,
-    });
-
-    Ok(report)
 }

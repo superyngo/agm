@@ -151,15 +151,15 @@ mod tests {
     #[test]
     fn test_auto_scroll_default_true() {
         let buffer = LogBuffer::new(10);
-        assert_eq!(buffer.auto_scroll, true);
+        assert!(buffer.auto_scroll);
     }
 
     #[test]
     fn test_is_empty() {
         let mut buffer = LogBuffer::new(10);
-        assert_eq!(buffer.is_empty(), true);
+        assert!(buffer.is_empty());
 
         buffer.push(LogLevel::Info, "Test message");
-        assert_eq!(buffer.is_empty(), false);
+        assert!(!buffer.is_empty());
     }
 }
