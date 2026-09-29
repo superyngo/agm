@@ -238,7 +238,11 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
                             continue;
                         }
                     } else {
-                        fs::remove_dir_all(&skills_link)?;
+                        let mut msgs = Vec::new();
+                        skills::finish_migration_dir(&skills_link, &mut msgs)?;
+                        for m in &msgs {
+                            println!("{}", m);
+                        }
                     }
                 }
 
@@ -275,23 +279,19 @@ fn link_all(config: &config::Config, _config_path: Option<&std::path::Path>) -> 
                         }
                     }
                 } else if agents_link.is_dir() {
-                    let has_files = fs::read_dir(&agents_link)
-                        .map(|rd| rd.count() > 0)
-                        .unwrap_or(false);
-                    if has_files {
-                        if yes
-                            || prompt_yes_no(&format!(
-                                "Existing agents dir at {}. Remove and create link?",
-                                paths::contract_tilde(&agents_link)
-                            ))
-                        {
-                            fs::remove_dir_all(&agents_link)?;
-                        } else {
-                            println!("  {} Skipping agents link", "skip".yellow());
-                            continue;
-                        }
-                    } else {
-                        fs::remove_dir_all(&agents_link)?;
+                    let target = source_dir.join("agm_tools").join(key).join("agents");
+                    let (added, msgs) = skills::migrate_agents_dir_quiet(
+                        &agents_link,
+                        &target,
+                        &agm_agents,
+                        key,
+                        &tool.prompt_filename,
+                    )?;
+                    for m in &msgs {
+                        println!("{}", m);
+                    }
+                    if added > 0 {
+                        println!("  {} Migrated {} agent(s)", " ok ".green(), added);
                     }
                 }
 
@@ -388,7 +388,7 @@ fn unlink_all(config: &config::Config) -> anyhow::Result<()> {
                 && linker::remove_link(&skills_link, "skills", true)?
                 && agm_skills.is_dir()
             {
-                skills::copy_dir_all(&agm_skills, &skills_link)?;
+                skills::copy_dir_resolved(&agm_skills, &skills_link)?;
                 println!("  {} skills copied back", " ok ".green());
             }
         }
@@ -398,7 +398,7 @@ fn unlink_all(config: &config::Config) -> anyhow::Result<()> {
                 && linker::remove_link(&agents_link, "agents", true)?
                 && agm_agents.is_dir()
             {
-                skills::copy_dir_all(&agm_agents, &agents_link)?;
+                skills::copy_dir_resolved(&agm_agents, &agents_link)?;
                 println!("  {} agents copied back", " ok ".green());
             }
         }
@@ -408,7 +408,7 @@ fn unlink_all(config: &config::Config) -> anyhow::Result<()> {
                 && linker::remove_link(&commands_link, "commands", true)?
                 && agm_commands.is_dir()
             {
-                skills::copy_dir_all(&agm_commands, &commands_link)?;
+                skills::copy_dir_resolved(&agm_commands, &commands_link)?;
                 println!("  {} commands copied back", " ok ".green());
             }
         }

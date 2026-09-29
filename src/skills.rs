@@ -1162,6 +1162,44 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Remove a tool's directory after its recognised items were moved out.
+///
+/// Anything left behind (unrecognised files, or the tool's own copy of an item that
+/// already existed in the store) is user data, so a non-empty directory is renamed to
+/// `<dir>.agm-<timestamp>.bak` instead of being deleted, and the fact is reported.
+pub fn finish_migration_dir(dir: &Path, msgs: &mut Vec<String>) -> anyhow::Result<()> {
+    if dir.symlink_metadata().is_err() {
+        return Ok(());
+    }
+    if fs::remove_dir(dir).is_ok() {
+        return Ok(());
+    }
+    let ts = chrono::Utc::now().format("%Y%m%d_%H%M%S");
+    let base = dir.as_os_str().to_owned();
+    let mut backup = PathBuf::new();
+    for n in 0.. {
+        let mut name = base.clone();
+        name.push(format!(".agm-{}", ts));
+        if n > 0 {
+            name.push(format!("-{}", n));
+        }
+        name.push(".bak");
+        backup = PathBuf::from(name);
+        if backup.symlink_metadata().is_err() {
+            break;
+        }
+    }
+    fs::rename(dir, &backup).with_context(|| {
+        format!("Failed to back up leftover files in {}", dir.display())
+    })?;
+    msgs.push(format!(
+        "  kept unrecognised files from {} in {}",
+        contract_tilde(dir),
+        contract_tilde(&backup)
+    ));
+    Ok(())
+}
+
 /// Migrate a tool's skills directory to the agm store (TUI-safe).
 /// Moves skills from `skills_link` into `tool_skills_target` (under source_dir/agm_tools/{tool}/),
 /// then creates agm links pointing to the migrated locations.
@@ -1224,9 +1262,7 @@ pub fn migrate_tool_dir_quiet(
         migrated += 1;
     }
 
-    if skills_link.exists() {
-        fs::remove_dir_all(skills_link)?;
-    }
+    finish_migration_dir(skills_link, &mut msgs)?;
 
     Ok((migrated, msgs))
 }
@@ -1308,9 +1344,7 @@ pub fn migrate_agents_dir_quiet(
         migrated += 1;
     }
 
-    if agents_link.exists() {
-        fs::remove_dir_all(agents_link)?;
-    }
+    finish_migration_dir(agents_link, &mut msgs)?;
 
     Ok((migrated, msgs))
 }
@@ -1392,37 +1426,33 @@ pub fn migrate_commands_dir_quiet(
         migrated += 1;
     }
 
-    if commands_link.exists() {
-        fs::remove_dir_all(commands_link)?;
-    }
+    finish_migration_dir(commands_link, &mut msgs)?;
 
     Ok((migrated, msgs))
 }
 
-/// Recursively copy a directory, preserving symlinks.
-pub fn copy_dir_all(src: &Path, dst: &Path) -> anyhow::Result<()> {
+/// Recursively copy a directory, following symlinks so the destination holds real files.
+/// Broken links are skipped. Used by `unlink` so a tool keeps working after AGM steps out.
+pub fn copy_dir_resolved(src: &Path, dst: &Path) -> anyhow::Result<()> {
+    copy_dir_resolved_depth(src, dst, 0)
+}
+
+fn copy_dir_resolved_depth(src: &Path, dst: &Path, depth: usize) -> anyhow::Result<()> {
+    // Guards against symlink cycles.
+    if depth > 32 {
+        anyhow::bail!("directory nesting too deep at {}", src.display());
+    }
     fs::create_dir_all(dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-        let meta = fs::symlink_metadata(&src_path)?;
-        if platform::is_dir_link(&src_path) {
-            if let Some(target) = platform::read_dir_link_target(&src_path) {
-                if dst_path.symlink_metadata().is_ok() {
-                    platform::remove_link(&dst_path)?;
-                }
-                platform::link_dir(&target, &dst_path)?;
-            }
-        } else if meta.file_type().is_symlink() {
-            if let Ok(target) = fs::read_link(&src_path) {
-                if dst_path.symlink_metadata().is_ok() {
-                    fs::remove_file(&dst_path)?;
-                }
-                platform::link_file(&target, &dst_path)?;
-            }
-        } else if meta.is_dir() {
-            copy_dir_all(&src_path, &dst_path)?;
+        // metadata() follows symlinks; Err means a broken link.
+        let Ok(meta) = fs::metadata(&src_path) else {
+            continue;
+        };
+        if meta.is_dir() {
+            copy_dir_resolved_depth(&src_path, &dst_path, depth + 1)?;
         } else {
             fs::copy(&src_path, &dst_path)?;
         }
