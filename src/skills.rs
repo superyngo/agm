@@ -133,53 +133,11 @@ pub fn scan_skills(path: &Path) -> Vec<(String, PathBuf)> {
 /// Scan the `agents/` directory within a source path for `.md` files.
 /// Returns list of (agent_name_without_ext, full_path_to_md).
 pub fn scan_agents(path: &Path) -> Vec<(String, PathBuf)> {
-    let agents_dir = path.join("agents");
-    if !agents_dir.is_dir() {
-        return vec![];
-    }
-    let mut agents = Vec::new();
-    let Ok(entries) = fs::read_dir(&agents_dir) else {
-        return agents;
-    };
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if p.is_file() {
-            if let Some(ext) = p.extension() {
-                if ext == "md" {
-                    if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-                        agents.push((stem.to_string(), p));
-                    }
-                }
-            }
-        }
-    }
-    agents.sort_by(|a, b| a.0.cmp(&b.0));
-    agents
+    scan_md_items(path, FileItemKind::Agent)
 }
 
 pub fn scan_commands(path: &Path) -> Vec<(String, PathBuf)> {
-    let commands_dir = path.join("commands");
-    if !commands_dir.is_dir() {
-        return vec![];
-    }
-    let mut commands = Vec::new();
-    let Ok(entries) = fs::read_dir(&commands_dir) else {
-        return commands;
-    };
-    for entry in entries.flatten() {
-        let p = entry.path();
-        if p.is_file() {
-            if let Some(ext) = p.extension() {
-                if ext == "md" {
-                    if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
-                        commands.push((stem.to_string(), p));
-                    }
-                }
-            }
-        }
-    }
-    commands.sort_by(|a, b| a.0.cmp(&b.0));
-    commands
+    scan_md_items(path, FileItemKind::Command)
 }
 
 fn scan_skills_recursive(
@@ -275,80 +233,34 @@ pub fn unlink_skill(name: &str, skills_dir: &Path) -> anyhow::Result<()> {
 
 /// Install a single agent by creating a file symlink in the agm agents directory.
 pub fn install_agent(name: &str, source_path: &Path, agents_dir: &Path) -> anyhow::Result<()> {
-    fs::create_dir_all(agents_dir)?;
-    let link_name = format!("{}.md", name);
-    let link_path = agents_dir.join(&link_name);
-
-    if link_path.exists() || link_path.symlink_metadata().is_ok() {
-        if platform::same_file(&link_path, source_path).unwrap_or(false) {
-            return Ok(());
-        }
-        anyhow::bail!(
-            "Agent '{}' already exists (installed from another source). Uninstall it first.",
-            name
-        );
-    }
-
-    platform::link_file(source_path, &link_path)
-        .with_context(|| format!("Failed to install agent: {}", name))?;
-    blocklist_remove(agents_dir, &blocklist_key(BlockKind::Agent, name))?;
-    Ok(())
+    install_md_item(FileItemKind::Agent, name, source_path, agents_dir)
 }
 
 /// Install a single command by symlinking its .md file into the agm commands directory.
 pub fn install_command(name: &str, source_path: &Path, commands_dir: &Path) -> anyhow::Result<()> {
-    fs::create_dir_all(commands_dir)?;
-    let link_name = format!("{}.md", name);
-    let link_path = commands_dir.join(&link_name);
-
-    if link_path.exists() || link_path.symlink_metadata().is_ok() {
-        if platform::same_file(&link_path, source_path).unwrap_or(false) {
-            return Ok(());
-        }
-        anyhow::bail!(
-            "Command '{}' already exists (installed from another source). Uninstall it first.",
-            name
-        );
-    }
-
-    platform::link_file(source_path, &link_path)
-        .with_context(|| format!("Failed to install command: {}", name))?;
-    blocklist_remove(commands_dir, &blocklist_key(BlockKind::Command, name))?;
-    Ok(())
+    install_md_item(FileItemKind::Command, name, source_path, commands_dir)
 }
 
 /// Uninstall a single agent by removing its symlink from the agm agents directory.
 pub fn uninstall_agent(name: &str, agents_dir: &Path) -> anyhow::Result<()> {
-    unlink_agent(name, agents_dir)?;
+    unlink_md_item(name, agents_dir)?;
     blocklist_add(agents_dir, &blocklist_key(BlockKind::Agent, name))
 }
 
 /// Remove a agent's symlink without recording user intent (no blocklist entry).
 pub fn unlink_agent(name: &str, agents_dir: &Path) -> anyhow::Result<()> {
-    let link_name = format!("{}.md", name);
-    let link_path = agents_dir.join(&link_name);
-    if link_path.symlink_metadata().is_err() {
-        return Ok(());
-    }
-    platform::remove_link(&link_path)?;
-    Ok(())
+    unlink_md_item(name, agents_dir)
 }
 
 /// Uninstall a single command by removing its symlink from the agm commands directory.
 pub fn uninstall_command(name: &str, commands_dir: &Path) -> anyhow::Result<()> {
-    unlink_command(name, commands_dir)?;
+    unlink_md_item(name, commands_dir)?;
     blocklist_add(commands_dir, &blocklist_key(BlockKind::Command, name))
 }
 
 /// Remove a command's symlink without recording user intent (no blocklist entry).
 pub fn unlink_command(name: &str, commands_dir: &Path) -> anyhow::Result<()> {
-    let link_name = format!("{}.md", name);
-    let link_path = commands_dir.join(&link_name);
-    if link_path.symlink_metadata().is_err() {
-        return Ok(());
-    }
-    platform::remove_link(&link_path)?;
-    Ok(())
+    unlink_md_item(name, commands_dir)
 }
 
 /// Scan agm skills directory and remove any symlinks whose targets no longer exist.
@@ -373,17 +285,103 @@ pub fn prune_broken_skills(skills_dir: &Path) -> anyhow::Result<usize> {
     Ok(removed)
 }
 
-/// Scan agm agents directory and remove any symlinks whose targets no longer exist.
-pub fn prune_broken_agents(agents_dir: &Path) -> anyhow::Result<usize> {
-    if !agents_dir.is_dir() {
-        return Ok(0);
+/// Single-file (`.md`) Items. Agents and commands differ only in their directory name
+/// and label, so one implementation serves both.
+#[derive(Clone, Copy)]
+enum FileItemKind {
+    Agent,
+    Command,
+}
+
+impl FileItemKind {
+    /// Subdirectory of a source that holds these items.
+    fn subdir(self) -> &'static str {
+        match self {
+            FileItemKind::Agent => "agents",
+            FileItemKind::Command => "commands",
+        }
     }
 
+    fn title(self) -> &'static str {
+        match self {
+            FileItemKind::Agent => "Agent",
+            FileItemKind::Command => "Command",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            FileItemKind::Agent => "agent",
+            FileItemKind::Command => "command",
+        }
+    }
+}
+
+fn scan_md_items(path: &Path, kind: FileItemKind) -> Vec<(String, PathBuf)> {
+    let dir = path.join(kind.subdir());
+    let mut items = Vec::new();
+    let Ok(entries) = fs::read_dir(&dir) else {
+        return items;
+    };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_file() && p.extension().is_some_and(|e| e == "md") {
+            if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+                items.push((stem.to_string(), p));
+            }
+        }
+    }
+    items.sort_by(|a, b| a.0.cmp(&b.0));
+    items
+}
+
+fn install_md_item(
+    kind: FileItemKind,
+    name: &str,
+    source_path: &Path,
+    dir: &Path,
+) -> anyhow::Result<()> {
+    fs::create_dir_all(dir)?;
+    let link_path = dir.join(format!("{}.md", name));
+
+    if link_path.exists() || link_path.symlink_metadata().is_ok() {
+        if platform::same_file(&link_path, source_path).unwrap_or(false) {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "{} '{}' already exists (installed from another source). Uninstall it first.",
+            kind.label()
+                .replacen(|_| true, &kind.label()[..1].to_uppercase(), 1),
+            name
+        );
+    }
+
+    platform::link_file(source_path, &link_path)
+        .with_context(|| format!("Failed to install {}: {}", kind.label(), name))?;
+    let block = match kind {
+        FileItemKind::Agent => BlockKind::Agent,
+        FileItemKind::Command => BlockKind::Command,
+    };
+    blocklist_remove(dir, &blocklist_key(block, name))?;
+    Ok(())
+}
+
+fn unlink_md_item(name: &str, dir: &Path) -> anyhow::Result<()> {
+    let link_path = dir.join(format!("{}.md", name));
+    if link_path.symlink_metadata().is_err() {
+        return Ok(());
+    }
+    platform::remove_link(&link_path)?;
+    Ok(())
+}
+
+fn prune_broken_md_items(dir: &Path) -> anyhow::Result<usize> {
+    if !dir.is_dir() {
+        return Ok(0);
+    }
     let mut removed = 0;
-    for entry in fs::read_dir(agents_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        // Only consider .md files that are symlinks
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
         if path.extension().and_then(|e| e.to_str()) == Some("md")
             && path.symlink_metadata().is_ok()
             && !path.exists()
@@ -395,25 +393,25 @@ pub fn prune_broken_agents(agents_dir: &Path) -> anyhow::Result<usize> {
     Ok(removed)
 }
 
+fn check_md_install_status(name: &str, source_path: &Path, dir: &Path) -> SkillInstallStatus {
+    let link_path = dir.join(format!("{}.md", name));
+    if link_path.symlink_metadata().is_err() {
+        return SkillInstallStatus::NotInstalled;
+    }
+    if link_points_to(&link_path, source_path, false) {
+        return SkillInstallStatus::Installed;
+    }
+    SkillInstallStatus::Conflict
+}
+
+/// Scan agm agents directory and remove any symlinks whose targets no longer exist.
+pub fn prune_broken_agents(agents_dir: &Path) -> anyhow::Result<usize> {
+    prune_broken_md_items(agents_dir)
+}
+
 /// Scan agm commands directory and remove any symlinks whose targets no longer exist.
 pub fn prune_broken_commands(commands_dir: &Path) -> anyhow::Result<usize> {
-    if !commands_dir.is_dir() {
-        return Ok(0);
-    }
-
-    let mut removed = 0;
-    for entry in fs::read_dir(commands_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("md")
-            && path.symlink_metadata().is_ok()
-            && !path.exists()
-        {
-            platform::remove_link(&path)?;
-            removed += 1;
-        }
-    }
-    Ok(removed)
+    prune_broken_md_items(commands_dir)
 }
 
 /// Path to the uninstalled-skills blocklist file, stored alongside the skills dir.
@@ -487,15 +485,7 @@ fn check_agent_install_status(
     source_path: &Path,
     agents_dir: &Path,
 ) -> SkillInstallStatus {
-    let link_name = format!("{}.md", name);
-    let link_path = agents_dir.join(&link_name);
-    if link_path.symlink_metadata().is_err() {
-        return SkillInstallStatus::NotInstalled;
-    }
-    if link_points_to(&link_path, source_path, false) {
-        return SkillInstallStatus::Installed;
-    }
-    SkillInstallStatus::Conflict
+    check_md_install_status(name, source_path, agents_dir)
 }
 
 fn check_command_install_status(
@@ -503,15 +493,7 @@ fn check_command_install_status(
     source_path: &Path,
     commands_dir: &Path,
 ) -> SkillInstallStatus {
-    let link_name = format!("{}.md", name);
-    let link_path = commands_dir.join(&link_name);
-    if link_path.symlink_metadata().is_err() {
-        return SkillInstallStatus::NotInstalled;
-    }
-    if link_points_to(&link_path, source_path, false) {
-        return SkillInstallStatus::Installed;
-    }
-    SkillInstallStatus::Conflict
+    check_md_install_status(name, source_path, commands_dir)
 }
 
 pub fn is_url(source: &str) -> bool {
@@ -1323,6 +1305,24 @@ pub fn migrate_agents_dir_quiet(
     tool_key: &str,
     prompt_filename: &str,
 ) -> anyhow::Result<(usize, Vec<String>)> {
+    migrate_md_dir_quiet(
+        FileItemKind::Agent,
+        agents_link,
+        tool_agents_target,
+        agm_agents,
+        tool_key,
+        prompt_filename,
+    )
+}
+
+fn migrate_md_dir_quiet(
+    kind: FileItemKind,
+    agents_link: &Path,
+    tool_agents_target: &Path,
+    agm_agents: &Path,
+    tool_key: &str,
+    prompt_filename: &str,
+) -> anyhow::Result<(usize, Vec<String>)> {
     use anyhow::Context;
 
     let mut msgs = Vec::new();
@@ -1357,8 +1357,10 @@ pub fn migrate_agents_dir_quiet(
             let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or(&name);
             let prefixed = format!("{}_{}.md", tool_key, stem);
             msgs.push(format!(
-                "  agent '{}' already in agm, renaming to '{}'",
-                name, prefixed
+                "  {} '{}' already in agm, renaming to '{}'",
+                kind.label(),
+                name,
+                prefixed
             ));
             prefixed
         };
@@ -1369,8 +1371,13 @@ pub fn migrate_agents_dir_quiet(
         if dest.exists() {
             msgs.push(format!("  {} already in store, re-linking", effective_name));
         } else {
-            fs::rename(&src, &dest)
-                .with_context(|| format!("Failed to move agent '{}' to store", effective_name))?;
+            fs::rename(&src, &dest).with_context(|| {
+                format!(
+                    "Failed to move {} '{}' to store",
+                    kind.label(),
+                    effective_name
+                )
+            })?;
         }
 
         if link.symlink_metadata().is_ok() {
@@ -1383,8 +1390,13 @@ pub fn migrate_agents_dir_quiet(
             platform::remove_link(&link)?;
         }
 
-        platform::link_file(&dest, &link)
-            .with_context(|| format!("Failed to link agent '{}' into agm", effective_name))?;
+        platform::link_file(&dest, &link).with_context(|| {
+            format!(
+                "Failed to link {} '{}' into agm",
+                kind.label(),
+                effective_name
+            )
+        })?;
 
         msgs.push(format!("  {} → {}", effective_name, contract_tilde(&dest)));
         migrated += 1;
@@ -1405,76 +1417,14 @@ pub fn migrate_commands_dir_quiet(
     tool_key: &str,
     prompt_filename: &str,
 ) -> anyhow::Result<(usize, Vec<String>)> {
-    use anyhow::Context;
-
-    let mut msgs = Vec::new();
-    fs::create_dir_all(tool_commands_target)?;
-    fs::create_dir_all(agm_commands)?;
-
-    let mut migrated = 0;
-    let entries: Vec<_> = fs::read_dir(commands_link)?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            let p = e.path();
-            if !p.is_file() || p.extension().and_then(|x| x.to_str()) != Some("md") {
-                return false;
-            }
-            let fname = e.file_name().to_string_lossy().to_string();
-            // Skip the tool's prompt file and common non-command files
-            if !prompt_filename.is_empty() && fname == prompt_filename {
-                return false;
-            }
-            true
-        })
-        .collect();
-
-    for entry in &entries {
-        let file_name = entry.file_name();
-        let name = file_name.to_string_lossy().to_string();
-        let src = entry.path();
-
-        let effective_name = if !agm_commands.join(&name).exists() {
-            name.clone()
-        } else {
-            let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or(&name);
-            let prefixed = format!("{}_{}.md", tool_key, stem);
-            msgs.push(format!(
-                "  command '{}' already in agm, renaming to '{}'",
-                name, prefixed
-            ));
-            prefixed
-        };
-
-        let dest = tool_commands_target.join(&effective_name);
-        let link = agm_commands.join(&effective_name);
-
-        if dest.exists() {
-            msgs.push(format!("  {} already in store, re-linking", effective_name));
-        } else {
-            fs::rename(&src, &dest)
-                .with_context(|| format!("Failed to move command '{}' to store", effective_name))?;
-        }
-
-        if link.symlink_metadata().is_ok() {
-            let already_ok = platform::same_file(&link, &dest).unwrap_or(false);
-            if already_ok {
-                msgs.push(format!("  {} already linked", effective_name));
-                migrated += 1;
-                continue;
-            }
-            platform::remove_link(&link)?;
-        }
-
-        platform::link_file(&dest, &link)
-            .with_context(|| format!("Failed to link command '{}' into agm", effective_name))?;
-
-        msgs.push(format!("  {} → {}", effective_name, contract_tilde(&dest)));
-        migrated += 1;
-    }
-
-    finish_migration_dir(commands_link, &mut msgs)?;
-
-    Ok((migrated, msgs))
+    migrate_md_dir_quiet(
+        FileItemKind::Command,
+        commands_link,
+        tool_commands_target,
+        agm_commands,
+        tool_key,
+        prompt_filename,
+    )
 }
 
 /// Migrate a tool's real `skills`/`agents`/`commands` directory into the agm store.
