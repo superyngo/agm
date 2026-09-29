@@ -249,8 +249,18 @@ fn link_tool(config: &config::Config, key: &str, tool: &config::ToolConfig) -> a
         if config.agm.is_disabled(feature.key) {
             continue;
         }
-        let Some(link) = tool.resolved_link_path(feature.key) else {
-            continue;
+        let link = match tool.resolve_link(feature.key) {
+            config::LinkPath::Path(p) => p,
+            config::LinkPath::NotConfigured => continue,
+            config::LinkPath::CollidesWithConfigDir(dir) => {
+                println!(
+                    "  {} Skipping {}: link path resolves to config_dir ({})",
+                    "warn".yellow(),
+                    feature.key,
+                    paths::contract_tilde(&dir)
+                );
+                continue;
+            }
         };
         let source = feature_source(config, feature);
         prepare_link(config, key, tool, feature, &link, &source)?;
@@ -328,8 +338,18 @@ fn unlink_tool(config: &config::Config, tool: &config::ToolConfig) -> anyhow::Re
         if config.agm.is_disabled(feature.key) {
             continue;
         }
-        let Some(link) = tool.resolved_link_path(feature.key) else {
-            continue;
+        let link = match tool.resolve_link(feature.key) {
+            config::LinkPath::Path(p) => p,
+            config::LinkPath::NotConfigured => continue,
+            config::LinkPath::CollidesWithConfigDir(dir) => {
+                println!(
+                    "  {} Skipping {}: link path resolves to config_dir ({})",
+                    "warn".yellow(),
+                    feature.key,
+                    paths::contract_tilde(&dir)
+                );
+                continue;
+            }
         };
         let source = feature_source(config, feature);
         if linker::remove_link(&link, feature.key, feature.is_dir)?

@@ -49,6 +49,22 @@ pub fn same_file(a: &Path, b: &Path) -> io::Result<bool> {
     sys::same_file(a, b)
 }
 
+/// True where a file link is a hardlink that looks like a plain file (Windows), so a
+/// non-symlink file at a managed path is still one of our links.
+pub fn plain_file_may_be_link() -> bool {
+    sys::PLAIN_FILE_MAY_BE_LINK
+}
+
+/// True where a link can outlive (dangle after) deletion of its target.
+pub fn links_can_dangle() -> bool {
+    !sys::PLAIN_FILE_MAY_BE_LINK
+}
+
+/// Convert a display path to the platform's separator convention.
+pub fn native_separators(display: String) -> String {
+    sys::native_separators(display)
+}
+
 /// Default editor command when $EDITOR is unset.
 pub fn default_editor() -> &'static str {
     sys::DEFAULT_EDITOR
@@ -69,6 +85,11 @@ mod sys {
     use std::os::unix::fs as unix_fs;
 
     pub const DEFAULT_EDITOR: &str = "vi";
+    pub const PLAIN_FILE_MAY_BE_LINK: bool = false;
+
+    pub fn native_separators(display: String) -> String {
+        display
+    }
 
     pub fn link_dir(target: &Path, link_path: &Path) -> io::Result<()> {
         unix_fs::symlink(target, link_path)
@@ -112,6 +133,11 @@ mod sys {
     use std::fs;
 
     pub const DEFAULT_EDITOR: &str = "notepad";
+    pub const PLAIN_FILE_MAY_BE_LINK: bool = true;
+
+    pub fn native_separators(display: String) -> String {
+        display.replace('/', "\\")
+    }
 
     pub fn link_dir(target: &Path, link_path: &Path) -> io::Result<()> {
         junction::create(target, link_path)

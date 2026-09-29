@@ -39,11 +39,9 @@ cargo test -- --nocapture   # show println! output
 - **No printing below the interface layer.** Anything reachable from `src/tui/` must return
   messages instead of writing to stdout or stderr — see
   [`docs/adr/0005-ratatui-tui-as-primary-interface.md`](docs/adr/0005-ratatui-tui-as-primary-interface.md).
-  One known violation is tracked as BACKLOG B11.
 - **No `#[cfg(unix)]` / `#[cfg(windows)]` outside `src/platform.rs`** — see
   [`docs/adr/0003-platform-abstraction-for-windows-links.md`](docs/adr/0003-platform-abstraction-for-windows-links.md).
-  `#[cfg(test)]` is not a platform gate. Known violations are tracked as BACKLOG B11 — do not
-  add more.
+  `#[cfg(test)]` is not a platform gate.
 - **Never widen destruction.** `linker` refuses to overwrite real files and wrongly-targeted
   links; keep destructive handling in the caller, and keep it announced.
 - **Tests:** unit tests beside the code with `tempfile`; CLI behavior in `tests/` with

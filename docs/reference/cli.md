@@ -91,9 +91,8 @@ inherited, so it never corrupts the display.
 ## `agm source list`
 
 Prunes broken links first, then prints one block per **Source**: its kind (`Repo` with URL,
-`Local`, or `Migrated` from a tool), and each **Skill** and **Agent** with its **Install
-status** (commands are omitted, tracked in [BACKLOG](../plan/BACKLOG.md) B3; preload chars are
-not displayed).
+`Local`, or `Migrated` from a tool), and each **Skill**, **Agent** and **Command** with its
+**Install status** (preload chars are not displayed).
 
 ## `agm tool status`
 

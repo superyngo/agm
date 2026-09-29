@@ -55,7 +55,7 @@ All scrollable popups — info, log, Help / About — share:
 | `↑` / `k`, `↓` / `j` | Scroll one line |
 | `PgUp` / `PgDn` | Scroll one page |
 | `Home` / `End` | Scroll to top / bottom |
-| `Esc` / `⏎` / `␣` | Close (note: Log popup currently ignores `⏎`/`␣` and only closes on `o`/`Esc`, tracked in [BACKLOG](../plan/BACKLOG.md) B5) |
+| `Esc` / `⏎` / `␣` | Close (the Log popup also closes on `o`) |
 
 Popup-specific:
 
@@ -109,4 +109,4 @@ field — the enclosing mode decides what submit and cancel mean.
 ## Machine-checked claims
 
 None — this table is maintained by hand against `src/tui/`. The in-app Help panel (`?`) is
-generated from `src/tui/help.rs` and is the authority if the two ever disagree (note: help currently omits `Ctrl+C` for the Tool screen, tracked in [BACKLOG](../plan/BACKLOG.md) B6).
+generated from `src/tui/help.rs` and is the authority if the two ever disagree.

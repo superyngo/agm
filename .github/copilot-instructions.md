@@ -40,5 +40,5 @@ cargo test -- --nocapture   # show println! output
   change.
 - New document → add its row to the folder's `README.md` in the same commit.
 - Keep platform `#[cfg]` inside `src/platform.rs`; keep printing out of anything reachable from
-  `src/tui/` (known violations: BACKLOG B11 — do not add more).
+  `src/tui/`.
 - Prefer the smallest change that solves the problem, and match the surrounding style.

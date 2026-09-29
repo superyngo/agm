@@ -1,9 +1,8 @@
-use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use crate::paths::{contract_tilde, expand_path, expand_tilde};
+use crate::paths::{expand_path, expand_tilde};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -43,6 +42,15 @@ impl AgmConfig {
     pub fn is_disabled(&self, feature: &str) -> bool {
         self.disabled.iter().any(|d| d == feature)
     }
+}
+
+/// Outcome of resolving a tool's link path for one field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LinkPath {
+    Path(PathBuf),
+    NotConfigured,
+    /// The field resolves to the tool's config dir itself; carries that dir.
+    CollidesWithConfigDir(PathBuf),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -263,15 +271,24 @@ impl ToolConfig {
     /// - The resolved path would collide with `config_dir` itself
     ///   (e.g. field value is `""`, `"."`, or normalizes to the same path)
     pub fn resolved_link_path(&self, field: &str) -> Option<PathBuf> {
+        match self.resolve_link(field) {
+            LinkPath::Path(p) => Some(p),
+            LinkPath::NotConfigured | LinkPath::CollidesWithConfigDir(_) => None,
+        }
+    }
+
+    /// Like `resolved_link_path`, but says *why* there is no path so a caller that
+    /// talks to the user can warn. Never prints itself (it is reachable from the TUI).
+    pub fn resolve_link(&self, field: &str) -> LinkPath {
         if !self.is_field_configured(field) {
-            return None;
+            return LinkPath::NotConfigured;
         }
         let relative = match field {
             "prompt" => &self.prompt_filename,
             "skills" => &self.skills_dir,
             "agents" => &self.agents_dir,
             "commands" => &self.commands_dir,
-            _ => return None,
+            _ => return LinkPath::NotConfigured,
         };
         let config_dir = self.resolved_config_dir();
         let link_path = config_dir.join(relative);
@@ -289,15 +306,9 @@ impl ToolConfig {
             }
         });
         if canonical_link == canonical_config {
-            eprintln!(
-                "  {} Skipping {}: link path resolves to config_dir ({})",
-                "warn".yellow(),
-                field,
-                contract_tilde(&config_dir)
-            );
-            return None;
+            return LinkPath::CollidesWithConfigDir(config_dir);
         }
-        Some(link_path)
+        LinkPath::Path(link_path)
     }
 
     /// Check if the tool's config directory exists on disk

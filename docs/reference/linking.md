@@ -67,7 +67,6 @@ instead of writing to a terminal it owns. See [tui.md](tui.md).
 
 ## Machine-checked claims
 
-`src/linker.rs` unit tests cover creating and checking links against temp directories; however,
-`Broken`, create-refusal (`Wrong`/`Blocked`), and remove-refusal branches are currently untested
-(tracked in [BACKLOG](../plan/BACKLOG.md) B8). `src/platform.rs` unit tests cover the link primitives
+`src/linker.rs` unit tests cover creating and checking links against temp directories; including the `Broken`
+repair, create-refusal (`Wrong`/`Blocked`) and remove-refusal branches. `src/platform.rs` unit tests cover the link primitives
 for the current platform. Run with `cargo test`.

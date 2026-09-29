@@ -209,14 +209,11 @@ pub fn remove_link(link_path: &Path, label: &str, is_dir: bool) -> anyhow::Resul
         } else {
             // Not a symlink — on Windows, hardlinks appear as regular files.
             // Safe to remove since this is only called on known managed paths.
-            #[cfg(windows)]
-            {
+            if platform::plain_file_may_be_link() {
                 platform::remove_link(link_path)?;
                 println!("  {} {} removed", " ok ".green(), label);
                 Ok(true)
-            }
-            #[cfg(not(windows))]
-            {
+            } else {
                 println!("  {} {} is not a symlink, skipping", "warn".red(), label);
                 Ok(false)
             }
@@ -287,13 +284,10 @@ pub fn remove_link_quiet(
         platform::remove_link(link_path)?;
         Ok((true, format!("{} removed", label)))
     } else {
-        #[cfg(windows)]
-        {
+        if platform::plain_file_may_be_link() {
             platform::remove_link(link_path)?;
             Ok((true, format!("{} removed", label)))
-        }
-        #[cfg(not(windows))]
-        {
+        } else {
             Ok((false, format!("{} is not a symlink, skipping", label)))
         }
     }
@@ -428,5 +422,61 @@ mod resolve_tests {
         let link = t.path().join("link");
         platform::link_dir(Path::new("store"), &link).unwrap();
         assert_eq!(check_link(&link, &missing, true), LinkStatus::Broken);
+    }
+}
+
+#[cfg(test)]
+mod branch_tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn broken_link_is_repaired_by_create() {
+        let t = tempdir().unwrap();
+        let gone = t.path().join("gone");
+        let target = t.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+        let link = t.path().join("link");
+        platform::link_dir(&gone, &link).unwrap();
+        assert_eq!(
+            check_link(&link, &target, true),
+            LinkStatus::Wrong(gone.display().to_string())
+        );
+        // Now make the link's own target the expected one, then delete it: Broken.
+        platform::remove_link(&link).unwrap();
+        platform::link_dir(&target, &link).unwrap();
+        std::fs::remove_dir(&target).unwrap();
+        assert_eq!(check_link(&link, &target, true), LinkStatus::Broken);
+        // create_link on a Broken link removes and recreates it.
+        assert!(create_link(&link, &target, "x", true).unwrap());
+    }
+
+    #[test]
+    fn create_refuses_wrong_and_blocked() {
+        let t = tempdir().unwrap();
+        let expected = t.path().join("expected");
+        let other = t.path().join("other");
+        std::fs::create_dir(&expected).unwrap();
+        std::fs::create_dir(&other).unwrap();
+        let wrong = t.path().join("wrong");
+        platform::link_dir(&other, &wrong).unwrap();
+        assert!(!create_link(&wrong, &expected, "x", true).unwrap());
+        // the wrong link is untouched
+        assert!(platform::is_dir_link(&wrong));
+
+        let blocked = t.path().join("blocked");
+        std::fs::create_dir(&blocked).unwrap();
+        assert!(!create_link(&blocked, &expected, "x", true).unwrap());
+        assert!(blocked.is_dir() && !platform::is_dir_link(&blocked));
+    }
+
+    #[test]
+    fn remove_refuses_real_dir_and_missing() {
+        let t = tempdir().unwrap();
+        let real = t.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        assert!(!remove_link(&real, "x", true).unwrap());
+        assert!(real.is_dir());
+        assert!(!remove_link(&t.path().join("nope"), "x", true).unwrap());
     }
 }

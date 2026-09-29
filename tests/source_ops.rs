@@ -267,7 +267,6 @@ fn validate_names() {
 }
 
 #[test]
-#[ignore] // requires network to fail-resolve the broken hostname
 fn clone_or_pull_routes_errors_through_callback_not_stdout() {
     use agm::skills::{clone_or_pull, CloneProgress};
     use std::sync::{Arc, Mutex};
@@ -275,14 +274,14 @@ fn clone_or_pull_routes_errors_through_callback_not_stdout() {
     let d = tempdir().unwrap();
     let source_dir = d.path().join("src");
 
-    // Deliberately broken URL — git will fail. We assert:
+    // Deliberately broken local URL — git fails offline. We assert:
     //   (a) function returns Err
     //   (b) at least one GitLine { is_err: true } was emitted
     //   (c) a failing Done event was received
     let events = Arc::new(Mutex::new(Vec::<CloneProgress>::new()));
     let events_clone = events.clone();
     let res = clone_or_pull(
-        "https://invalid.example.invalid/no/such/repo.git",
+        "file:///nonexistent-agm-test/no/such/repo.git",
         &source_dir,
         None,
         move |evt| {

@@ -88,8 +88,7 @@ agents) and `agm source list`/`update` (all three).
 - `clone_or_pull` clones with `--depth 1` (shallow clone). When the target directory already exists,
   it pulls instead, reporting `CloneAction::Clone` or `Pull`. Git stdout/stderr are **piped and
   forwarded as `CloneProgress::GitLine` events**, never inherited, so a TUI's display is never
-  corrupted — pinned by `tests/source_ops.rs::clone_or_pull_routes_errors_through_callback_not_stdout`
-  (currently `#[ignore]`, tracked in [BACKLOG](../plan/BACKLOG.md) B10).
+  corrupted — pinned by `tests/source_ops.rs::clone_or_pull_routes_errors_through_callback_not_stdout`.
 - `add_local_copy` **scans before copying** and errors if the directory contains no **Skill**;
   the original directory is left untouched.
 
@@ -139,7 +138,7 @@ unrecognised files and conflicting copies are never lost.
 `tests/source_ops.rs` pins: `resolve_by_directory_name`, `resolve_by_git_url`,
 `resolve_no_match_errors`, `resolve_multi_url_match_errors`, `validate_names`,
 `rename_relinks_installed_skill_only`, `rename_with_invalid_new_name_errors`,
-`rename_target_exists_errors`, `clone_or_pull_routes_errors_through_callback_not_stdout` (ignored test, tracked in [BACKLOG](../plan/BACKLOG.md) B10),
+`rename_target_exists_errors`, `clone_or_pull_routes_errors_through_callback_not_stdout` (offline, uses a `file://` URL),
 `clone_progress_variants_constructible`, and the **Preload chars** rules
 (`preload_standard_keys`, `preload_quoted_values`, `preload_block_scalar`,
 `preload_no_frontmatter`, `preload_missing_key`, `preload_missing_file`, `file_char_count_basic`,

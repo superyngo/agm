@@ -42,10 +42,9 @@ config.rs  paths.rs     configuration, used by every layer above
 
 Nothing below `linker.rs` prints; `skills.rs` and the `*_quiet` linker functions return messages
 so the TUI can render them. `platform.rs` is the sole `#[cfg]` boundary — no other module
-branches on the operating system. Both are invariants (ADR 0003, ADR 0005) with known violations
-tracked in [BACKLOG](../plan/BACKLOG.md) B11: the `#[cfg(windows)]` branches in
-`linker::remove_link`, `linker::remove_link_quiet`, and `paths::contract_tilde`, two
-`#[cfg(unix)]` tests in `skills.rs`, and the `eprintln!` in `Config::resolved_link_path`.
+branches on the operating system (`platform::plain_file_may_be_link`, `links_can_dangle` and
+`native_separators` expose the few differences). Both are invariants (ADR 0003, ADR 0005).
+`Config::resolve_link` returns *why* a link path is unavailable instead of printing.
 
 ## Data flow — `agm tool link`
 

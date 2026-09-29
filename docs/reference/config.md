@@ -67,8 +67,8 @@ change, no recompile — see [`../adr/0001-config-only-tool-registry.md`](../adr
   `ToolState::get_group_files` (in `src/tui/tool.rs`): if an entry starts with `~` or is absolute,
   tilde is expanded; otherwise it is joined to `config_dir`. Absolute entries work for `settings`
   and `mcp` too, not only `auth`.
-- Note: `ToolConfig::resolve_path` in `src/config.rs` provides `$VAR` expansion and treats `/` or
-  `\` as absolute, but is currently test-only dead code (tracked in [BACKLOG](../plan/BACKLOG.md) B7).
+- `ToolConfig::resolve_path` is the one resolver (runtime and tests): `$VAR`/`~` expansion for
+  absolute, `~` and `$` entries; everything else, including `sub/dir/file`, is joined to `config_dir`.
 - A **Feature** whose resolved link path canonicalizes to the **Config dir** itself is refused
   with a warning, so a stray `"."` or `""` can never make AGM link over a tool's whole config
   directory.

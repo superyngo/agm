@@ -85,9 +85,7 @@ pub fn contract_tilde(path: &Path) -> String {
     if let Some(home) = dirs::home_dir() {
         if let Ok(rest) = path.strip_prefix(&home) {
             let display = format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display());
-            #[cfg(windows)]
-            let display = display.replace('/', "\\");
-            return display;
+            return crate::platform::native_separators(display);
         }
     }
     path.display().to_string()

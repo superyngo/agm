@@ -2242,9 +2242,11 @@ mod tests {
 
     // On Windows, link_file uses hard links which cannot become "broken"
     // when the source is deleted — the data persists through the hard link.
-    #[cfg(unix)]
     #[test]
     fn test_prune_broken_agents() {
+        if !platform::links_can_dangle() {
+            return;
+        }
         let tmp = TempDir::new().unwrap();
         let agents_dir = tmp.path().join("agents");
         fs::create_dir(&agents_dir).unwrap();
@@ -2726,9 +2728,11 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[cfg(unix)]
     #[test]
     fn test_prune_broken_commands() {
+        if !platform::links_can_dangle() {
+            return;
+        }
         let tmp = tempfile::tempdir().unwrap();
         let source = tmp.path().join("source");
         let agm = tmp.path().join("agm");
