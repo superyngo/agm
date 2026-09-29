@@ -45,6 +45,52 @@ pub enum LinkField {
     Commands,
 }
 
+impl LinkField {
+    pub fn from_key(key: &str) -> Option<Self> {
+        match key {
+            "prompt" => Some(LinkField::Prompt),
+            "skills" => Some(LinkField::Skills),
+            "agents" => Some(LinkField::Agents),
+            "commands" => Some(LinkField::Commands),
+            _ => None,
+        }
+    }
+
+    /// The central path this field links to, and whether it is a directory link.
+    pub fn target(&self, config: &Config) -> (PathBuf, bool) {
+        let (raw, is_dir) = match self {
+            LinkField::Prompt => (&config.agm.prompt_source, false),
+            LinkField::Skills => (&config.agm.skills_source, true),
+            LinkField::Agents => (&config.agm.agents_source, true),
+            LinkField::Commands => (&config.agm.commands_source, true),
+        };
+        (expand_tilde(raw), is_dir)
+    }
+
+    /// The **Feature** key used in config (`agm.disabled`, `resolved_link_path`).
+    pub fn key(&self) -> &'static str {
+        match self {
+            LinkField::Prompt => "prompt",
+            LinkField::Skills => "skills",
+            LinkField::Agents => "agents",
+            LinkField::Commands => "commands",
+        }
+    }
+}
+
+impl AgmField {
+    /// The **Feature** key, or `""` for the source directory (not a Feature).
+    pub fn feature_key(&self) -> &'static str {
+        match self {
+            AgmField::Prompt => "prompt",
+            AgmField::Skills => "skills",
+            AgmField::Agents => "agents",
+            AgmField::Commands => "commands",
+            AgmField::Source => "",
+        }
+    }
+}
+
 /// Which file-group type a row represents
 #[derive(Debug, Clone, PartialEq)]
 pub enum FileGroup {
@@ -133,12 +179,7 @@ pub fn build_rows(config: &Config, expanded: &HashSet<String>) -> Vec<ToolRow> {
                     LinkField::Commands,
                 ];
                 for field in &all_fields {
-                    let label = match field {
-                        LinkField::Prompt => "prompt",
-                        LinkField::Skills => "skills",
-                        LinkField::Agents => "agents",
-                        LinkField::Commands => "commands",
-                    };
+                    let label = field.key();
                     if tool.is_field_configured(label) {
                         rows.push(ToolRow::LinkItem {
                             tool_key: key.clone(),
@@ -511,12 +552,7 @@ impl ToolApp {
                             self.toggle_all_links(&tool_key.clone());
                         }
                         ToolRow::LinkItem { tool_key, field } => {
-                            let feature = match field {
-                                LinkField::Prompt => "prompt",
-                                LinkField::Skills => "skills",
-                                LinkField::Agents => "agents",
-                                LinkField::Commands => "commands",
-                            };
+                            let feature = field.key();
                             if self.config.agm.is_disabled(feature) {
                                 self.set_status(format!("{} is globally disabled", feature));
                             } else {
@@ -697,12 +733,7 @@ impl ToolApp {
             }
             KeyCode::Char('l') => {
                 if let Some(ctx) = link_ctx {
-                    let feature = match &ctx.field {
-                        LinkField::Prompt => "prompt",
-                        LinkField::Skills => "skills",
-                        LinkField::Agents => "agents",
-                        LinkField::Commands => "commands",
-                    };
+                    let feature = ctx.field.key();
                     if self.config.agm.is_disabled(feature) {
                         self.popup = None;
                         self.set_status(format!("{} is globally disabled", feature));
@@ -735,31 +766,9 @@ impl ToolApp {
         if !tool.is_installed() {
             return None;
         }
-        let label = match field {
-            LinkField::Prompt => "prompt",
-            LinkField::Skills => "skills",
-            LinkField::Agents => "agents",
-            LinkField::Commands => "commands",
-        };
+        let label = field.key();
         let link = tool.resolved_link_path(label)?;
-        let (target, is_dir) = match field {
-            LinkField::Prompt => {
-                let target = expand_tilde(&self.config.agm.prompt_source);
-                (target, false)
-            }
-            LinkField::Skills => {
-                let target = expand_tilde(&self.config.agm.skills_source);
-                (target, true)
-            }
-            LinkField::Agents => {
-                let target = expand_tilde(&self.config.agm.agents_source);
-                (target, true)
-            }
-            LinkField::Commands => {
-                let target = expand_tilde(&self.config.agm.commands_source);
-                (target, true)
-            }
-        };
+        let (target, is_dir) = field.target(&self.config);
         Some((link, target, is_dir, label))
     }
 
@@ -1017,12 +1026,7 @@ impl ToolApp {
         let fields: Vec<&LinkField> = all_fields
             .iter()
             .filter(|f| {
-                let name = match f {
-                    LinkField::Prompt => "prompt",
-                    LinkField::Skills => "skills",
-                    LinkField::Agents => "agents",
-                    LinkField::Commands => "commands",
-                };
+                let name = f.key();
                 !self.config.agm.is_disabled(name)
             })
             .collect();
@@ -1103,12 +1107,8 @@ impl ToolApp {
             return;
         }
 
-        let link_field = match feature {
-            "prompt" => LinkField::Prompt,
-            "skills" => LinkField::Skills,
-            "agents" => LinkField::Agents,
-            "commands" => LinkField::Commands,
-            _ => return,
+        let Some(link_field) = LinkField::from_key(feature) else {
+            return;
         };
 
         let tool_keys: Vec<String> = self
@@ -1291,13 +1291,7 @@ impl ToolApp {
 
         // Show disabled status for features
         if is_feature {
-            let feature_name = match field {
-                AgmField::Prompt => "prompt",
-                AgmField::Skills => "skills",
-                AgmField::Agents => "agents",
-                AgmField::Commands => "commands",
-                _ => "",
-            };
+            let feature_name = field.feature_key();
             if !feature_name.is_empty() {
                 let disabled = self.config.agm.is_disabled(feature_name);
                 content_lines.push(Line::from(vec![
@@ -2283,12 +2277,7 @@ fn render_row(
                 Some(t) => t,
                 None => return Line::from(""),
             };
-            let label = match field {
-                LinkField::Prompt => "prompt",
-                LinkField::Skills => "skills",
-                LinkField::Agents => "agents",
-                LinkField::Commands => "commands",
-            };
+            let label = field.key();
             let link_path = match tool.resolved_link_path(label) {
                 Some(p) => p,
                 None => return Line::from(""),
