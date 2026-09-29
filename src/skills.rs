@@ -211,6 +211,25 @@ fn scan_skills_recursive(
     }
 }
 
+/// Does the link at `link` point at `source`? Relative targets are resolved against the
+/// link's parent and both sides are canonicalised when possible.
+/// `is_dir` selects directory-link (symlink/junction) vs file-link detection.
+fn link_points_to(link: &Path, source: &Path, is_dir: bool) -> bool {
+    let raw = if is_dir {
+        if !platform::is_dir_link(link) {
+            return false;
+        }
+        platform::read_dir_link_target(link)
+    } else {
+        fs::read_link(link).ok()
+    };
+    let Some(raw) = raw else {
+        return false;
+    };
+    let actual = crate::linker::resolve_link_target(link, raw);
+    actual == fs::canonicalize(source).unwrap_or_else(|_| source.to_path_buf())
+}
+
 /// Install a single skill by creating a symlink in the agm skills directory.
 /// Errors if a skill with the same name from a different source already exists.
 pub fn install_skill(name: &str, source_path: &Path, skills_dir: &Path) -> anyhow::Result<()> {
@@ -219,15 +238,8 @@ pub fn install_skill(name: &str, source_path: &Path, skills_dir: &Path) -> anyho
     let link_path = skills_dir.join(name);
 
     if link_path.exists() || link_path.symlink_metadata().is_ok() {
-        if platform::is_dir_link(&link_path) {
-            if let Some(target) = platform::read_dir_link_target(&link_path) {
-                let target_canon = fs::canonicalize(&target).unwrap_or(target);
-                let source_canon =
-                    fs::canonicalize(source_path).unwrap_or(source_path.to_path_buf());
-                if target_canon == source_canon {
-                    return Ok(());
-                }
-            }
+        if link_points_to(&link_path, source_path, true) {
+            return Ok(());
         }
         anyhow::bail!(
             "Skill '{}' already exists (installed from another source). Uninstall it first.",
@@ -480,12 +492,8 @@ fn check_agent_install_status(
     if link_path.symlink_metadata().is_err() {
         return SkillInstallStatus::NotInstalled;
     }
-    if let Ok(target) = fs::read_link(&link_path) {
-        let target_canon = fs::canonicalize(&target).unwrap_or(target);
-        let source_canon = fs::canonicalize(source_path).unwrap_or(source_path.to_path_buf());
-        if target_canon == source_canon {
-            return SkillInstallStatus::Installed;
-        }
+    if link_points_to(&link_path, source_path, false) {
+        return SkillInstallStatus::Installed;
     }
     SkillInstallStatus::Conflict
 }
@@ -500,12 +508,8 @@ fn check_command_install_status(
     if link_path.symlink_metadata().is_err() {
         return SkillInstallStatus::NotInstalled;
     }
-    if let Ok(target) = fs::read_link(&link_path) {
-        let target_canon = fs::canonicalize(&target).unwrap_or(target);
-        let source_canon = fs::canonicalize(source_path).unwrap_or(source_path.to_path_buf());
-        if target_canon == source_canon {
-            return SkillInstallStatus::Installed;
-        }
+    if link_points_to(&link_path, source_path, false) {
+        return SkillInstallStatus::Installed;
     }
     SkillInstallStatus::Conflict
 }
@@ -752,14 +756,8 @@ fn check_install_status(name: &str, source_path: &Path, skills_dir: &Path) -> Sk
     if link_path.symlink_metadata().is_err() {
         return SkillInstallStatus::NotInstalled;
     }
-    if platform::is_dir_link(&link_path) {
-        if let Some(target) = platform::read_dir_link_target(&link_path) {
-            let target_canon = fs::canonicalize(&target).unwrap_or(target);
-            let source_canon = fs::canonicalize(source_path).unwrap_or(source_path.to_path_buf());
-            if target_canon == source_canon {
-                return SkillInstallStatus::Installed;
-            }
-        }
+    if link_points_to(&link_path, source_path, true) {
+        return SkillInstallStatus::Installed;
     }
     SkillInstallStatus::Conflict
 }
