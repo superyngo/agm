@@ -8,7 +8,7 @@ Current behavior lives in [`../reference/`](../reference/README.md).
 
 | Date | Document | Status |
 |---|---|---|
-| 2026-09-29 | [2026-09-29-code-audit.md](2026-09-29-code-audit.md) — code audit: integrity, clarity, simplicity (38 findings) | Mostly resolved — open: B43–B46 |
+| 2026-09-29 | [2026-09-29-code-audit.md](2026-09-29-code-audit.md) — code audit: integrity, clarity, simplicity (38 findings) | Resolved — BACKLOG B13–B50 closed |
 
 ## Landed
 
