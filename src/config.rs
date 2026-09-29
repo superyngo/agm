@@ -492,7 +492,7 @@ source_dir = "~/p/source"
             mcp: vec![],
         };
         // A drive-less path is absolute on Unix but joins to config_dir on Windows.
-        if platform::links_can_dangle() {
+        if crate::platform::links_can_dangle() {
             assert_eq!(
                 tool.resolve_path("/etc/some.conf"),
                 PathBuf::from("/etc/some.conf")
