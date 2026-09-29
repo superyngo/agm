@@ -161,8 +161,7 @@ fn feature_source(config: &config::Config, feature: &Feature) -> std::path::Path
 /// Resolve where an existing link points, relative links resolved against its parent.
 fn resolved_link_target(link: &std::path::Path) -> Option<std::path::PathBuf> {
     let target = fs::read_link(link).ok()?;
-    let resolved = link.parent().map(|p| p.join(&target)).unwrap_or(target);
-    Some(resolved.canonicalize().unwrap_or(resolved))
+    Some(linker::resolve_link_target(link, target))
 }
 
 /// Clear whatever is at `link` so a fresh link can be created, without destroying content:
@@ -367,6 +366,45 @@ fn unlink_all(config: &config::Config) -> anyhow::Result<()> {
     for_each_installed_tool(config, "Unlinking ", |_, tool| unlink_tool(config, tool))
 }
 
+/// Install every agent and command found under `root`; returns (agents, commands) installed.
+fn install_agents_and_commands(
+    root: &std::path::Path,
+    agents_dir: &std::path::Path,
+    commands_dir: &std::path::Path,
+) -> (usize, usize) {
+    let mut agents = 0;
+    for (n, p) in &skills::scan_agents(root) {
+        match skills::install_agent(n, p, agents_dir) {
+            Ok(()) => {
+                println!(
+                    "  {} agent {} → {}",
+                    " ok ".green(),
+                    n,
+                    paths::contract_tilde(p)
+                );
+                agents += 1;
+            }
+            Err(e) => println!("  {} agent {}: {}", "warn".yellow(), n, e),
+        }
+    }
+    let mut commands = 0;
+    for (n, p) in &skills::scan_commands(root) {
+        match skills::install_command(n, p, commands_dir) {
+            Ok(()) => {
+                println!(
+                    "  {} command {} → {}",
+                    " ok ".green(),
+                    n,
+                    paths::contract_tilde(p)
+                );
+                commands += 1;
+            }
+            Err(e) => println!("  {} command {}: {}", "warn".yellow(), n, e),
+        }
+    }
+    (agents, commands)
+}
+
 fn source_add(
     source: &str,
     name: Option<&str>,
@@ -374,6 +412,7 @@ fn source_add(
     source_dir: &std::path::Path,
     skills_dir: &std::path::Path,
     agents_dir: &std::path::Path,
+    commands_dir: &std::path::Path,
 ) -> anyhow::Result<()> {
     let normalized = skills::normalize_git_source(source);
     if skills::is_url(&normalized) {
@@ -392,25 +431,13 @@ fn source_add(
                 Err(e) => println!("  {} {}: {}", "warn".yellow(), n, e),
             }
         }
-        let mut agent_count = 0;
-        for (n, p) in &skills::scan_agents(&repo_path) {
-            match skills::install_agent(n, p, agents_dir) {
-                Ok(()) => {
-                    println!(
-                        "  {} agent {} → {}",
-                        " ok ".green(),
-                        n,
-                        paths::contract_tilde(p)
-                    );
-                    agent_count += 1;
-                }
-                Err(e) => println!("  {} agent {}: {}", "warn".yellow(), n, e),
-            }
-        }
+        let (agent_count, command_count) =
+            install_agents_and_commands(&repo_path, agents_dir, commands_dir);
         println!(
-            "\n{} skill(s), {} agent(s) installed from {}.",
+            "\n{} skill(s), {} agent(s), {} command(s) installed from {}.",
             count,
             agent_count,
+            command_count,
             paths::contract_tilde(&repo_path)
         );
     } else {
@@ -433,9 +460,13 @@ fn source_add(
                 Err(e) => println!("  {} {}: {}", "warn".yellow(), n, e),
             }
         }
+        let (agent_count, command_count) =
+            install_agents_and_commands(&dest, agents_dir, commands_dir);
         println!(
-            "\n{} skill(s) installed from {}.",
+            "\n{} skill(s), {} agent(s), {} command(s) installed from {}.",
             count,
+            agent_count,
+            command_count,
             paths::contract_tilde(&dest)
         );
     }
@@ -713,6 +744,7 @@ fn main() -> anyhow::Result<()> {
                     &source_dir,
                     &skills_dir,
                     &agents_dir,
+                    &commands_dir,
                 ),
                 Some(SourceAction::Update) => {
                     source_update(&skills_dir, &agents_dir, &commands_dir, &source_dir)

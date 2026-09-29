@@ -69,7 +69,7 @@ fn source_del_parses() {
 fn invalid_name_rejected_locally() {
     // We can at least confirm clap accepts the surface form; the validation
     // happens deeper. This test mainly guards that `-n` accepts a value.
-    Command::cargo_bin("agm")
+    let _ = Command::cargo_bin("agm")
         .unwrap()
         .args(["source", "add", "x", "-n", "foo"])
         .assert();

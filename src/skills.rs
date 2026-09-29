@@ -947,9 +947,9 @@ pub fn add_local_copy(
     }
 
     let pre_skills = scan_skills(source);
-    if pre_skills.is_empty() {
+    if pre_skills.is_empty() && scan_agents(source).is_empty() && scan_commands(source).is_empty() {
         anyhow::bail!(
-            "No skills found at {}. A skill must contain a SKILL.md file.",
+            "No skills, agents or commands found at {}. A skill must contain a SKILL.md file.",
             source.display()
         );
     }
@@ -1143,11 +1143,17 @@ pub fn clone_or_pull(
     }
 
     let skills = scan_skills(&repo_path);
-    if skills.is_empty() {
+    if skills.is_empty()
+        && scan_agents(&repo_path).is_empty()
+        && scan_commands(&repo_path).is_empty()
+    {
         if action == CloneAction::Clone {
             let _ = fs::remove_dir_all(&repo_path);
         }
-        anyhow::bail!("No skills found in {}. Clone removed.", url);
+        anyhow::bail!(
+            "No skills, agents or commands found in {}. Clone removed.",
+            url
+        );
     }
     Ok((repo_path, skills))
 }

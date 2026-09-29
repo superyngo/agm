@@ -1,7 +1,7 @@
 use anyhow::Context;
 use colored::Colorize;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::platform;
 
@@ -39,9 +39,7 @@ pub fn check_link(link_path: &Path, expected_target: &Path, is_dir: bool) -> Lin
 fn check_dir_link(link_path: &Path, expected_target: &Path) -> LinkStatus {
     match platform::read_dir_link_target(link_path) {
         Some(actual_target) => {
-            let actual = fs::canonicalize(&actual_target)
-                .or_else(|_| fs::canonicalize(link_path.parent().unwrap().join(&actual_target)))
-                .unwrap_or(actual_target);
+            let actual = resolve_link_target(link_path, actual_target);
             let expected =
                 fs::canonicalize(expected_target).unwrap_or_else(|_| expected_target.to_path_buf());
 
@@ -59,13 +57,26 @@ fn check_dir_link(link_path: &Path, expected_target: &Path) -> LinkStatus {
     }
 }
 
+/// Resolve a link's raw target to an absolute, canonical path when possible.
+/// Relative targets are resolved against the link's parent, so a missing target still
+/// compares equal to the expected path (reported as `Broken`, not `Wrong`).
+pub fn resolve_link_target(link_path: &Path, raw: PathBuf) -> PathBuf {
+    let joined = if raw.is_absolute() {
+        raw
+    } else {
+        link_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(raw)
+    };
+    fs::canonicalize(&joined).unwrap_or(joined)
+}
+
 /// Check a file link (symlink on Unix, hardlink on Windows).
 fn check_file_link(link_path: &Path, expected_target: &Path) -> LinkStatus {
     // Try read_link first (works for Unix symlinks)
     if let Ok(actual_target) = fs::read_link(link_path) {
-        let actual = fs::canonicalize(&actual_target)
-            .or_else(|_| fs::canonicalize(link_path.parent().unwrap().join(&actual_target)))
-            .unwrap_or(actual_target);
+        let actual = resolve_link_target(link_path, actual_target);
         let expected =
             fs::canonicalize(expected_target).unwrap_or_else(|_| expected_target.to_path_buf());
 
@@ -381,5 +392,19 @@ mod tests {
         assert!(removed);
         assert!(!link.exists());
         assert!(target.exists());
+    }
+}
+
+#[cfg(test)]
+mod resolve_tests {
+    use super::*;
+
+    #[test]
+    fn relative_missing_target_is_broken_not_wrong() {
+        let t = tempfile::tempdir().unwrap();
+        let missing = t.path().join("store");
+        let link = t.path().join("link");
+        platform::link_dir(Path::new("store"), &link).unwrap();
+        assert_eq!(check_link(&link, &missing, true), LinkStatus::Broken);
     }
 }
