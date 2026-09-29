@@ -231,14 +231,12 @@ impl ToolConfig {
 
     /// Resolve a tool-relative path string to an absolute PathBuf.
     ///
-    /// - Absolute-looking path (contains `/`, `\`, starts with `~`, or has drive letter) →
-    ///   expand `~` and `$VAR`
-    /// - Otherwise → relative to `config_dir`
-    #[allow(dead_code)]
+    /// - Absolute path, or one starting with `~` or `$` → expand `~` and `$VAR`
+    /// - Otherwise (including `sub/dir/file`) → relative to `config_dir`
     pub fn resolve_path(&self, path: &str) -> PathBuf {
-        let is_absolute = path.contains('/')
-            || path.contains('\\')
+        let is_absolute = std::path::Path::new(path).is_absolute()
             || path.starts_with('~')
+            || path.starts_with('$')
             || (path.len() >= 2 && path.as_bytes()[1] == b':');
         if is_absolute {
             expand_path(path)

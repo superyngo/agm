@@ -1513,22 +1513,12 @@ impl ToolApp {
             Some(t) => t,
             None => return vec![],
         };
-        let config_dir = expand_tilde(&tool.config_dir);
         let file_list: &[String] = match group {
             FileGroup::Settings => &tool.settings,
             FileGroup::Auth => &tool.auth,
             FileGroup::Mcp => &tool.mcp,
         };
-        file_list
-            .iter()
-            .map(|f| {
-                if std::path::Path::new(f).is_absolute() || f.starts_with('~') {
-                    expand_tilde(f)
-                } else {
-                    config_dir.join(f)
-                }
-            })
-            .collect()
+        file_list.iter().map(|f| tool.resolve_path(f)).collect()
     }
 
     // ------------------------------------------------------------------
@@ -1768,12 +1758,7 @@ impl ToolApp {
 // ---------------------------------------------------------------------------
 
 fn resolve_display(tool: &crate::config::ToolConfig, path: &str) -> String {
-    if std::path::Path::new(path).is_absolute() || path.starts_with('~') {
-        contract_tilde(&expand_tilde(path))
-    } else {
-        let full = expand_tilde(&tool.config_dir).join(path);
-        contract_tilde(&full)
-    }
+    contract_tilde(&tool.resolve_path(path))
 }
 
 fn link_status_spans(status: &LinkStatus, link_path: &std::path::Path) -> Vec<Span<'static>> {
