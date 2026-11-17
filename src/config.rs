@@ -107,7 +107,8 @@ impl Config {
         let content = toml::to_string_pretty(self)?;
         // Atomic write: temp file in the same directory, then rename.
         let staged = path.with_extension("toml.agm-tmp");
-        if let Err(e) = std::fs::write(&staged, content).and_then(|_| std::fs::rename(&staged, path))
+        if let Err(e) =
+            std::fs::write(&staged, content).and_then(|_| std::fs::rename(&staged, path))
         {
             let _ = std::fs::remove_file(&staged);
             return Err(e.into());
@@ -347,7 +348,9 @@ impl ToolConfig {
 fn section_bounds(lines: &[&str], tool_key: &str) -> Option<(usize, usize)> {
     let norm = |l: &str| -> String {
         let l = l.split('#').next().unwrap_or("");
-        l.chars().filter(|c| !c.is_whitespace() && *c != '"' && *c != '\'').collect()
+        l.chars()
+            .filter(|c| !c.is_whitespace() && *c != '"' && *c != '\'')
+            .collect()
     };
     let header = format!("[tools.{}]", tool_key);
     let sub_prefix = format!("[tools.{}.", tool_key);
@@ -607,7 +610,11 @@ source_dir = "~/p/source"
     fn test_new_tools_have_agents_dir() {
         let config = Config::default_config();
         for (key, tool) in &config.tools {
-            let expected = if key == "agy" { "config/agents" } else { "agents" };
+            let expected = if key == "agy" {
+                "config/agents"
+            } else {
+                "agents"
+            };
             assert_eq!(
                 tool.agents_dir, expected,
                 "Tool '{}' should have agents_dir = '{}'",
@@ -820,8 +827,13 @@ config_dir = "~/.copilot"
 
     #[test]
     fn test_section_header_variants_found() {
-        for header in ["[tools.codex] # note", "[ tools.codex ]", "[tools.\"codex\"]"] {
-            let text = format!("[agm]\nx = 1\n\n{header}\nname = \"C\"\n\n[tools.z]\nname = \"Z\"\n");
+        for header in [
+            "[tools.codex] # note",
+            "[ tools.codex ]",
+            "[tools.\"codex\"]",
+        ] {
+            let text =
+                format!("[agm]\nx = 1\n\n{header}\nname = \"C\"\n\n[tools.z]\nname = \"Z\"\n");
             assert!(extract_tool_section(&text, "codex").is_some(), "{header}");
         }
     }
