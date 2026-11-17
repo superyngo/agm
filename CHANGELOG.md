@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### 2026-11-17
+## [v0.17.1] - 2026-11-17
 - Fix Windows e2e failure `link_creates_missing_parent_of_nested_feature_dir`: add an `AGM_HOME` override (`paths::home_dir`) because `dirs::home_dir` ignores `$HOME` on Windows, so e2e tests ran against the real home; the e2e harness now sets it. Default behavior unchanged.
 
 ## [v0.17.0] - 2026-11-17
