@@ -466,7 +466,7 @@ source_dir = "~/p/source"
             commands_dir: "commands".into(),
             mcp: vec![],
         };
-        let home = dirs::home_dir().unwrap();
+        let home = crate::paths::home_dir().unwrap();
         assert_eq!(tool.resolved_config_dir(), home.join(".test-tool"));
     }
 
@@ -483,7 +483,7 @@ source_dir = "~/p/source"
             commands_dir: "".into(),
             mcp: vec![],
         };
-        let home = dirs::home_dir().unwrap();
+        let home = crate::paths::home_dir().unwrap();
         assert_eq!(
             tool.resolve_path("settings.json"),
             home.join(".test-tool/settings.json")
@@ -503,7 +503,7 @@ source_dir = "~/p/source"
             commands_dir: "".into(),
             mcp: vec![],
         };
-        let home = dirs::home_dir().unwrap();
+        let home = crate::paths::home_dir().unwrap();
         assert_eq!(
             tool.resolve_path("~/.claude.json"),
             home.join(".claude.json")

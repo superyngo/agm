@@ -1,6 +1,17 @@
 # Windows release build failure: `link_creates_missing_parent_of_nested_feature_dir`
 
-Status: diagnosing (Bug-Fix Protocol step 1). Not yet fixed — waiting on real Windows repro output.
+Status: root cause found and fixed locally (`AGM_HOME` override); awaiting Windows CI confirmation.
+
+## Resolution
+
+Not the audit's link code. On Windows `dirs::home_dir()` uses the Known Folder API and ignores
+`HOME`, so the e2e harness's `.env("HOME", tmp)` never isolated anything: `agm` ran against the
+real home. The other e2e tests only assert content survives (vacuously true in the temp dir); this
+test is the first to require links under the temp home, and CI's real home has no `.gemini`, so agy
+was "not installed" and skipped with exit 0. Fix: `paths::home_dir()` honours `AGM_HOME`; the e2e
+`agm()` helper sets it. Verified on the real binary: with `AGM_HOME` set, `config/skills` and
+`config/agents` Junctions are created under the temp home and the real home is untouched. The
+32-bit `agm init` `os error 2` is unconfirmed; likely the same real-home cause — recheck on CI.
 
 ## Symptom
 

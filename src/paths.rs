@@ -6,19 +6,28 @@ pub fn is_absolute_like(path: &str) -> bool {
     Path::new(path).is_absolute() || path.starts_with('~') || path.starts_with('$')
 }
 
+/// The home directory `~` expands to. `AGM_HOME` (when set and non-empty) overrides the platform
+/// default, so tests can isolate a throwaway home on Windows, where `dirs` ignores `HOME`.
+pub fn home_dir() -> Option<PathBuf> {
+    match std::env::var_os("AGM_HOME") {
+        Some(h) if !h.is_empty() => Some(PathBuf::from(h)),
+        _ => dirs::home_dir(),
+    }
+}
+
 /// Expand ~ to home directory in path strings.
 /// Handles `~/` (Unix), `~\` (Windows), and bare `~`.
 pub fn expand_tilde(path: &str) -> PathBuf {
     // Bare "~" → home directory itself
     if path == "~" {
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = home_dir() {
             return home;
         }
     }
     // "~/" or "~\" prefix → join remainder with home
     let rest = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\"));
     if let Some(rest) = rest {
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = home_dir() {
             return home.join(rest);
         }
     }
@@ -88,7 +97,7 @@ fn expand_env_vars(s: &str) -> String {
 
 /// Contract home directory to ~ for display
 pub fn contract_tilde(path: &Path) -> String {
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = home_dir() {
         if let Ok(rest) = path.strip_prefix(&home) {
             let display = format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display());
             return crate::platform::native_separators(display);
@@ -103,19 +112,19 @@ mod tests {
 
     #[test]
     fn test_expand_tilde() {
-        let home = dirs::home_dir().unwrap();
+        let home = home_dir().unwrap();
         assert_eq!(expand_tilde("~/.config/agm"), home.join(".config/agm"));
     }
 
     #[test]
     fn test_expand_tilde_bare() {
-        let home = dirs::home_dir().unwrap();
+        let home = home_dir().unwrap();
         assert_eq!(expand_tilde("~"), home);
     }
 
     #[test]
     fn test_expand_tilde_backslash() {
-        let home = dirs::home_dir().unwrap();
+        let home = home_dir().unwrap();
         assert_eq!(expand_tilde("~\\.config\\agm"), home.join(".config\\agm"));
     }
 
@@ -126,7 +135,7 @@ mod tests {
 
     #[test]
     fn test_expand_path_tilde() {
-        let home = dirs::home_dir().unwrap();
+        let home = home_dir().unwrap();
         assert_eq!(expand_path("~/.config/agm"), home.join(".config/agm"));
     }
 
@@ -158,7 +167,7 @@ mod tests {
 
     #[test]
     fn test_contract_tilde() {
-        let home = dirs::home_dir().unwrap();
+        let home = home_dir().unwrap();
         let path = home.join(".config").join("agm");
         let sep = std::path::MAIN_SEPARATOR;
         assert_eq!(contract_tilde(&path), format!("~{}.config{}agm", sep, sep));

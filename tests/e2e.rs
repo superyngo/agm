@@ -7,7 +7,7 @@ use tempfile::TempDir;
 
 fn agm(home: &Path) -> Command {
     let mut c = Command::cargo_bin("agm").unwrap();
-    c.env("HOME", home);
+    c.env("HOME", home).env("AGM_HOME", home);
     c
 }
 

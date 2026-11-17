@@ -13,8 +13,8 @@ after the code moves on.
 ## In progress
 
 - [`2026-11-17-windows-nested-feature-link.md`](2026-11-17-windows-nested-feature-link.md) —
-  Windows release CI fails `link_creates_missing_parent_of_nested_feature_dir`; root cause not
-  yet confirmed, repro steps handed off for a real Windows run.
+  Windows release CI fails `link_creates_missing_parent_of_nested_feature_dir`; root cause is
+  `dirs` ignoring `HOME` on Windows (e2e ran on the real home), fixed via `AGM_HOME`, awaiting CI.
 
 ## Landed
 

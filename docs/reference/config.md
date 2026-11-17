@@ -62,6 +62,9 @@ change, no recompile — see [`../adr/0001-config-only-tool-registry.md`](../adr
 - Every path string is stored with a `~/` prefix where applicable and expanded at use time
   (`paths::expand_tilde`, handling `~`, `~/`, and `~\`). Paths are contracted back to `~/…` for
   display (`paths::contract_tilde`).
+- `~` is `paths::home_dir()`: the `AGM_HOME` environment variable when set and non-empty,
+  otherwise the platform home (`dirs::home_dir`). `AGM_HOME` exists so tests can isolate a
+  throwaway home on Windows, where `dirs` ignores `$HOME`; normal use leaves it unset.
 - `ToolConfig::resolve_path` is the one resolver, used for the four **Feature** fields and for
   the `settings`, `auth`, `mcp` file groups (`ToolState::get_group_files` calls it). Absolute,
   `~` and `$VAR` entries are expanded; everything else, including `sub/dir/file`, is joined to

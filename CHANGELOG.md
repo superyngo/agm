@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-11-17
+- Fix Windows e2e failure `link_creates_missing_parent_of_nested_feature_dir`: add an `AGM_HOME` override (`paths::home_dir`) because `dirs::home_dir` ignores `$HOME` on Windows, so e2e tests ran against the real home; the e2e harness now sets it. Default behavior unchanged.
+
 ## [v0.17.0] - 2026-11-17
 - Add OMP (`~/.omp/agent`) to the default config; Antigravity CLI defaults now follow the official layout (`AGENTS.md`, `config/skills`, `config/agents`, no commands).
 - Fix config audit 2026-11-17 findings: nested Feature link dirs get their parent created (agy on CLI-only installs no longer fails); Feature fields expand `~`/`$VAR` via `resolve_path`; relative `..` Feature values are refused; `Config::save_to` is atomic; `[tools.x]` section editing tolerates comments/quotes and keeps spacing and trailing newline; OMP default `mcp = ["mcp.json"]`; dropped the Unix-wrong drive-letter heuristic. Migration: run `agm tool unlink` before switching an existing `[tools.agy]` to the new layout.
