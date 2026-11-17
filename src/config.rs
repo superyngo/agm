@@ -51,6 +51,8 @@ pub enum LinkPath {
     NotConfigured,
     /// The field resolves to the tool's config dir itself; carries that dir.
     CollidesWithConfigDir(PathBuf),
+    /// A relative field value climbs out of the config dir via `..`; carries that dir.
+    EscapesConfigDir(PathBuf),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,7 +105,13 @@ impl Config {
             std::fs::create_dir_all(parent)?;
         }
         let content = toml::to_string_pretty(self)?;
-        std::fs::write(path, content)?;
+        // Atomic write: temp file in the same directory, then rename.
+        let staged = path.with_extension("toml.agm-tmp");
+        if let Err(e) = std::fs::write(&staged, content).and_then(|_| std::fs::rename(&staged, path))
+        {
+            let _ = std::fs::remove_file(&staged);
+            return Err(e.into());
+        }
         Ok(())
     }
 
@@ -226,7 +234,7 @@ impl Config {
                 skills_dir: "skills".into(),
                 agents_dir: "agents".into(),
                 commands_dir: "commands".into(),
-                mcp: vec![],
+                mcp: vec!["mcp.json".into()],
             },
         );
 
@@ -256,26 +264,27 @@ impl ToolConfig {
     /// - Absolute path, or one starting with `~` or `$` → expand `~` and `$VAR`
     /// - Otherwise (including `sub/dir/file`) → relative to `config_dir`
     pub fn resolve_path(&self, path: &str) -> PathBuf {
-        let is_absolute = std::path::Path::new(path).is_absolute()
-            || path.starts_with('~')
-            || path.starts_with('$')
-            || (path.len() >= 2 && path.as_bytes()[1] == b':');
-        if is_absolute {
+        if crate::paths::is_absolute_like(path) {
             expand_path(path)
         } else {
             self.resolved_config_dir().join(path)
         }
     }
 
+    /// The raw value of a linkable field, if `field` names one.
+    fn field_value(&self, field: &str) -> Option<&str> {
+        match field {
+            "prompt" => Some(&self.prompt_filename),
+            "skills" => Some(&self.skills_dir),
+            "agents" => Some(&self.agents_dir),
+            "commands" => Some(&self.commands_dir),
+            _ => None,
+        }
+    }
+
     /// Check if a linkable field is configured (non-empty) for this tool.
     pub fn is_field_configured(&self, field: &str) -> bool {
-        match field {
-            "prompt" => !self.prompt_filename.is_empty(),
-            "skills" => !self.skills_dir.is_empty(),
-            "agents" => !self.agents_dir.is_empty(),
-            "commands" => !self.commands_dir.is_empty(),
-            _ => false,
-        }
+        self.field_value(field).is_some_and(|v| !v.is_empty())
     }
 
     /// Resolve the link path for a given field, with safety checks.
@@ -284,28 +293,30 @@ impl ToolConfig {
     /// - The field is not configured (empty string)
     /// - The resolved path would collide with `config_dir` itself
     ///   (e.g. field value is `""`, `"."`, or normalizes to the same path)
+    /// - A relative value climbs out of `config_dir` via `..`
     pub fn resolved_link_path(&self, field: &str) -> Option<PathBuf> {
         match self.resolve_link(field) {
             LinkPath::Path(p) => Some(p),
-            LinkPath::NotConfigured | LinkPath::CollidesWithConfigDir(_) => None,
+            _ => None,
         }
     }
 
     /// Like `resolved_link_path`, but says *why* there is no path so a caller that
     /// talks to the user can warn. Never prints itself (it is reachable from the TUI).
     pub fn resolve_link(&self, field: &str) -> LinkPath {
-        if !self.is_field_configured(field) {
-            return LinkPath::NotConfigured;
-        }
-        let relative = match field {
-            "prompt" => &self.prompt_filename,
-            "skills" => &self.skills_dir,
-            "agents" => &self.agents_dir,
-            "commands" => &self.commands_dir,
+        let relative = match self.field_value(field) {
+            Some(v) if !v.is_empty() => v,
             _ => return LinkPath::NotConfigured,
         };
         let config_dir = self.resolved_config_dir();
-        let link_path = config_dir.join(relative);
+        if !crate::paths::is_absolute_like(relative)
+            && std::path::Path::new(relative)
+                .components()
+                .any(|c| c == std::path::Component::ParentDir)
+        {
+            return LinkPath::EscapesConfigDir(config_dir);
+        }
+        let link_path = self.resolve_path(relative);
         let canonical_config = config_dir
             .canonicalize()
             .unwrap_or_else(|_| config_dir.clone());
@@ -331,60 +342,63 @@ impl ToolConfig {
     }
 }
 
+/// Line range `[start, end)` of the `[tools.{key}]` section, including its sub-tables.
+/// Header matching tolerates surrounding spaces, a quoted key, and a trailing comment.
+fn section_bounds(lines: &[&str], tool_key: &str) -> Option<(usize, usize)> {
+    let norm = |l: &str| -> String {
+        let l = l.split('#').next().unwrap_or("");
+        l.chars().filter(|c| !c.is_whitespace() && *c != '"' && *c != '\'').collect()
+    };
+    let header = format!("[tools.{}]", tool_key);
+    let sub_prefix = format!("[tools.{}.", tool_key);
+    let start = lines.iter().position(|l| norm(l) == header)?;
+    let end = lines
+        .iter()
+        .enumerate()
+        .skip(start + 1)
+        .find(|(_, l)| {
+            let n = norm(l);
+            n.starts_with('[') && !n.starts_with(&sub_prefix)
+        })
+        .map_or(lines.len(), |(i, _)| i);
+    Some((start, end))
+}
+
 /// Extract a [tools.{key}] section from raw config text.
 /// Returns (section_lines, start_line_index, end_line_index).
 pub fn extract_tool_section(
     config_text: &str,
     tool_key: &str,
 ) -> Option<(Vec<String>, usize, usize)> {
-    let header = format!("[tools.{}]", tool_key);
     let lines: Vec<&str> = config_text.lines().collect();
-
-    let start = lines.iter().position(|l| l.trim() == header)?;
-
-    let sub_prefix = format!("[tools.{}.", tool_key);
-    let mut end = lines.len();
-    for (i, line) in lines.iter().enumerate().skip(start + 1) {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && !trimmed.starts_with(&sub_prefix) {
-            end = i;
-            break;
-        }
-    }
-
+    let (start, end) = section_bounds(&lines, tool_key)?;
     let section_lines: Vec<String> = lines[start..end].iter().map(|l| l.to_string()).collect();
     Some((section_lines, start, end))
 }
 
 /// Replace a [tools.{key}] section in raw config text with new content.
+/// Keeps a blank line before the next section and the file's trailing newline.
 pub fn replace_tool_section(
     config_text: &str,
     tool_key: &str,
     new_section: &str,
 ) -> Option<String> {
-    let header = format!("[tools.{}]", tool_key);
     let lines: Vec<&str> = config_text.lines().collect();
-
-    let start = lines.iter().position(|l| l.trim() == header)?;
-
-    let sub_prefix = format!("[tools.{}.", tool_key);
-    let mut end = lines.len();
-    for (i, line) in lines.iter().enumerate().skip(start + 1) {
-        let trimmed = line.trim();
-        if trimmed.starts_with('[') && !trimmed.starts_with(&sub_prefix) {
-            end = i;
-            break;
-        }
-    }
+    let (start, end) = section_bounds(&lines, tool_key)?;
 
     let mut result: Vec<&str> = Vec::new();
     result.extend_from_slice(&lines[..start]);
-    for line in new_section.lines() {
-        result.push(line);
+    result.extend(new_section.trim_end().lines());
+    if end < lines.len() {
+        result.push("");
     }
     result.extend_from_slice(&lines[end..]);
 
-    Some(result.join("\n"))
+    let mut out = result.join("\n");
+    if config_text.ends_with('\n') {
+        out.push('\n');
+    }
+    Some(out)
 }
 
 #[cfg(test)]
@@ -765,5 +779,66 @@ config_dir = "~/.copilot"
     fn test_replace_tool_section_not_found() {
         let result = replace_tool_section(SAMPLE_CONFIG, "nonexistent", "whatever");
         assert!(result.is_none());
+    }
+    fn tool_in(dir: &std::path::Path) -> ToolConfig {
+        ToolConfig {
+            name: "T".into(),
+            config_dir: dir.to_string_lossy().into(),
+            settings: vec![],
+            auth: vec![],
+            prompt_filename: String::new(),
+            skills_dir: String::new(),
+            agents_dir: String::new(),
+            commands_dir: String::new(),
+            mcp: vec![],
+        }
+    }
+
+    #[test]
+    fn test_feature_field_expands_tilde() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut tool = tool_in(tmp.path());
+        tool.skills_dir = "~/elsewhere/skills".into();
+        assert_eq!(
+            tool.resolve_link("skills"),
+            LinkPath::Path(expand_tilde("~/elsewhere/skills"))
+        );
+    }
+
+    #[test]
+    fn test_feature_field_parent_dir_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut tool = tool_in(tmp.path());
+        tool.skills_dir = "../skills".into();
+        assert!(matches!(
+            tool.resolve_link("skills"),
+            LinkPath::EscapesConfigDir(_)
+        ));
+        tool.skills_dir = "a/../../b".into();
+        assert!(tool.resolved_link_path("skills").is_none());
+    }
+
+    #[test]
+    fn test_section_header_variants_found() {
+        for header in ["[tools.codex] # note", "[ tools.codex ]", "[tools.\"codex\"]"] {
+            let text = format!("[agm]\nx = 1\n\n{header}\nname = \"C\"\n\n[tools.z]\nname = \"Z\"\n");
+            assert!(extract_tool_section(&text, "codex").is_some(), "{header}");
+        }
+    }
+
+    #[test]
+    fn test_replace_keeps_spacing_and_trailing_newline() {
+        let text = "[tools.a]\nname = \"A\"\n\n[tools.b]\nname = \"B\"\n";
+        let out = replace_tool_section(text, "a", "[tools.a]\nname = \"A2\"\n").unwrap();
+        assert_eq!(out, "[tools.a]\nname = \"A2\"\n\n[tools.b]\nname = \"B\"\n");
+    }
+
+    #[test]
+    fn test_save_to_leaves_no_temp_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("config.toml");
+        Config::default_config().save_to(&path).unwrap();
+        assert!(Config::load_from(Some(path.clone())).is_ok());
+        assert!(!path.with_extension("toml.agm-tmp").exists());
     }
 }

@@ -1,5 +1,11 @@
 use std::path::{Path, PathBuf};
 
+/// True for values that resolve on their own instead of relative to a config dir:
+/// absolute paths (on Windows `Path::is_absolute` covers drive prefixes), `~…` and `$VAR…`.
+pub fn is_absolute_like(path: &str) -> bool {
+    Path::new(path).is_absolute() || path.starts_with('~') || path.starts_with('$')
+}
+
 /// Expand ~ to home directory in path strings.
 /// Handles `~/` (Unix), `~\` (Windows), and bare `~`.
 pub fn expand_tilde(path: &str) -> PathBuf {

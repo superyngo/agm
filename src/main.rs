@@ -261,6 +261,15 @@ fn link_tool(config: &config::Config, key: &str, tool: &config::ToolConfig) -> a
                 );
                 continue;
             }
+            config::LinkPath::EscapesConfigDir(dir) => {
+                println!(
+                    "  {} Skipping {}: relative link path leaves config_dir ({}) via `..`",
+                    "warn".yellow(),
+                    feature.key,
+                    paths::contract_tilde(&dir)
+                );
+                continue;
+            }
         };
         let source = feature_source(config, feature);
         prepare_link(config, key, tool, feature, &link, &source)?;
@@ -344,6 +353,15 @@ fn unlink_tool(config: &config::Config, tool: &config::ToolConfig) -> anyhow::Re
             config::LinkPath::CollidesWithConfigDir(dir) => {
                 println!(
                     "  {} Skipping {}: link path resolves to config_dir ({})",
+                    "warn".yellow(),
+                    feature.key,
+                    paths::contract_tilde(&dir)
+                );
+                continue;
+            }
+            config::LinkPath::EscapesConfigDir(dir) => {
+                println!(
+                    "  {} Skipping {}: relative link path leaves config_dir ({}) via `..`",
                     "warn".yellow(),
                     feature.key,
                     paths::contract_tilde(&dir)

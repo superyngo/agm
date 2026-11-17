@@ -175,6 +175,10 @@ pub fn create_link(
 }
 
 fn do_link(target: &Path, link_path: &Path, is_dir: bool) -> std::io::Result<()> {
+    // Nested Feature dirs (e.g. `config/skills`) may have no parent yet.
+    if let Some(parent) = link_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
     if is_dir {
         platform::link_dir(target, link_path)
     } else {

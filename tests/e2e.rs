@@ -129,3 +129,15 @@ fn link_links_commands_and_continues_past_a_failing_tool() {
             .is_symlink());
     }
 }
+
+#[test]
+fn link_creates_missing_parent_of_nested_feature_dir() {
+    let home = tempfile::tempdir().unwrap();
+    let h = home.path();
+    agm(h).arg("init").assert().success();
+    // Antigravity CLI without the App: `~/.gemini` exists, `~/.gemini/config` does not.
+    fs::create_dir_all(h.join(".gemini")).unwrap();
+    agm(h).args(["tool", "link"]).assert().success();
+    assert!(fs::symlink_metadata(h.join(".gemini/config/skills")).is_ok());
+    assert!(fs::symlink_metadata(h.join(".gemini/config/agents")).is_ok());
+}

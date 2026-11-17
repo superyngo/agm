@@ -1,6 +1,6 @@
 # Config module audit — 2026-11-17
 
-Status: Open
+Status: Resolved (2026-11-17)
 
 Scope: `src/config.rs`, `docs/reference/config.md`, and the paths they call into
 (`src/linker.rs`, `src/platform.rs`, `src/tui/tool.rs` section editing). Triggered right after

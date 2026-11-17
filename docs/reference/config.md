@@ -62,16 +62,16 @@ change, no recompile — see [`../adr/0001-config-only-tool-registry.md`](../adr
 - Every path string is stored with a `~/` prefix where applicable and expanded at use time
   (`paths::expand_tilde`, handling `~`, `~/`, and `~\`). Paths are contracted back to `~/…` for
   display (`paths::contract_tilde`).
-- The four **Feature** fields are resolved as `config_dir.join(<value>)`.
-- Runtime path resolution for tool file groups (`settings`, `auth`, `mcp`) is performed by
-  `ToolState::get_group_files` (in `src/tui/tool.rs`): if an entry starts with `~` or is absolute,
-  tilde is expanded; otherwise it is joined to `config_dir`. Absolute entries work for `settings`
-  and `mcp` too, not only `auth`.
-- `ToolConfig::resolve_path` is the one resolver (runtime and tests): `$VAR`/`~` expansion for
-  absolute, `~` and `$` entries; everything else, including `sub/dir/file`, is joined to `config_dir`.
+- `ToolConfig::resolve_path` is the one resolver, used for the four **Feature** fields and for
+  the `settings`, `auth`, `mcp` file groups (`ToolState::get_group_files` calls it). Absolute,
+  `~` and `$VAR` entries are expanded; everything else, including `sub/dir/file`, is joined to
+  `config_dir`.
 - A **Feature** whose resolved link path canonicalizes to the **Config dir** itself is refused
   with a warning, so a stray `"."` or `""` can never make AGM link over a tool's whole config
-  directory.
+  directory. A relative **Feature** value containing `..` is refused the same way.
+- Missing parent directories of a **Feature** link path (e.g. `~/.gemini/config/` for
+  `config/skills`) are created when the link is made.
+- `Config::save_to` writes atomically (temp file in the same directory, then rename).
 
 ## Pre-registered tools
 
@@ -80,6 +80,10 @@ change, no recompile — see [`../adr/0001-config-only-tool-registry.md`](../adr
 `~/.gemini/config/` (shared by the Antigravity App and CLI) and has no commands concept, so it uses
 `config/skills`, `config/agents` and an empty `commands_dir`.
 
+Defaults only seed a fresh config. To move an existing install to the new `agy` layout, run
+`agm tool unlink`, edit `[tools.agy]`, then `agm tool link`; otherwise the old
+`~/.gemini/skills` link stays and the CLI discovers the same skills twice.
+
 | Key | Name | `config_dir` | `prompt_filename` | `settings` | `auth` | `mcp` |
 |---|---|---|---|---|---|---|
 | `agy` | Antigravity CLI | `~/.gemini` | `AGENTS.md` | `antigravity-cli/settings.json` | `oauth_creds.json`, `accounts.json`, `google_accounts.json` | `config/mcp_config.json` |
@@ -87,9 +91,9 @@ change, no recompile — see [`../adr/0001-config-only-tool-registry.md`](../adr
 | `codex` | Codex | `~/.codex` | `AGENTS.md` | `config.toml` | `auth.json` | `config.toml` |
 | `copilot` | Copilot CLI | `~/.copilot` | `AGENTS.md` | `config.json` | `config.json` | `mcp-config.json` |
 | `crush` | Crush | `~/.config/crush` | `AGENTS.md` | `crush.json` | `crush.json` | `crush.json` |
+| `omp` | OMP | `~/.omp/agent` | `SYSTEM.md` | `config.yml` | — | `mcp.json` |
 | `opencode` | OpenCode | `~/.config/opencode` | `AGENTS.md` | `opencode.json` | `~/.local/share/opencode/auth.json` | `opencode.json` |
 | `pi` | Pi | `~/.pi/agent` | `AGENTS.md` | `settings.json` | `auth.json` | — |
-| `omp` | OMP | `~/.omp/agent` | `SYSTEM.md` | `config.yml` | — | — |
 
 ## `agm init`
 
@@ -103,5 +107,5 @@ Idempotent; every step reports `ok` or `skip`.
 ## Machine-checked claims
 
 `src/config.rs` unit tests cover the schema, defaults, `resolve_path`, `resolved_link_path`
-collision refusal, and `is_installed`. `src/paths.rs` unit tests cover tilde and `$VAR`
+collision and `..` refusal, section editing, atomic save, and `is_installed`. `src/paths.rs` unit tests cover tilde and `$VAR`
 expansion. Run with `cargo test`.
