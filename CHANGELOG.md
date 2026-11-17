@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-11-17
+- Add OMP (`~/.omp/agent`) to the default config; Antigravity CLI defaults now follow the official layout (`AGENTS.md`, `config/skills`, `config/agents`, no commands).
+
 ## [v0.16.1] - 2026-09-29
 ### Fixed
 - Fixed every open backlog finding from the 2026-09-29 code audit (B1–B50): safer migration and unlink (no silent deletions, `.bak` leftovers kept), per-kind blocklists, source rename, Source Manager state and footer, CLI link/unlink feature table including commands, `$`/`~` path resolution, link-path collision refusal, git output routed through progress callbacks, `#[cfg]` confined to `src/platform.rs`, and config-editor schema validation with atomic writes.

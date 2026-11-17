@@ -180,10 +180,10 @@ impl Config {
                     "accounts.json".into(),
                     "google_accounts.json".into(),
                 ],
-                prompt_filename: "GEMINI.md".into(),
-                skills_dir: "skills".into(),
-                agents_dir: "agents".into(),
-                commands_dir: "commands".into(),
+                prompt_filename: "AGENTS.md".into(),
+                skills_dir: "config/skills".into(),
+                agents_dir: "config/agents".into(),
+                commands_dir: String::new(),
                 mcp: vec!["config/mcp_config.json".into()],
             },
         );
@@ -209,6 +209,20 @@ impl Config {
                 settings: vec!["settings.json".into()],
                 auth: vec!["auth.json".into()],
                 prompt_filename: "AGENTS.md".into(),
+                skills_dir: "skills".into(),
+                agents_dir: "agents".into(),
+                commands_dir: "commands".into(),
+                mcp: vec![],
+            },
+        );
+        tools.insert(
+            "omp".into(),
+            ToolConfig {
+                name: "OMP".into(),
+                config_dir: "~/.omp/agent".into(),
+                settings: vec!["config.yml".into()],
+                auth: vec![],
+                prompt_filename: "SYSTEM.md".into(),
                 skills_dir: "skills".into(),
                 agents_dir: "agents".into(),
                 commands_dir: "commands".into(),
@@ -382,7 +396,8 @@ mod tests {
         let config = Config::default_config();
         let toml_str = toml::to_string_pretty(&config).unwrap();
         let parsed: Config = toml::from_str(&toml_str).unwrap();
-        assert_eq!(parsed.tools.len(), 7);
+        assert_eq!(parsed.tools.len(), 8);
+        assert!(parsed.tools.contains_key("omp"));
         assert!(parsed.tools.contains_key("claude"));
         assert!(parsed.tools.contains_key("codex"));
         assert!(parsed.tools.contains_key("copilot"));
@@ -578,10 +593,11 @@ source_dir = "~/p/source"
     fn test_new_tools_have_agents_dir() {
         let config = Config::default_config();
         for (key, tool) in &config.tools {
+            let expected = if key == "agy" { "config/agents" } else { "agents" };
             assert_eq!(
-                tool.agents_dir, "agents",
-                "Tool '{}' should have agents_dir = 'agents'",
-                key
+                tool.agents_dir, expected,
+                "Tool '{}' should have agents_dir = '{}'",
+                key, expected
             );
         }
     }

@@ -220,7 +220,7 @@ See [`CONTEXT.md`](CONTEXT.md) for the documentation index, or
 
 ## Supported Tools
 
-Out of the box support for 7 tools:
+Out of the box support for 8 tools:
 - Claude Code (`~/.claude`)
 - Codex CLI (`~/.codex`)
 - Copilot CLI (`~/.copilot`)
@@ -228,6 +228,7 @@ Out of the box support for 7 tools:
 - Antigravity CLI (`~/.gemini`)
 - OpenCode (`~/.config/opencode`)
 - Pi (`~/.pi/agent`)
+- OMP (`~/.omp/agent`)
 
 Add more tools by editing `config.toml` - no code changes needed!
 

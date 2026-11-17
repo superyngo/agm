@@ -75,18 +75,21 @@ change, no recompile — see [`../adr/0001-config-only-tool-registry.md`](../adr
 
 ## Pre-registered tools
 
-`Config::default_config` ships seven tools. All seven use `skills`, `agents`, and `commands` as
-their **Feature** directory names.
+`Config::default_config` ships eight tools. All use `skills`, `agents`, and `commands` as their
+**Feature** directory names, except `agy`: Antigravity reads personal skills and agents from
+`~/.gemini/config/` (shared by the Antigravity App and CLI) and has no commands concept, so it uses
+`config/skills`, `config/agents` and an empty `commands_dir`.
 
 | Key | Name | `config_dir` | `prompt_filename` | `settings` | `auth` | `mcp` |
 |---|---|---|---|---|---|---|
-| `agy` | Antigravity CLI | `~/.gemini` | `GEMINI.md` | `antigravity-cli/settings.json` | `oauth_creds.json`, `accounts.json`, `google_accounts.json` | `config/mcp_config.json` |
+| `agy` | Antigravity CLI | `~/.gemini` | `AGENTS.md` | `antigravity-cli/settings.json` | `oauth_creds.json`, `accounts.json`, `google_accounts.json` | `config/mcp_config.json` |
 | `claude` | Claude Code | `~/.claude` | `CLAUDE.md` | `~/.claude.json`, `settings.json`, `settings.local.json` | `.credentials.json` | `settings.json` |
 | `codex` | Codex | `~/.codex` | `AGENTS.md` | `config.toml` | `auth.json` | `config.toml` |
 | `copilot` | Copilot CLI | `~/.copilot` | `AGENTS.md` | `config.json` | `config.json` | `mcp-config.json` |
 | `crush` | Crush | `~/.config/crush` | `AGENTS.md` | `crush.json` | `crush.json` | `crush.json` |
 | `opencode` | OpenCode | `~/.config/opencode` | `AGENTS.md` | `opencode.json` | `~/.local/share/opencode/auth.json` | `opencode.json` |
 | `pi` | Pi | `~/.pi/agent` | `AGENTS.md` | `settings.json` | `auth.json` | — |
+| `omp` | OMP | `~/.omp/agent` | `SYSTEM.md` | `config.yml` | — | — |
 
 ## `agm init`
 
