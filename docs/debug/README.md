@@ -12,10 +12,10 @@ after the code moves on.
 
 ## In progress
 
-- [`2026-11-17-windows-nested-feature-link.md`](2026-11-17-windows-nested-feature-link.md) —
-  `In progress` — Windows release CI fails `link_creates_missing_parent_of_nested_feature_dir`; root cause is
-  `dirs` ignoring `HOME` on Windows (e2e ran on the real home), fixed via `AGM_HOME`, awaiting CI.
+_None._
 
 ## Landed
 
-_None yet._
+| Date | Document | Status |
+|---|---|---|
+| 2026-11-17 | [2026-11-17-windows-nested-feature-link.md](2026-11-17-windows-nested-feature-link.md) | Resolved (2026-11-17) |

@@ -1,5 +1,5 @@
 # Backlog
-Status: In progress
+Status: Resolved (2026-11-20)
 
 The one living record of open work. Rows move to Done with the commit that closed them and are
 never deleted. Evidence is file + symbol, never a line number. `Verified` is the date the row was
@@ -9,7 +9,6 @@ last checked against the tree — not when it was opened.
 
 | ID | Opened | Verified | Pri | Finding | Evidence | Effort | Acceptance |
 |---|---|---|---|---|---|---|---|
-| B51 | 2026-11-17 | 2026-11-20 | P1 | v0.17.0 Windows release jobs (`x86_64`/`i686-pc-windows-msvc`) fail: the nested `agy` feature link `~/.gemini/config/skills` is not created although `agm tool link` exits 0. Diagnosis: [debug note](../debug/2026-11-17-windows-nested-feature-link.md) | `tests/e2e.rs` `link_creates_missing_parent_of_nested_feature_dir`; `src/main.rs` `link_tool`; `src/config.rs` `ToolConfig::resolve_link`; `src/linker.rs` `do_link` | M | Both Windows jobs of `.github/workflows/release.yml` pass `cargo test --test e2e` on a new tag |
 
 ## Pending verification
 
@@ -23,7 +22,6 @@ _None._
 
 | Item | Why not now | Trigger | Re-read |
 |---|---|---|---|
-| B52: `link_migrates_existing_agents_instead_of_deleting` failed only on `i686-pc-windows-msvc` (`agm.exe init` → `os error 2`) in the v0.17.0 run; `tests/e2e.rs` | Uninvestigated; may be CI flakiness, and B51 must be fixed first ([debug note](../debug/2026-11-17-windows-nested-feature-link.md) §Related) | Fails again on the i686 job after B51 lands | 2026-11-20 |
 | B53: `src/skills.rs` module split not done (residual of B50 / audit §S8) | Tests already moved to the end; a split is churn without a feature driving it | Next feature that adds a responsibility to `src/skills.rs` | 2026-11-20 |
 | B54: blocked-link orchestration still lives in the Tool Manager only (`src/tui/tool.rs` `ToolApp::handle_blocked_link`) — residual of B45 / audit §S3 | Migration dispatch and TOML splicing are shared; the CLI path works | Next change to blocked-link handling in either front-end | 2026-11-20 |
 | B55: linear render/hint builders slightly over the 100-line lint — residual of B46 / audit §S4 | Linear builders; splitting them adds indirection | `clippy::too_many_lines` enabled, or a builder grows further | 2026-11-20 |
@@ -81,3 +79,5 @@ _None._
 | B44 | S2: The four Features are hand-unrolled | `441fe9d` |
 | B45 | S3: Orchestration lives in two front-ends (residual → Watching B54) | `1190538` |
 | B46 | S4: giant functions (residual → Watching B55) | `42cbda1` |
+| B51 | v0.17.0 Windows release jobs failed `link_creates_missing_parent_of_nested_feature_dir`: `dirs::home_dir` ignores `HOME` on Windows, so e2e ran on the real home ([debug note](../debug/2026-11-17-windows-nested-feature-link.md)); verified by the green v0.17.1 Release Build run 44029347488 | `23e9bca` |
+| B52 | `link_migrates_existing_agents_instead_of_deleting` failed only on `i686-pc-windows-msvc` in the v0.17.0 run; same real-home cause, i686 job green in the v0.17.1 run | `23e9bca` |
