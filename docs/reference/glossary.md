@@ -6,13 +6,13 @@ same commit.
 
 **Tool**:
 An AI coding agent CLI that AGM manages — Claude Code, Codex, Copilot CLI, Crush, Antigravity
-CLI, OpenCode, Pi. A **Tool** exists because it has a `[tools.<key>]` entry in the config; it is
+CLI, OpenCode, Pi, OMP. A **Tool** exists because it has a `[tools.<key>]` entry in the config; it is
 *installed* when its **Config dir** exists on disk. Represented by `ToolConfig`.
 _Avoid_: Client, agent (an **Agent** is a different thing), CLI.
 
 **Tool key**:
 The short lowercase identifier a **Tool** is addressed by — `claude`, `codex`, `copilot`,
-`crush`, `agy`, `opencode`, `pi`. It is the `BTreeMap` key under `[tools.<key>]`, distinct from
+`crush`, `agy`, `opencode`, `pi`, `omp`. It is the `BTreeMap` key under `[tools.<key>]`, distinct from
 the human-readable `name` field ("Claude Code").
 _Avoid_: Tool id, slug.
 

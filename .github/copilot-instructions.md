@@ -34,11 +34,4 @@ cargo test -- --nocapture   # show println! output
 
 ## Conduct
 
-- Behavior change → update the matching `docs/reference/` file in the same commit.
-- New term → add its glossary entry in the same commit.
-- Landed documents in `docs/spec|plan|debug|audit/` are frozen; only their `Status:` line may
-  change.
-- New document → add its row to the folder's `README.md` in the same commit.
-- Keep platform `#[cfg]` inside `src/platform.rs`; keep printing out of anything reachable from
-  `src/tui/`.
-- Prefer the smallest change that solves the problem, and match the surrounding style.
+Follow the conduct rules in [`../AGENTS.md`](../AGENTS.md) §Conduct — the single copy.

@@ -32,7 +32,7 @@ possibly flaky/unrelated; keep an eye on it after the main fix.)
 CI run: https://github.com/superyngo/agm/actions/runs/44013045653 (tag `v0.17.0`).
 Linux/macOS jobs and all other Windows e2e tests in the same run passed (5/6, 4/6 on 32-bit).
 
-## The test (tests/e2e.rs:134-143)
+## The test (`tests/e2e.rs` `link_creates_missing_parent_of_nested_feature_dir`)
 
 ```rust
 #[test]
@@ -61,7 +61,7 @@ fn do_link(target: &Path, link_path: &Path, is_dir: bool) -> std::io::Result<()>
 }
 ```
 
-`agy` (Antigravity CLI, `src/config.rs:181-198`) is the only tool whose `skills_dir`/`agents_dir`
+`agy` (Antigravity CLI, `src/config.rs` `Config::default_config`, `"agy"` entry) is the only tool whose `skills_dir`/`agents_dir`
 are nested (`"config/skills"`, `"config/agents"`) instead of a single path component — this is
 the only tool that exercises this code path at all.
 
@@ -75,7 +75,7 @@ would panic with a *different* message showing the process's stdout/stderr, like
 `link_migrates_existing_agents_instead_of_deleting` failure above does).
 
 So the "skills" feature link for `agy` was **silently skipped** without error, most likely via a
-`continue` in `link_tool` (`src/main.rs:247-279`):
+`continue` in `link_tool` (`src/main.rs` `link_tool`):
 
 ```rust
 let link = match tool.resolve_link(feature.key) {
@@ -92,8 +92,8 @@ that stdout was silently discarded by `cargo test` — we have no evidence of wh
 
 ## Hypotheses considered and NOT confirmed by static reading
 
-Traced `resolve_link` (`src/config.rs:307-338`), `resolved_config_dir`/`resolve_path`
-(`src/config.rs:259-273`), `paths::expand_tilde`/`is_absolute_like` (`src/paths.rs`), and
+Traced `resolve_link` (`src/config.rs` `ToolConfig::resolve_link`), `resolved_config_dir`/`resolve_path`
+(`src/config.rs` `ToolConfig::resolved_config_dir`, `ToolConfig::resolve_path`), `paths::expand_tilde`/`is_absolute_like` (`src/paths.rs`), and
 Windows's `junction::create` internals (crate `junction = "1.4.2"`, which does
 `fs::create_dir(junction)` — note: **not** `create_dir_all`, requires the immediate parent to
 already exist, which `do_link` ensures) — none of this reveals an obvious Windows-only branch

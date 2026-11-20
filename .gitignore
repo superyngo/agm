@@ -14,6 +14,5 @@
 .DS_Store
 Thumbs.db
 
-# Scratch: loose files stay local, archived tarballs are kept
-docs/tmp/
-!docs/tmp/archive/
+# Scratch: agent scratch dirs stay local; the rest of docs/tmp/ (incl. archive/) is tracked
+docs/tmp/*-scratch/

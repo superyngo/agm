@@ -28,9 +28,8 @@ cargo test -- --nocapture   # show println! output
   point the old `Status:` at it.
 - **New term → glossary.** Add the entry in the same commit that introduces the term.
 - **Expensive decision → ADR.** One file in `docs/adr/`, never edited afterward. Deviating from
-  a MUST principle of `wens-dev-principles` also requires an ADR citing it by domain and number.
-  The principles live in [`superyngo/wensdev`](https://github.com/superyngo/wensdev) under
-  `skills/wens-dev-principles/`.
+  a MUST principle of the `repo-docs` rule set (formerly `wens-dev-principles`) also requires an
+  ADR citing it by number.
 - **Open work → [`docs/plan/BACKLOG.md`](docs/plan/BACKLOG.md).** The one living tracker; do not
   start a new list elsewhere.
 - **New document → its folder `README.md` in the same commit.** An index that omits a file is a
@@ -42,8 +41,8 @@ cargo test -- --nocapture   # show println! output
 - **No `#[cfg(unix)]` / `#[cfg(windows)]` outside `src/platform.rs`** — see
   [`docs/adr/0003-platform-abstraction-for-windows-links.md`](docs/adr/0003-platform-abstraction-for-windows-links.md).
   `#[cfg(test)]` is not a platform gate.
-- **Never widen destruction.** `linker` refuses to overwrite real files and wrongly-targeted
-  links; keep destructive handling in the caller, and keep it announced.
+- **Never widen destruction.** Keep destructive handling in the caller, and keep it announced;
+  what `linker` refuses is in [`docs/reference/linking.md`](docs/reference/linking.md).
 - **Tests:** unit tests beside the code with `tempfile`; CLI behavior in `tests/` with
   `assert_cmd`. Verify link changes on the real binary, not only in unit tests.
 - **Commit** code, `CHANGELOG.md`, and doc updates together, one self-contained commit per task.
