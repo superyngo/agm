@@ -5,6 +5,8 @@ stay here; everything else lives under `docs/`. The agent instruction file [`AGE
 `CLAUDE.md` and `GEMINI.md`) and `.github/copilot-instructions.md` carry repo conduct only and
 point back here.
 
+Profile: dev
+
 | Folder | Holds | Canonical? | Lifecycle |
 |---|---|---|---|
 | [`docs/reference/`](docs/reference/README.md) | Current behavior: glossary, CLI surface, config schema, linking, sources, TUI, keymap, release process | Yes — the only source of truth | Kept in sync with the code |

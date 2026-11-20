@@ -2,7 +2,6 @@
 Status: Shipped (2026-02-14)
 
 **Date:** 2026-02-14
-**Status:** Approved
 **Version:** v0.2.0
 
 ## Overview

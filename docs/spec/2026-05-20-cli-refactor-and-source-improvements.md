@@ -2,7 +2,6 @@
 Status: Shipped (2026-05-20)
 
 **Date:** 2026-05-20
-**Status:** Approved by user, pending external review
 **Scope:** Single implementation cycle (no sub-project split)
 
 ## Goals

@@ -1,5 +1,4 @@
 # Config module audit — 2026-11-17
-
 Status: Resolved (2026-11-17)
 
 Scope: `src/config.rs`, `docs/reference/config.md`, and the paths they call into

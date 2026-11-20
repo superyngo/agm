@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-11-20
+- Docs: align with repo-docs rules — `Profile: dev` in `CONTEXT.md`; `Status:` on line 2 with fixed-set values in the debug note and the 2026-09-29 code / 2026-11-17 config audits; duplicate pre-template status lines removed from three frozen specs; audit, debug, spec and ADR indexes synced (ADR 0005 status `Implemented (2026-04-01)` with the 0006 partial supersession as a note line).
+
 ## [v0.17.1] - 2026-11-17
 - Fix Windows e2e failure `link_creates_missing_parent_of_nested_feature_dir`: add an `AGM_HOME` override (`paths::home_dir`) because `dirs::home_dir` ignores `$HOME` on Windows, so e2e tests ran against the real home; the e2e harness now sets it. Default behavior unchanged.
 

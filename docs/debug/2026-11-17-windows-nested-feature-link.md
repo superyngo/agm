@@ -1,6 +1,7 @@
 # Windows release build failure: `link_creates_missing_parent_of_nested_feature_dir`
+Status: In progress
 
-Status: root cause found and fixed locally (`AGM_HOME` override); awaiting Windows CI confirmation.
+Phase: root cause found and fixed locally (`AGM_HOME` override); awaiting Windows CI confirmation.
 
 ## Resolution
 

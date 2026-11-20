@@ -2,7 +2,6 @@
 Status: Shipped (2026-03-20)
 
 **Date**: 2026-03-20
-**Status**: Draft
 
 ## Problem Statement
 
