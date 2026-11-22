@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.18.0] - 2026-11-22
+
 ### 2026-11-22
 - Missing `Config` no longer hard-fails every command: `init::ensure_config` prints `Config not
   found at <path>.` and prompts `Run `agm init` now?` (default yes); accepting runs `agm init` in
