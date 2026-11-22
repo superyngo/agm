@@ -76,8 +76,9 @@ The `release` job uploads the Windows zips (`agm-windows-*.zip`) to VirusTotal v
 `crazy-max/ghaction-virustotal` and adds a **🛡️ VirusTotal** section with the analysis links to
 the release body.
 
-- Requires the repo secret `VT_API_KEY` (free VirusTotal account API key). Without it the step
-  is skipped and the release is published unchanged.
+- Requires the secret `VT_API_KEY` (free VirusTotal account API key) in the **`release`
+  environment** (the `release` job declares `environment: release`). Without it the step is
+  skipped and the release is published unchanged.
 - Rate-limited to 4 requests/minute (free public API).
 - Upload only: results appear asynchronously on VirusTotal and never block the release.
 

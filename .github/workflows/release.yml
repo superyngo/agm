@@ -240,6 +240,7 @@ jobs:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
+    environment: release
     env:
       VT_API_KEY: ${{ secrets.VT_API_KEY }}
     steps:
