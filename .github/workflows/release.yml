@@ -240,6 +240,8 @@ jobs:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
+    env:
+      VT_API_KEY: ${{ secrets.VT_API_KEY }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -279,6 +281,35 @@ jobs:
             echo "No files found in release_files directory!"
             exit 1
           fi
+
+      - name: VirusTotal scan (Windows)
+        id: virustotal
+        if: env.VT_API_KEY != ''
+        uses: crazy-max/ghaction-virustotal@v5
+        with:
+          vt_api_key: ${{ env.VT_API_KEY }}
+          request_rate: 4
+          files: |
+            release_files/*-windows-*.zip
+
+      - name: Format VirusTotal links
+        id: vt_links
+        env:
+          ANALYSIS: ${{ steps.virustotal.outputs.analysis }}
+        run: |
+          {
+            echo "body<<EOF"
+            if [ -n "$ANALYSIS" ]; then
+              echo "## 🛡️ VirusTotal"
+              echo
+              echo "$ANALYSIS" | tr ',' '\n' | while read -r line; do
+                [ -z "$line" ] && continue
+                echo "- [$(basename "${line%%=*}")](${line#*=})"
+              done
+              echo
+            fi
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Get tag message
         id: tag_message
@@ -330,6 +361,8 @@ jobs:
             ## 🔒 File Verification
 
             Use the SHA256SUMS file to verify the integrity of downloaded files.
+
+            ${{ steps.vt_links.outputs.body }}
 
             ---
 
