@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `brew`/`xcode-select` on macOS, `apt` on Linux) when something is missing
   (`init::check_dependencies`, `platform::install_hint`, `platform::vcredist_installed`).
 - Release workflow: upload the Windows zips to VirusTotal (`crazy-max/ghaction-virustotal@v5`, 4 req/min) and add the analysis links to the release body; skipped when the `VT_API_KEY` secret is unset. Documented in `docs/reference/releasing.md`.
+- Release workflow: bump `softprops/action-gh-release` v1 → v2 (v1's Node runtime is no longer supported on GitHub Actions; flagged by actionlint).
 
 ### 2026-11-20
 - Docs: align with repo-docs rules — `Profile: dev` in `CONTEXT.md`; `Status:` on line 2 with fixed-set values in the debug note and the 2026-09-29 code / 2026-11-17 config audits; duplicate pre-template status lines removed from three frozen specs; audit, debug, spec and ADR indexes synced (ADR 0005 status `Implemented (2026-04-01)` with the 0006 partial supersession as a note line).
