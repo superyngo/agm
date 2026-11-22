@@ -10,7 +10,13 @@ Terms are from [glossary.md](glossary.md).
 | Config file | `~/.config/agm/config.toml` (`Config::config_path`) |
 | Override | `agm --config <PATH>` on any command |
 
-Loading a missing file is a hard error: `Config not found at <path>. Run `agm init` first.`
+Loading a missing file no longer hard-fails outright: on a TTY, AGM prints
+`Config not found at <path>.` and prompts `Run `agm init` now?` (default yes); accepting runs
+`agm init` in place and continues loading. Declining, or running non-interactively (no TTY, e.g.
+scripts/CI), falls back to the original hard error: `Config not found at <path>. Run `agm init`
+first.` (`init::ensure_config`, used by every command that needs a `Config` except `agm init`
+itself).
+
 Malformed TOML surfaces the `toml` parse error. Saving writes
 `toml::to_string_pretty`, creating parent directories as needed — **comments and key order in a
 hand-edited file are not preserved** when AGM saves (the TUI saves on config edits).
@@ -106,6 +112,11 @@ Idempotent; every step reports `ok` or `skip`.
 2. Create `skills_source`, `agents_source`, `commands_source`, `source_dir`.
 3. Create `prompt_source`'s parent and seed the file with `# Shared AI Agent Prompt`.
 4. Print each configured **Tool** as `installed` or `not found`.
+5. Print a dependency check: `git` (needed by `agm source add`/`update`) and, on Windows, the
+   Visual C++ Redistributable some managed **Tool**s' native modules need. Only missing
+   dependencies are printed, each with a platform-specific install hint (`winget` on Windows,
+   `brew`/`xcode-select` on macOS, `apt` on Linux) — see `init::check_dependencies` and
+   `platform::install_hint`.
 
 ## Machine-checked claims
 

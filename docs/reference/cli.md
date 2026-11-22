@@ -39,6 +39,9 @@ default handling.
 There is no top-level `agm link` / `agm status`; those are `agm tool` subcommands. Older short
 flags were removed and are asserted rejected by `tests/cli.rs::old_short_flags_rejected`.
 
+Every command above except `agm init` needs a loaded `Config`; when it is missing, AGM asks to
+run `agm init` on the spot instead of just erroring — see [config.md](config.md#location).
+
 ## `agm tool link`
 
 Order of work in `main.rs` `link_all`:

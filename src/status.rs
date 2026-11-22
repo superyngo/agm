@@ -1,13 +1,12 @@
 use colored::Colorize;
 
-use crate::config::Config;
 use crate::linker::{check_link, LinkStatus};
 use crate::paths::{contract_tilde, expand_tilde};
 use crate::skills;
 
 /// Display table with tool name, config dir, prompt/skills/agents link status and paths
 pub fn status(config_path: Option<std::path::PathBuf>) -> anyhow::Result<()> {
-    let config = Config::load_from(config_path)?;
+    let config = crate::init::ensure_config(config_path)?;
     let agm_skills = expand_tilde(&config.agm.skills_source);
     let agm_agents = expand_tilde(&config.agm.agents_source);
     let agm_commands = expand_tilde(&config.agm.commands_source);

@@ -18,8 +18,6 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 
-use crate::config::Config;
-
 use super::{source, tool};
 
 /// Which screen is currently on top.
@@ -30,7 +28,7 @@ pub enum Tab {
 }
 
 pub fn run(config_path: Option<PathBuf>, initial: Tab) -> Result<()> {
-    let config = Config::load_from(config_path.clone())?;
+    let config = crate::init::ensure_config(config_path.clone())?;
 
     let mut tool_app: Option<tool::ToolApp> = None;
     let mut source_app: Option<source::App> = None;

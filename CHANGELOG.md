@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### 2026-11-22
+- Missing `Config` no longer hard-fails every command: `init::ensure_config` prints `Config not
+  found at <path>.` and prompts `Run `agm init` now?` (default yes); accepting runs `agm init` in
+  place before continuing. Non-interactive contexts (no TTY) keep the original hard error. Used
+  by every command that loads a `Config` (`main.rs`, `status.rs`, `tui/shell.rs`) except `agm
+  init` itself.
+- `agm init` and the bare `agm` TUI entry now print a dependency check for `git` and, on Windows,
+  the Visual C++ Redistributable, with a platform-specific install hint (`winget` on Windows,
+  `brew`/`xcode-select` on macOS, `apt` on Linux) when something is missing
+  (`init::check_dependencies`, `platform::install_hint`, `platform::vcredist_installed`).
+
 ### 2026-11-20
 - Docs: align with repo-docs rules — `Profile: dev` in `CONTEXT.md`; `Status:` on line 2 with fixed-set values in the debug note and the 2026-09-29 code / 2026-11-17 config audits; duplicate pre-template status lines removed from three frozen specs; audit, debug, spec and ADR indexes synced (ADR 0005 status `Implemented (2026-04-01)` with the 0006 partial supersession as a note line).
 - Docs: repo-docs wave B — BACKLOG: Open row B51 (v0.17.0 Windows release build failure), Done rows carry closing commit hashes, residuals of B45/B46/B50 and the i686 e2e failure moved to Watching (B52–B55); debug note cites file + symbol instead of line numbers; `AGENTS.md` links `docs/reference/linking.md` instead of restating linker behavior and names `repo-docs`; B51/B52 closed by `23e9bca` after the green v0.17.1 Windows release jobs (debug note Resolved, BACKLOG `Resolved (2026-11-20)`); `.github/copilot-instructions.md` conduct points at `AGENTS.md`; `.gitignore` ignores only `docs/tmp/*-scratch/`; glossary **Tool**/**Tool key** include OMP/`omp`.

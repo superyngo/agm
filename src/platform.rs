@@ -76,6 +76,18 @@ pub fn check_link_capability() -> LinkCapability {
     sys::check_link_capability()
 }
 
+/// True when the Windows Visual C++ Redistributable runtime is present. Always `true` on
+/// non-Windows platforms (not applicable there).
+pub fn vcredist_installed() -> bool {
+    sys::vcredist_installed()
+}
+
+/// Suggested install command for a dependency (`"git"` or `"vcredist"`), platform-specific.
+/// Windows defaults to `winget`.
+pub fn install_hint(dep: &str) -> String {
+    sys::install_hint(dep)
+}
+
 // ===== Unix implementation =====
 
 #[cfg(unix)]
@@ -122,6 +134,23 @@ mod sys {
 
     pub fn check_link_capability() -> LinkCapability {
         LinkCapability::Full
+    }
+
+    pub fn vcredist_installed() -> bool {
+        true // not applicable outside Windows
+    }
+
+    pub fn install_hint(dep: &str) -> String {
+        match dep {
+            "git" if cfg!(target_os = "macos") => {
+                "brew install git  (or: xcode-select --install)".to_string()
+            }
+            "git" => {
+                "sudo apt install git  (Debian/Ubuntu — substitute your distro's package manager)"
+                    .to_string()
+            }
+            _ => format!("install {dep} using your platform's package manager"),
+        }
     }
 }
 
@@ -249,6 +278,18 @@ mod sys {
             (false, false) => LinkCapability::Unavailable(
                 "Cannot create junctions or hardlinks. Check NTFS permissions.".into(),
             ),
+        }
+    }
+
+    pub fn vcredist_installed() -> bool {
+        Path::new(r"C:\Windows\System32\vcruntime140.dll").exists()
+    }
+
+    pub fn install_hint(dep: &str) -> String {
+        match dep {
+            "git" => "winget install --id Git.Git -e".to_string(),
+            "vcredist" => "winget install --id Microsoft.VCRedist.2015+.x64 -e".to_string(),
+            _ => format!("winget install {dep}"),
         }
     }
 }

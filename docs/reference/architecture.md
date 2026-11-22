@@ -14,10 +14,10 @@ All source is flat under `src/`, except the TUI, which is a module directory.
 | `config.rs` | `Config` / `AgmConfig` / `ToolConfig`, TOML load/save, defaults, path resolution per **Tool** |
 | `paths.rs` | `expand_tilde`, `expand_path` (`$VAR`), `contract_tilde` |
 | `linker.rs` | `LinkStatus` and the create/check/remove decision table, printing and quiet variants |
-| `platform.rs` | the only place that knows Unix symlinks from Windows junctions/hardlinks; also the default editor |
+| `platform.rs` | the only place that knows Unix symlinks from Windows junctions/hardlinks; also the default editor and dependency install hints |
 | `skills.rs` | **Source** / **Skill** / **Agent** / **Command** discovery, install, update, delete, rename, migration, **Blocklist**, **Preload chars** |
 | `status.rs` | the read-only `agm tool status` table |
-| `init.rs` | `agm init`: default config plus **Central store** directories |
+| `init.rs` | `agm init`: default config plus **Central store** directories, dependency check; also `ensure_config`, the missing-config prompt shared by every command that loads a `Config` |
 | `editor.rs` | editor resolution and process launch |
 | `tui/` | the unified shell (Tool Manager / Source Manager screens behind Tab) and shared widgets |
 

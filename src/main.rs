@@ -720,13 +720,16 @@ fn main() -> anyhow::Result<()> {
     // Extract command (required if not showing version)
     let command = match cli.command {
         Some(cmd) => cmd,
-        None => return tui::shell::run(cli.config.clone(), tui::shell::Tab::Tool),
+        None => {
+            init::print_dependency_report(&init::check_dependencies());
+            return tui::shell::run(cli.config.clone(), tui::shell::Tab::Tool);
+        }
     };
 
     match command {
         Commands::Init => init::run(cli.config.clone()),
         Commands::Config => {
-            let config = config::Config::load_from(cli.config.clone())?;
+            let config = init::ensure_config(cli.config.clone())?;
             let path = cli
                 .config
                 .clone()
@@ -737,17 +740,17 @@ fn main() -> anyhow::Result<()> {
         Commands::Tool { action } => match action {
             None => tui::shell::run(cli.config.clone(), tui::shell::Tab::Tool),
             Some(ToolAction::Link) => {
-                let config = config::Config::load_from(cli.config.clone())?;
+                let config = init::ensure_config(cli.config.clone())?;
                 link_all(&config)
             }
             Some(ToolAction::Unlink) => {
-                let config = config::Config::load_from(cli.config.clone())?;
+                let config = init::ensure_config(cli.config.clone())?;
                 unlink_all(&config)
             }
             Some(ToolAction::Status) => status::status(cli.config.clone()),
         },
         Commands::Source { action } => {
-            let config = config::Config::load_from(cli.config.clone())?;
+            let config = init::ensure_config(cli.config.clone())?;
             let skills_dir = paths::expand_tilde(&config.agm.skills_source);
             let agents_dir = paths::expand_tilde(&config.agm.agents_source);
             let commands_dir = paths::expand_tilde(&config.agm.commands_source);
